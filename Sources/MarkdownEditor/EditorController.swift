@@ -21,9 +21,19 @@ public final class EditorController: ObservableObject {
     private let parser = MarkdownParser()
     private var restyleWork: DispatchWorkItem?
     public private(set) var parsed = ParsedMarkdown()
+    private lazy var toolbar = FloatingToolbar(controller: self)
 
     public init() {
         imageLoader.onChange = { [weak self] in self?.restyle() }
+    }
+
+    /// Show/hide the floating format toolbar as the selection changes.
+    public func selectionChanged() {
+        guard let tv = textView else { return }
+        let sel = tv.selectedRange()
+        guard sel.length > 0 else { toolbar.hide(); return }
+        let rect = tv.firstRect(forCharacterRange: sel, actualRange: nil)
+        toolbar.update(selectionRect: rect, hasSelection: true)
     }
 
     var theme: Theme { Theme(zoom: zoom) }

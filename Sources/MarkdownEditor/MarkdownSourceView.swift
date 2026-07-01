@@ -79,5 +79,9 @@ public struct MarkdownSourceView: NSViewRepresentable {
         public func textDidChange(_ notification: Notification) {
             controller.scheduleRestyle()
         }
+
+        public func textViewDidChangeSelection(_ notification: Notification) {
+            controller.selectionChanged()
+        }
     }
 }
