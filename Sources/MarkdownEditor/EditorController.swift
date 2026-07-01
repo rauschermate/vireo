@@ -68,6 +68,17 @@ public final class EditorController: ObservableObject {
         tv.needsDisplay = true
     }
 
+    /// Replace the whole document (external reload). Programmatic storage edits
+    /// don't fire the text-view delegate, so we restyle explicitly.
+    public func replaceEntireSource(_ s: String) {
+        guard let tv = textView, let storage = tv.textStorage else { return }
+        let sel = tv.selectedRange()
+        storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: s)
+        restyle()
+        let caret = min(sel.location, (s as NSString).length)
+        tv.setSelectedRange(NSRange(location: caret, length: 0))
+    }
+
     // MARK: Navigation
 
     public func scroll(to location: Int) {

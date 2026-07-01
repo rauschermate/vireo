@@ -38,6 +38,10 @@ let package = Package(
             name: "Vireo",
             dependencies: ["MarkdownEngine", "MarkdownRender", "MarkdownEditor", "VireoCore"]
         ),
+        .executableTarget(
+            name: "VireoSnapshot",
+            dependencies: ["MarkdownEngine", "MarkdownRender"]
+        ),
         .testTarget(
             name: "MarkdownEngineTests",
             dependencies: ["MarkdownEngine"]
