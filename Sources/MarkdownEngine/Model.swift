@@ -56,13 +56,26 @@ public struct ImageRun: Sendable, Equatable {
     }
 }
 
-/// A GFM task-list checkbox `[ ]` / `[x]`.
+/// A GFM task-list checkbox. Drawn to the left of `anchor` (first content char);
+/// the raw `- [ ] ` syntax is hidden as a marker range.
 public struct TaskMark: Sendable, Equatable {
-    public var range: NSRange   // the `[ ]` / `[x]` including brackets
+    public var anchor: Int
     public var checked: Bool
-    public init(range: NSRange, checked: Bool) {
-        self.range = range
+    public init(anchor: Int, checked: Bool) {
+        self.anchor = anchor
         self.checked = checked
+    }
+}
+
+/// A list bullet / number drawn to the left of `anchor` (first content char).
+public struct ListMarker: Sendable, Equatable {
+    public var anchor: Int
+    public var text: String   // "•" for unordered, "1." etc. for ordered
+    public var depth: Int
+    public init(anchor: Int, text: String, depth: Int) {
+        self.anchor = anchor
+        self.text = text
+        self.depth = depth
     }
 }
 
@@ -87,16 +100,18 @@ public struct ParsedMarkdown: Sendable {
     public var blockRuns: [BlockRun]
     public var images: [ImageRun]
     public var tasks: [TaskMark]
+    public var listMarkers: [ListMarker]
     public var toc: [TOCEntry]
 
     public init(markerRanges: [NSRange] = [], inlineRuns: [InlineRun] = [],
                 blockRuns: [BlockRun] = [], images: [ImageRun] = [],
-                tasks: [TaskMark] = [], toc: [TOCEntry] = []) {
+                tasks: [TaskMark] = [], listMarkers: [ListMarker] = [], toc: [TOCEntry] = []) {
         self.markerRanges = markerRanges
         self.inlineRuns = inlineRuns
         self.blockRuns = blockRuns
         self.images = images
         self.tasks = tasks
+        self.listMarkers = listMarkers
         self.toc = toc
     }
 }

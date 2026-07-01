@@ -51,6 +51,8 @@ final class ParserTests: XCTestCase {
         let parsed = MarkdownParser().parse(src)
         XCTAssertEqual(parsed.tasks.count, 2)
         XCTAssertEqual(parsed.tasks.map(\.checked), [false, true])
+        // task items don't also emit bullets
+        XCTAssertTrue(parsed.listMarkers.isEmpty)
     }
 
     func testInlineRunsCarryStyle() {

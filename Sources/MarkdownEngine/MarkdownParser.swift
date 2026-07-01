@@ -95,19 +95,24 @@ private struct Accumulator {
         guard let itemRange = map.nsRange(item.range) else { return }
         result.blockRuns.append(BlockRun(range: itemRange, kind: .listItem(depth: depth, ordered: ordered)))
 
-        // Bullet/number marker = from item start to first child block's start.
+        // Leading marker = from item start to first child block's start
+        // (covers `- `, `1. ` and, for tasks, `- [ ] `). Hidden entirely; the
+        // renderer draws a bullet / number / checkbox to the left of `anchor`.
         if let firstChild = item.children.first(where: { $0.range != nil }),
            let childRange = map.nsRange(firstChild.range) {
             let markerLen = childRange.location - itemRange.location
             if markerLen > 0 {
                 result.markerRanges.append(NSRange(location: itemRange.location, length: markerLen))
             }
-        }
-
-        // Task-list checkbox.
-        if let box = item.checkbox {
-            if let bracket = findCheckbox(in: itemRange) {
-                result.tasks.append(TaskMark(range: bracket, checked: box == .checked))
+            let anchor = childRange.location
+            if let box = item.checkbox {
+                result.tasks.append(TaskMark(anchor: anchor, checked: box == .checked))
+            } else if ordered {
+                let raw = ns.substring(with: NSRange(location: itemRange.location, length: max(0, markerLen)))
+                    .trimmingCharacters(in: .whitespaces)
+                result.listMarkers.append(ListMarker(anchor: anchor, text: raw, depth: depth))
+            } else {
+                result.listMarkers.append(ListMarker(anchor: anchor, text: "•", depth: depth))
             }
         }
 
@@ -288,25 +293,6 @@ private struct Accumulator {
             innerLoc += 1; innerLen -= 2
         }
         return NSRange(location: innerLoc, length: max(0, innerLen))
-    }
-
-    /// Locate the `[ ]` / `[x]` checkbox within a list item marker region.
-    private func findCheckbox(in itemRange: NSRange) -> NSRange? {
-        let end = itemRange.location + itemRange.length
-        var i = itemRange.location
-        while i < end - 2 {
-            if ns.character(at: i) == 0x5B { // '['
-                let mid = ns.character(at: i + 1)
-                if ns.character(at: i + 2) == 0x5D, // ']'
-                   mid == 0x20 || mid == 0x78 || mid == 0x58 { // space, x, X
-                    return NSRange(location: i, length: 3)
-                }
-            }
-            // stop scanning once we hit a non-marker letter run
-            if i > itemRange.location + 6 { break }
-            i += 1
-        }
-        return nil
     }
 
     private func plainText(_ node: Markup) -> String {
