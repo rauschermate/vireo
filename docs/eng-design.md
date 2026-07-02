@@ -226,3 +226,34 @@ v2 items (PDF/HTML export, KaTeX, Mermaid) are explicitly out of this plan.
 1. **macOS 15 baseline OK?** (Assumed yes — new app, current hardware.)
 2. **Strict always-hidden syntax (C) vs pragmatic reveal-on-active-line (B)** if the spike forces a choice — is B an acceptable v1, or is C a hard gate? (Design assumes B is an acceptable fallback.)
 3. **Bundle ID / team** for signing (needed by Phase 5, not before).
+
+---
+
+## 14. Implementation deviations (as built, v1)
+
+Where the shipped implementation intentionally differs from the sections above:
+
+- **TextKit 1, not TextKit 2 (§2, §4).** The always-hidden-syntax bet (option C)
+  shipped — but via `NSLayoutManager` null glyphs, which need glyph-level control
+  TextKit 2 doesn't expose. The spike's real outcome: C is achievable, on TK1.
+- **Custom `DocumentModel`, not `NSDocument` (§7).** The dirty model, save-on-close
+  prompts, window dirty-dot/proxy-icon and Recents are hand-rolled (a
+  `WindowDelegateProxy` adds `windowShouldClose`, `Preferences` keeps Recents).
+  Rationale: the SwiftUI scene + native-window-tabs architecture (one
+  `WindowGroup` instance per document) fit poorly with `NSDocument`'s
+  window-controller model. Revisit only if document features outgrow this.
+- **No security-scoped bookmarks (§7).** The app is not sandboxed (per §11), so
+  plain paths persist fine; TCC prompts cover protected folders. The sandboxed
+  Quick Look extension gets read access to the previewed file from Quick Look
+  itself — but **cannot** load sibling local images (only remote, via the
+  network-client entitlement). Bookmarks return to scope only if we ever sandbox.
+- **Tables (§6 addendum).** GFM tables render as a drawn grid over transparent
+  source text (null-hiding would collapse line heights). When the caret enters a
+  table, its raw source is revealed for editing and the grid returns on exit —
+  option-B behavior scoped to tables only.
+- **Full-document re-parse per (debounced) edit, not incremental (§5).** Correct
+  but O(document) per keystroke; fine for notes-sized files, the known perf debt
+  for large ones. Planned as a separate performance pass.
+- **Liquid Glass (§8.0).** The floating toolbar uses `NSGlassEffectView` on
+  macOS 26+ (material fallback on 15); sidebars use standard system materials.
+- **Quick Look thumbnail extension** (§9 stretch) not built.

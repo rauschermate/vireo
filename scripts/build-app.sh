@@ -17,6 +17,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cp "$BIN" "$APP/Contents/MacOS/Vireo"
 cp "$ROOT/scripts/Info.plist" "$APP/Contents/Info.plist"
+[ -f "$ROOT/Resources/AppIcon.icns" ] && cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/"
 
 # Ad-hoc sign so macOS will launch it locally.
 codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true

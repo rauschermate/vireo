@@ -66,17 +66,21 @@ just writing `textStorage.string` back to disk unchanged.
 - Xcode project generated from `project.yml` (XcodeGen) for the app + extension;
   `.dmg` packaging and a Developer-ID notarization script.
 
+Behavior notes: GFM tables render as a drawn grid; placing the caret inside one
+reveals its raw source for editing. Task checkboxes toggle on click. Links open
+on ⌘-click (plain click edits); `#anchor` and `file.md#anchor` links navigate.
+
 ## Known gaps / next steps
 
-These are deliberately deferred (tracked against the eng-design phase plan):
+Implementation deviations from the eng-design are documented in
+[`docs/eng-design.md` §14](docs/eng-design.md). Remaining work:
 
-- **Implementation deviation:** uses **TextKit 1** (`NSLayoutManager`) rather than
-  TextKit 2 — the null-glyph technique for hiding syntax needs glyph-level control
-  that TextKit 2 doesn't expose. Documented in eng-design §4 as the pragmatic route
-  to the strict "hidden even while editing" requirement.
-- **Tables** render as styled monospace (pipes visible), not a laid-out grid.
+- **Incremental re-parse** — edits currently re-parse and re-style the whole
+  document (debounced); fine for notes, a perf debt for very large files.
 - **Caret over hidden markers**: arrow keys step through zero-width hidden marker
   characters (the eng-design's noted option-C caret nuance). Acceptable for v1.
 - **Notarization** (`scripts/release.sh`) needs an Apple Developer ID — the app,
   Quick Look extension, dmg, and signing/notary scripts are all in place, but the
   actual notarized build can only be produced with your credentials.
+- **Quick Look thumbnail extension** (PRD stretch) not built; QL previews can't
+  load local sibling images (sandbox grants only the previewed file).

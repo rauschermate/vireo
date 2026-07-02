@@ -24,6 +24,8 @@ targets:
     platform: macOS
     sources:
       - Sources/Vireo
+      - path: Resources
+        buildPhase: resources
     dependencies:
       - package: VireoKit
         product: MarkdownEngine

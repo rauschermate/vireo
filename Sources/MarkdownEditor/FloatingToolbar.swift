@@ -63,16 +63,27 @@ final class FloatingToolbar {
         stack.layoutSubtreeIfNeeded()
         let size = stack.fittingSize
 
-        let effect = NSVisualEffectView(frame: NSRect(origin: .zero, size: size))
-        effect.material = .hudWindow
-        effect.blendingMode = .behindWindow
-        effect.state = .active
-        effect.wantsLayer = true
-        effect.layer?.cornerRadius = 9
-        effect.layer?.masksToBounds = true
-        stack.frame = effect.bounds
-        stack.autoresizingMask = [.width, .height]
-        effect.addSubview(stack)
+        // Liquid Glass on macOS 26+ (eng-design §8.0); material fallback below.
+        let effect: NSView
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView(frame: NSRect(origin: .zero, size: size))
+            glass.cornerRadius = 9
+            stack.frame = glass.bounds
+            glass.contentView = stack
+            effect = glass
+        } else {
+            let visual = NSVisualEffectView(frame: NSRect(origin: .zero, size: size))
+            visual.material = .hudWindow
+            visual.blendingMode = .behindWindow
+            visual.state = .active
+            visual.wantsLayer = true
+            visual.layer?.cornerRadius = 9
+            visual.layer?.masksToBounds = true
+            stack.frame = visual.bounds
+            stack.autoresizingMask = [.width, .height]
+            visual.addSubview(stack)
+            effect = visual
+        }
 
         let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size),
                             styleMask: [.nonactivatingPanel, .borderless],

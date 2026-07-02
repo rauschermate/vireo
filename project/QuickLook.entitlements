@@ -8,5 +8,9 @@
     <true/>
     <key>com.apple.security.files.user-selected.read-only</key>
     <true/>
+    <!-- Allow remote images in previews. Sibling *local* images still can't
+         load: Quick Look's sandbox only grants the previewed file itself. -->
+    <key>com.apple.security.network.client</key>
+    <true/>
 </dict>
 </plist>

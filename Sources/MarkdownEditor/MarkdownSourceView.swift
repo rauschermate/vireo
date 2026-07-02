@@ -54,6 +54,14 @@ public struct MarkdownSourceView: NSViewRepresentable {
         scroll.drawsBackground = true
         scroll.documentView = textView
 
+        // Scrolling detaches the floating toolbar from its selection — hide it.
+        scroll.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification,
+            object: scroll.contentView, queue: .main) { [weak controller] _ in
+            Task { @MainActor in controller?.hideFloatingToolbar() }
+        }
+
         DispatchQueue.main.async { controller.restyle() }
         return scroll
     }

@@ -171,13 +171,6 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         }
     }
 
-    private func lineFragment(forChar charIndex: Int) -> NSRect? {
-        guard charIndex < numberOfGlyphs || charIndex == 0 else { return nil }
-        let glyph = glyphIndexForCharacter(at: charIndex)
-        guard glyph < numberOfGlyphs else { return nil }
-        return lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
-    }
-
     private func drawLeftMarker(_ s: String, atCharIndex charIndex: Int, origin: NSPoint, color: NSColor) {
         guard charIndex < numberOfGlyphs else { return }
         let glyph = glyphIndexForCharacter(at: charIndex)

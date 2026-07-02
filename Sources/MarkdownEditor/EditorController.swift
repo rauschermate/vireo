@@ -47,6 +47,37 @@ public final class EditorController: ObservableObject {
         toolbar.update(selectionRect: rect, hasSelection: true)
     }
 
+    /// Hide the floating toolbar (scrolling detaches it from the selection).
+    public func hideFloatingToolbar() {
+        toolbar.hide()
+    }
+
+    /// Toggle the `[ ]` / `[x]` of the task whose checkbox is drawn at `anchor`
+    /// (the first visible character of the item; the raw marker sits just
+    /// before it in the hidden syntax).
+    public func toggleTask(atAnchor anchor: Int) {
+        guard let tv = textView, let storage = tv.textStorage else { return }
+        let ns = storage.string as NSString
+        var i = anchor - 1
+        let lower = max(0, anchor - 8)
+        while i >= lower + 2 {
+            if ns.character(at: i) == 0x5D { // ']'
+                let mid = ns.character(at: i - 1)
+                if ns.character(at: i - 2) == 0x5B, // '['
+                   mid == 0x20 || mid == 0x78 || mid == 0x58 { // ' ', x, X
+                    let r = NSRange(location: i - 1, length: 1)
+                    let replacement = mid == 0x20 ? "x" : " "
+                    if tv.shouldChangeText(in: r, replacementString: replacement) {
+                        storage.replaceCharacters(in: r, with: replacement)
+                        tv.didChangeText()
+                    }
+                    return
+                }
+            }
+            i -= 1
+        }
+    }
+
     var theme: Theme { Theme(zoom: zoom) }
 
     // MARK: Styling
