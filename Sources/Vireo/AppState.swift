@@ -12,48 +12,73 @@ struct FileNode: Identifiable, Hashable {
     var children: [FileNode]?
 }
 
+/// Central registry. With native window tabs each document lives in its own
+/// window (one per `DocumentModel`); this holds the shared registry, the opened
+/// folder, global view toggles, and the currently-focused document (so menu
+/// commands can target it).
 @MainActor
 final class AppState: ObservableObject {
     static let shared = AppState()
 
-    @Published var documents: [DocumentModel] = []
-    @Published var selectedID: DocumentModel.ID?
+    @Published private(set) var documents: [UUID: DocumentModel] = [:]
     @Published var rootFolder: FileNode?
+    @Published var activeDocID: UUID?
 
     @Published var showFileSidebar = true
     @Published var showTOC = true
     @Published var focusMode = false
     @Published var zoom: CGFloat = 1.0 { didSet { applyZoom() } }
 
-    var selected: DocumentModel? {
-        documents.first { $0.id == selectedID }
+    /// Requests a fresh window from the (plain) WindowGroup. Set by a live window.
+    var openWindowProxy: (() -> Void)?
+    /// FIFO of document ids the next opened window(s) should adopt.
+    var windowQueue: [UUID] = []
+    /// URLs queued before a window existed to service them.
+    var pendingURLs: [URL] = []
+
+    func dequeueDocID() -> UUID? {
+        windowQueue.isEmpty ? nil : windowQueue.removeFirst()
+    }
+
+    func focusWindow(for id: UUID) {
+        let ident = "vireo-\(id)"
+        for window in NSApp.windows where window.identifier?.rawValue == ident {
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+    }
+
+    var activeDocument: DocumentModel? {
+        activeDocID.flatMap { documents[$0] }
     }
 
     private func applyZoom() {
-        for doc in documents { doc.controller.zoom = zoom }
+        for doc in documents.values { doc.controller.zoom = zoom }
     }
 
-    // MARK: Documents
+    // MARK: Registry
 
-    func newDocument() {
+    func document(for id: UUID?) -> DocumentModel? {
+        id.flatMap { documents[$0] }
+    }
+
+    func register(_ doc: DocumentModel) {
+        documents[doc.id] = doc
+        doc.controller.zoom = zoom
+        doc.openLinkHandler = { [weak self] target in self?.requestOpen(target) }
+    }
+
+    func newDocument() -> DocumentModel {
         let doc = DocumentModel(untitled: "")
-        wire(doc)
-        documents.append(doc)
-        selectedID = doc.id
+        register(doc)
+        return doc
     }
 
-    @discardableResult
-    func openFile(_ url: URL) -> DocumentModel? {
-        if let existing = documents.first(where: { $0.url == url }) {
-            selectedID = existing.id
-            return existing
-        }
+    func makeDocument(for url: URL) -> DocumentModel? {
+        if let existing = documents.values.first(where: { $0.url == url }) { return existing }
         do {
             let doc = try DocumentModel(url: url)
-            wire(doc)
-            documents.append(doc)
-            selectedID = doc.id
-            doc.controller.zoom = zoom
+            register(doc)
             Preferences.shared.addRecent(url)
             return doc
         } catch {
@@ -62,28 +87,35 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func wire(_ doc: DocumentModel) {
-        doc.openLinkHandler = { [weak self] target in _ = self?.openFile(target) }
+    func discard(_ id: UUID) {
+        if let doc = documents[id], doc.isDirty, doc.url != nil { doc.saveNow() }
+        documents[id] = nil
+        if activeDocID == id { activeDocID = nil }
     }
 
-    func closeDocument(_ id: DocumentModel.ID) {
-        guard let idx = documents.firstIndex(where: { $0.id == id }) else { return }
-        let doc = documents[idx]
-        if doc.isDirty, doc.url != nil { doc.saveNow() }
-        documents.remove(at: idx)
-        if selectedID == id {
-            selectedID = documents.indices.contains(idx) ? documents[idx].id : documents.last?.id
+    // MARK: Opening (routes through the window layer)
+
+    /// Open a URL in a new tabbed window, focusing an existing one if already open.
+    func requestOpen(_ url: URL) {
+        if let existing = documents.values.first(where: { $0.url == url }) {
+            focusWindow(for: existing.id)
+            return
+        }
+        guard let doc = makeDocument(for: url) else { return }
+        if let proxy = openWindowProxy {
+            windowQueue.append(doc.id)
+            proxy()
+        } else {
+            pendingURLs.append(url)
         }
     }
-
-    // MARK: Panels
 
     func openFilePanel() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = markdownTypes()
         panel.allowsMultipleSelection = true
         if panel.runModal() == .OK {
-            for url in panel.urls { _ = openFile(url) }
+            for url in panel.urls { requestOpen(url) }
         }
     }
 
@@ -91,9 +123,7 @@ final class AppState: ObservableObject {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
-        if panel.runModal() == .OK, let url = panel.url {
-            openFolder(url)
-        }
+        if panel.runModal() == .OK, let url = panel.url { openFolder(url) }
     }
 
     func openFolder(_ url: URL) {
@@ -101,8 +131,8 @@ final class AppState: ObservableObject {
         showFileSidebar = true
     }
 
-    func saveAsPanel() {
-        guard let doc = selected else { return }
+    func saveActiveAs() {
+        guard let doc = activeDocument else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
         panel.nameFieldStringValue = doc.title.hasSuffix(".md") ? doc.title : doc.title + ".md"

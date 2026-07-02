@@ -39,9 +39,9 @@ private struct FileRow: View {
         } else {
             Label(node.name, systemImage: "doc.text")
                 .font(.callout)
-                .foregroundStyle(state.selected?.url == node.url ? Color.accentColor : .primary)
+                .foregroundStyle(state.activeDocument?.url == node.url ? Color.accentColor : .primary)
                 .contentShape(Rectangle())
-                .onTapGesture { _ = state.openFile(node.url) }
+                .onTapGesture { state.requestOpen(node.url) }
         }
     }
 }

@@ -9,10 +9,10 @@ struct VireoApp: App {
     @ObservedObject private var prefs = Preferences.shared
 
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        WindowGroup(id: "document") {
+            DocumentWindowView()
                 .environmentObject(state)
-                .frame(minWidth: 720, minHeight: 480)
+                .frame(minWidth: 640, minHeight: 420)
         }
         .commands { commands }
 
@@ -23,39 +23,37 @@ struct VireoApp: App {
 
     @CommandsBuilder private var commands: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button("New") { state.newDocument() }.keyboardShortcut("n")
-            Button("Open…") { state.openFilePanel() }.keyboardShortcut("o")
+            NewWindowButton()
+            OpenButton()
             Button("Open Folder…") { state.openFolderPanel() }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
             RecentMenu()
         }
         CommandGroup(replacing: .saveItem) {
             Button("Save") {
-                if state.selected?.url == nil { state.saveAsPanel() } else { state.selected?.saveNow() }
+                if state.activeDocument?.url == nil { state.saveActiveAs() } else { state.activeDocument?.saveNow() }
             }
             .keyboardShortcut("s")
-            .disabled(prefs.autoSave && state.selected?.url != nil)
-            Button("Save As…") { state.saveAsPanel() }
+            .disabled(prefs.autoSave && state.activeDocument?.url != nil)
+            Button("Save As…") { state.saveActiveAs() }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
-            Button("Close") { if let id = state.selectedID { state.closeDocument(id) } }
-                .keyboardShortcut("w")
         }
         CommandMenu("Format") {
-            Button("Bold") { state.selected?.controller.toggleBold() }.keyboardShortcut("b")
-            Button("Italic") { state.selected?.controller.toggleItalic() }.keyboardShortcut("i")
-            Button("Strikethrough") { state.selected?.controller.toggleStrikethrough() }
-            Button("Inline Code") { state.selected?.controller.toggleInlineCode() }
+            Button("Bold") { state.activeDocument?.controller.toggleBold() }.keyboardShortcut("b")
+            Button("Italic") { state.activeDocument?.controller.toggleItalic() }.keyboardShortcut("i")
+            Button("Strikethrough") { state.activeDocument?.controller.toggleStrikethrough() }
+            Button("Inline Code") { state.activeDocument?.controller.toggleInlineCode() }
             Divider()
-            Button("Heading 1") { state.selected?.controller.makeHeading(1) }
+            Button("Heading 1") { state.activeDocument?.controller.makeHeading(1) }
                 .keyboardShortcut("1", modifiers: [.command, .control])
-            Button("Heading 2") { state.selected?.controller.makeHeading(2) }
+            Button("Heading 2") { state.activeDocument?.controller.makeHeading(2) }
                 .keyboardShortcut("2", modifiers: [.command, .control])
-            Button("Bulleted List") { state.selected?.controller.toggleBulletList() }
-            Button("Quote") { state.selected?.controller.toggleQuote() }
-            Button("Link…") { state.selected?.controller.insertLink() }.keyboardShortcut("k")
+            Button("Bulleted List") { state.activeDocument?.controller.toggleBulletList() }
+            Button("Quote") { state.activeDocument?.controller.toggleQuote() }
+            Button("Link…") { state.activeDocument?.controller.insertLink() }.keyboardShortcut("k")
         }
         CommandGroup(after: .textEditing) {
-            Button("Find…") { state.selected?.controller.performFind() }.keyboardShortcut("f")
+            Button("Find…") { state.activeDocument?.controller.performFind() }.keyboardShortcut("f")
         }
         CommandGroup(after: .toolbar) {
             Button(state.showFileSidebar ? "Hide File Sidebar" : "Show File Sidebar") {
@@ -75,40 +73,63 @@ struct VireoApp: App {
     }
 }
 
-/// Handles files opened from Finder / the command line.
-final class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        let args = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }
-        var opened = false
-        for path in args {
-            let url = URL(fileURLWithPath: path)
-            if FileManager.default.fileExists(atPath: url.path) {
-                _ = AppState.shared.openFile(url)
-                opened = true
-            }
-        }
-        if !opened, AppState.shared.documents.isEmpty {
-            AppState.shared.newDocument()
-        }
-        NSApp.activate(ignoringOtherApps: true)
-    }
+// MARK: - Command buttons that need openWindow
 
-    func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls { _ = AppState.shared.openFile(url) }
+private struct NewWindowButton: View {
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Button("New") {
+            let doc = AppState.shared.newDocument()
+            AppState.shared.windowQueue.append(doc.id)
+            openWindow(id: "document")
+        }.keyboardShortcut("n")
     }
+}
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+private struct OpenButton: View {
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Button("Open…") {
+            AppState.shared.openWindowProxy = { openWindow(id: "document") }
+            AppState.shared.openFilePanel()
+        }.keyboardShortcut("o")
+    }
 }
 
 struct RecentMenu: View {
+    @Environment(\.openWindow) private var openWindow
     @ObservedObject private var prefs = Preferences.shared
     var body: some View {
         Menu("Open Recent") {
             ForEach(prefs.recentFiles, id: \.self) { url in
-                Button(url.lastPathComponent) { _ = AppState.shared.openFile(url) }
+                Button(url.lastPathComponent) {
+                    AppState.shared.openWindowProxy = { openWindow(id: "document") }
+                    AppState.shared.requestOpen(url)
+                }
             }
         }
     }
+}
+
+// MARK: - App delegate (Finder / CLI file opens)
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSWindow.allowsAutomaticWindowTabbing = true
+        let args = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }
+        for path in args {
+            let url = URL(fileURLWithPath: path)
+            if FileManager.default.fileExists(atPath: url.path) {
+                AppState.shared.pendingURLs.append(url)
+            }
+        }
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls { AppState.shared.requestOpen(url) }
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
 
 struct PreferencesView: View {

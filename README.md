@@ -46,7 +46,8 @@ just writing `textStorage.string` back to disk unchanged.
   task checkboxes, fenced code with syntax highlighting, images (local + remote).
 - Centered reading column, OS light/dark, proportional zoom (⌘+/⌘−/⌘0).
 - Floating format toolbar on selection + ⌘B/⌘I/⌘K + Format menu.
-- Tabs, folder sidebar, TOC sidebar, focus mode, in-document find (⌘F).
+- Native macOS window tabs (one window per document, merged into a tab group),
+  folder sidebar, TOC sidebar, focus mode, in-document find (⌘F).
 - Auto-save (default) or explicit ⌘S mode; external-change reload with conflict prompt.
 - Registers `.md`/`.markdown` document types (open from Finder / command line).
 
@@ -64,4 +65,3 @@ These are deliberately deferred (tracked against the eng-design phase plan):
 - **Quick Look extension** and **notarized `.dmg`** packaging (eng-design Phase 5)
   require a real Xcode project; `scripts/build-app.sh` produces a local, ad-hoc
   signed bundle only.
-- Native macOS **window tabs** (currently an in-window tab bar).
