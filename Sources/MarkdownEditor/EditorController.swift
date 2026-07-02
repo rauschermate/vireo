@@ -22,15 +22,26 @@ public final class EditorController: ObservableObject {
     private var restyleWork: DispatchWorkItem?
     public private(set) var parsed = ParsedMarkdown()
     private lazy var toolbar = FloatingToolbar(controller: self)
+    /// Table whose source is revealed because the caret is inside it.
+    private var revealedTableIndex: Int?
 
     public init() {
         imageLoader.onChange = { [weak self] in self?.restyle() }
     }
 
-    /// Show/hide the floating format toolbar as the selection changes.
+    /// Show/hide the floating format toolbar and reveal/re-hide table source
+    /// as the selection moves.
     public func selectionChanged() {
         guard let tv = textView else { return }
         let sel = tv.selectedRange()
+
+        // Reveal the raw source of the table the caret sits in (if any).
+        let idx = parsed.tables.firstIndex { NSLocationInRange(sel.location, $0.range) }
+        if idx != revealedTableIndex {
+            revealedTableIndex = idx
+            restyle()
+        }
+
         guard sel.length > 0 else { toolbar.hide(); return }
         let rect = tv.firstRect(forCharacterRange: sel, actualRange: nil)
         toolbar.update(selectionRect: rect, hasSelection: true)
@@ -60,8 +71,9 @@ public final class EditorController: ObservableObject {
         self.parsed = parsed
         onParsed?(parsed)
 
-        let renderer = MarkdownRenderer(theme: theme, baseURL: baseURL,
+        var renderer = MarkdownRenderer(theme: theme, baseURL: baseURL,
                                         imageLoader: imageLoader, isDark: tv.isDark)
+        renderer.revealTableIndex = revealedTableIndex
         let rendered = renderer.render(source: source, parsed: parsed)
         let full = NSRange(location: 0, length: storage.length)
 

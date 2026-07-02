@@ -11,6 +11,9 @@ public struct MarkdownRenderer {
     public var baseURL: URL?
     public weak var imageLoader: ImageLoader?
     public var isDark: Bool
+    /// Table whose raw source is shown for editing (caret inside it) instead
+    /// of the drawn grid.
+    public var revealTableIndex: Int?
 
     public init(theme: Theme, baseURL: URL? = nil, imageLoader: ImageLoader? = nil, isDark: Bool = false) {
         self.theme = theme
@@ -197,6 +200,21 @@ public struct MarkdownRenderer {
         let full = NSRange(location: 0, length: text.length)
         let r = NSIntersectionRange(table.range, full)
         guard r.length > 0 else { return }
+
+        // Caret inside this table → reveal the raw source for editing (the
+        // transparent-text grid would otherwise take invisible keystrokes).
+        if index == revealTableIndex {
+            let p = NSMutableParagraphStyle()
+            p.lineHeightMultiple = 1.2
+            text.addAttributes([
+                .font: theme.codeFont,
+                .foregroundColor: theme.codeColor,
+                .backgroundColor: theme.codeBackground,
+                .paragraphStyle: p,
+            ], range: r)
+            return // no transparency, no anchor → no grid drawn
+        }
+
         // Make the raw source transparent (keeps line fragments — and thus their
         // reserved height — alive, unlike null glyphs) and give each row `rh`.
         let rh = theme.tableRowHeight

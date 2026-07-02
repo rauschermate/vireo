@@ -171,6 +171,10 @@ final class DocumentModel: ObservableObject, Identifiable {
 
     private func externalChange() {
         guard let url, !suppressReload else { return }
+        // A debounced autosave in flight means the user just typed: don't let a
+        // concurrent external change clobber those keystrokes — our save lands
+        // in ≤0.5 s and wins (last-writer, active typist prioritized).
+        guard saveWork == nil else { return }
         guard let disk = try? FileService.load(url), disk != source else { return }
         if !isDirty || Preferences.shared.autoSave {
             source = disk
