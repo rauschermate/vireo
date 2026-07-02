@@ -66,7 +66,8 @@ struct VireoApp: App {
                 state.focusMode.toggle()
             }.keyboardShortcut(".", modifiers: [.command, .shift])
             Divider()
-            Button("Zoom In") { state.zoom = min(3, state.zoom + 0.1) }.keyboardShortcut("+")
+            // "=" so plain ⌘+ (the =/+ key, unshifted) works — "+" would demand ⇧.
+            Button("Zoom In") { state.zoom = min(3, state.zoom + 0.1) }.keyboardShortcut("=")
             Button("Zoom Out") { state.zoom = max(0.6, state.zoom - 0.1) }.keyboardShortcut("-")
             Button("Actual Size") { state.zoom = 1 }.keyboardShortcut("0")
         }
