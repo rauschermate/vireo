@@ -87,8 +87,15 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Remove a document from the registry when its window closes: flush any
+    /// pending autosave, save if dirty, and let the model (and its file
+    /// watcher) deallocate. The save-changes *prompt* happens earlier, in
+    /// `WindowDelegateProxy.windowShouldClose`.
     func discard(_ id: UUID) {
-        if let doc = documents[id], doc.isDirty, doc.url != nil { doc.saveNow() }
+        if let doc = documents[id], doc.url != nil {
+            doc.flushPendingSave()
+            if doc.isDirty { doc.saveNow() }
+        }
         documents[id] = nil
         if activeDocID == id { activeDocID = nil }
     }

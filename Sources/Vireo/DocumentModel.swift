@@ -37,7 +37,10 @@ final class DocumentModel: ObservableObject, Identifiable {
 
     private func configure() {
         controller.baseURL = url?.deletingLastPathComponent()
-        controller.onParsed = { [weak self] parsed in self?.toc = parsed.toc }
+        controller.onParsed = { [weak self] parsed in
+            guard let self else { return }
+            if self.toc != parsed.toc { self.toc = parsed.toc }
+        }
         controller.onSourceChange = { [weak self] text in self?.handleEdit(text) }
         controller.onOpenLink = { [weak self] dest in self?.openLink(dest) }
     }
@@ -75,8 +78,19 @@ final class DocumentModel: ObservableObject, Identifiable {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
+    /// Flush a debounced autosave immediately (used when the window closes, so
+    /// the trailing ≤0.5 s of typing isn't lost with the deallocated model).
+    func flushPendingSave() {
+        guard saveWork != nil else { return }
+        saveWork?.cancel()
+        saveWork = nil
+        saveNow()
+    }
+
     func saveNow() {
         guard let url else { return }
+        saveWork?.cancel()
+        saveWork = nil
         do {
             suppressReload = true
             try FileService.save(source, to: url)
