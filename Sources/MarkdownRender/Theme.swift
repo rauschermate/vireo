@@ -12,6 +12,8 @@ public extension NSAttributedString.Key {
     static let vireoBullet = NSAttributedString.Key("vireoBullet")
     /// Task checkbox state drawn left of this (visible) char (NSNumber bool).
     static let vireoCheckbox = NSAttributedString.Key("vireoCheckbox")
+    /// Table index (into ParsedMarkdown.tables) on the hidden anchor char (NSNumber).
+    static let vireoTable = NSAttributedString.Key("vireoTable")
 }
 
 /// Visual design tokens. A single `zoom` factor scales the whole type system
@@ -45,6 +47,9 @@ public struct Theme: Sendable {
         .systemFont(ofSize: headingSize(level), weight: level <= 2 ? .bold : .semibold)
     }
     public var codeFont: NSFont { .monospacedSystemFont(ofSize: codeSize, weight: .regular) }
+    public var tableFont: NSFont { .systemFont(ofSize: baseSize * 0.95, weight: .regular) }
+    public var tableHeaderFont: NSFont { .systemFont(ofSize: baseSize * 0.95, weight: .semibold) }
+    public var tableRowHeight: CGFloat { ceil(baseSize * 1.35) + 16 }
     public var boldFont: NSFont { .systemFont(ofSize: baseSize, weight: .semibold) }
     public var italicFont: NSFont {
         NSFontManager.shared.convert(bodyFont, toHaveTrait: .italicFontMask)

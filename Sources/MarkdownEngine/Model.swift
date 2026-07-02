@@ -79,6 +79,48 @@ public struct ListMarker: Sendable, Equatable {
     }
 }
 
+public enum TableAlignment: Sendable, Equatable {
+    case left, center, right, none
+}
+
+public struct TableCell: Sendable, Equatable {
+    public var range: NSRange   // trimmed content range in the source
+    public var column: Int
+    public var alignment: TableAlignment
+    public init(range: NSRange, column: Int, alignment: TableAlignment) {
+        self.range = range
+        self.column = column
+        self.alignment = alignment
+    }
+}
+
+public struct TableRow: Sendable, Equatable {
+    public var isHeader: Bool
+    public var cells: [TableCell]
+    public init(isHeader: Bool, cells: [TableCell]) {
+        self.isHeader = isHeader
+        self.cells = cells
+    }
+}
+
+/// A GFM table. The raw source (pipes + separator row) is hidden; the renderer
+/// reserves vertical space per visible row and draws a real grid.
+public struct TableInfo: Sendable, Equatable {
+    public var range: NSRange
+    public var rows: [TableRow]      // header + body (separator excluded)
+    public var columnCount: Int
+    public var anchor: Int           // char that carries the draw attribute
+    public var separatorRange: NSRange?  // the `|---|` line, collapsed to ~0 height
+    public init(range: NSRange, rows: [TableRow], columnCount: Int,
+                anchor: Int, separatorRange: NSRange? = nil) {
+        self.range = range
+        self.rows = rows
+        self.columnCount = columnCount
+        self.anchor = anchor
+        self.separatorRange = separatorRange
+    }
+}
+
 public struct TOCEntry: Sendable, Equatable, Identifiable {
     public var id: Int { location }
     public var level: Int
@@ -101,17 +143,20 @@ public struct ParsedMarkdown: Sendable {
     public var images: [ImageRun]
     public var tasks: [TaskMark]
     public var listMarkers: [ListMarker]
+    public var tables: [TableInfo]
     public var toc: [TOCEntry]
 
     public init(markerRanges: [NSRange] = [], inlineRuns: [InlineRun] = [],
                 blockRuns: [BlockRun] = [], images: [ImageRun] = [],
-                tasks: [TaskMark] = [], listMarkers: [ListMarker] = [], toc: [TOCEntry] = []) {
+                tasks: [TaskMark] = [], listMarkers: [ListMarker] = [],
+                tables: [TableInfo] = [], toc: [TOCEntry] = []) {
         self.markerRanges = markerRanges
         self.inlineRuns = inlineRuns
         self.blockRuns = blockRuns
         self.images = images
         self.tasks = tasks
         self.listMarkers = listMarkers
+        self.tables = tables
         self.toc = toc
     }
 }

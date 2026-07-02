@@ -67,3 +67,18 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(parsed.images.first?.source, "pic.png")
     }
 }
+
+extension ParserTests {
+    func testTableParsing() {
+        let src = "| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n"
+        let parsed = MarkdownParser().parse(src)
+        XCTAssertEqual(parsed.tables.count, 1)
+        let t = parsed.tables[0]
+        XCTAssertEqual(t.columnCount, 2)
+        XCTAssertEqual(t.rows.count, 3)               // header + 2 body (separator excluded)
+        XCTAssertTrue(t.rows[0].isHeader)
+        XCTAssertFalse(t.rows[1].isHeader)
+        XCTAssertEqual(t.rows[0].cells.map { (src as NSString).substring(with: $0.range) }, ["A", "B"])
+        XCTAssertEqual(t.rows[1].cells.map { (src as NSString).substring(with: $0.range) }, ["1", "2"])
+    }
+}

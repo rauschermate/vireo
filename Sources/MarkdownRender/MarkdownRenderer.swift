@@ -49,6 +49,11 @@ public struct MarkdownRenderer {
             applyImage(image, to: text)
         }
 
+        // 5b. Tables: reserve row height and tag the anchor for drawing.
+        for (i, table) in parsed.tables.enumerated() {
+            applyTable(table, index: i, to: text)
+        }
+
         // 6. List bullets / numbers.
         for m in parsed.listMarkers where m.anchor < text.length {
             text.addAttribute(.vireoBullet, value: m.text as NSString,
@@ -184,6 +189,35 @@ public struct MarkdownRenderer {
         text.addAttribute(.paragraphStyle, value: p, range: image.range)
         text.addAttribute(.vireoImage, value: image.source as NSString,
                           range: NSRange(location: image.anchor, length: 1))
+    }
+
+    // MARK: Tables
+
+    private func applyTable(_ table: TableInfo, index: Int, to text: NSMutableAttributedString) {
+        let full = NSRange(location: 0, length: text.length)
+        let r = NSIntersectionRange(table.range, full)
+        guard r.length > 0 else { return }
+        // Make the raw source transparent (keeps line fragments — and thus their
+        // reserved height — alive, unlike null glyphs) and give each row `rh`.
+        let rh = theme.tableRowHeight
+        text.addAttribute(.foregroundColor, value: NSColor.clear, range: r)
+        let rowStyle = NSMutableParagraphStyle()
+        rowStyle.minimumLineHeight = rh
+        rowStyle.maximumLineHeight = rh
+        text.addAttribute(.paragraphStyle, value: rowStyle, range: r)
+
+        // Collapse the separator row so it adds no visible height.
+        if let sep = table.separatorRange, sep.upperBound <= text.length {
+            let collapsed = NSMutableParagraphStyle()
+            collapsed.minimumLineHeight = 0.01
+            collapsed.maximumLineHeight = 0.01
+            text.addAttribute(.paragraphStyle, value: collapsed, range: sep)
+        }
+
+        if table.anchor < text.length {
+            text.addAttribute(.vireoTable, value: NSNumber(value: index),
+                              range: NSRange(location: table.anchor, length: 1))
+        }
     }
 
     private func imageDrawHeight(for image: NSImage?) -> CGFloat {

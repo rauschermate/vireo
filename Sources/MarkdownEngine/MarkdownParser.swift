@@ -123,16 +123,57 @@ private struct Accumulator {
     }
 
     mutating func visitTable(_ table: Table) {
-        // v1: monospace-style each row; pipes remain visible (documented limit).
-        if let head = map.nsRange(table.head.range) {
-            result.blockRuns.append(BlockRun(range: head, kind: .tableRow(isHeader: true)))
-        }
-        for row in table.body.rows {
-            if let r = map.nsRange(row.range) {
-                result.blockRuns.append(BlockRun(range: r, kind: .tableRow(isHeader: false)))
+        guard let tableRange = map.nsRange(table.range) else { return }
+        let aligns = table.columnAlignments
+        func alignment(_ col: Int) -> TableAlignment {
+            guard col < aligns.count, let a = aligns[col] else { return .none }
+            switch a {
+            case .left: return .left
+            case .center: return .center
+            case .right: return .right
             }
         }
+
+        var rows: [TableRow] = []
+        var columnCount = 0
+
+        func makeRow(_ cellNodes: [Markup], isHeader: Bool) {
+            var cells: [TableCell] = []
+            for (col, node) in cellNodes.enumerated() {
+                guard let r = map.nsRange(node.range) else { continue }
+                cells.append(TableCell(range: trim(r), column: col, alignment: alignment(col)))
+            }
+            columnCount = max(columnCount, cells.count)
+            rows.append(TableRow(isHeader: isHeader, cells: cells))
+        }
+
+        makeRow(Array(table.head.cells), isHeader: true)
+        for row in table.body.rows {
+            makeRow(Array(row.cells), isHeader: false)
+        }
+
+        // The separator row is the 2nd source line of the table.
+        var lines: [NSRange] = []
+        enumerateLines(in: tableRange) { lines.append($0) }
+        let separator = lines.count > 1 ? lines[1] : nil
+
+        result.tables.append(TableInfo(range: tableRange, rows: rows,
+                                       columnCount: columnCount, anchor: tableRange.location,
+                                       separatorRange: separator))
+        // NB: the table's raw glyphs are made transparent (not null-hidden) by the
+        // renderer so the line fragments still reserve height for the drawn grid.
     }
+
+    /// Trim leading/trailing ASCII whitespace from a range.
+    private func trim(_ r: NSRange) -> NSRange {
+        var loc = r.location
+        var end = r.location + r.length
+        while loc < end, isSpace(ns.character(at: loc)) { loc += 1 }
+        while end > loc, isSpace(ns.character(at: end - 1)) { end -= 1 }
+        return NSRange(location: loc, length: end - loc)
+    }
+
+    private func isSpace(_ c: unichar) -> Bool { c == 0x20 || c == 0x09 }
 
     // MARK: Inline level
 

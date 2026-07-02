@@ -74,6 +74,10 @@ public final class EditorController: ObservableObject {
 
         layoutManager?.markerColor = theme.secondaryColor
         layoutManager?.bulletFont = theme.bodyFont
+        layoutManager?.tables = parsed.tables
+        layoutManager?.tableRowHeight = theme.tableRowHeight
+        layoutManager?.tableFont = theme.tableFont
+        layoutManager?.tableHeaderFont = theme.tableHeaderFont
         tv.typingAttributes = [.font: theme.bodyFont, .foregroundColor: theme.textColor]
         tv.needsDisplay = true
     }

@@ -1,4 +1,5 @@
 import AppKit
+import MarkdownEngine
 
 /// TextKit-1 layout manager that realises the hidden-syntax look:
 ///  • syntax-marker glyphs (`.vireoMarker`) are turned into null glyphs — present
@@ -16,6 +17,12 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     public var markerColor: NSColor = .secondaryLabelColor
     public var bulletFont: NSFont = .systemFont(ofSize: 16)
     public var imageProvider: ((String) -> NSImage?)?
+
+    // Table drawing config (set on each restyle).
+    public var tables: [TableInfo] = []
+    public var tableRowHeight: CGFloat = 40
+    public var tableFont: NSFont = .systemFont(ofSize: 15)
+    public var tableHeaderFont: NSFont = .systemFont(ofSize: 15, weight: .semibold)
 
     public override init() {
         super.init()
@@ -76,6 +83,91 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         storage.enumerateAttribute(.vireoImage, in: charRange) { value, range, _ in
             guard let src = value as? String, let img = imageProvider?(src) else { return }
             drawImage(img, atCharIndex: range.location, origin: origin)
+        }
+        storage.enumerateAttribute(.vireoTable, in: charRange) { value, range, _ in
+            guard let n = value as? NSNumber, tables.indices.contains(n.intValue) else { return }
+            drawTable(tables[n.intValue], atCharIndex: range.location, origin: origin, storage: storage)
+        }
+    }
+
+    private func drawTable(_ info: TableInfo, atCharIndex charIndex: Int, origin: NSPoint, storage: NSTextStorage) {
+        guard charIndex < numberOfGlyphs else { return }
+        let glyph = glyphIndexForCharacter(at: charIndex)
+        guard glyph < numberOfGlyphs else { return }
+        let lineRect = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let src = storage.string as NSString
+        let top = origin.y + lineRect.minY
+        let left = origin.x + lineRect.minX
+        let pad: CGFloat = 10
+        let rh = tableRowHeight
+        let cols = info.columnCount
+        guard cols > 0 else { return }
+
+        func cellText(_ cell: TableCell) -> String {
+            let r = NSIntersectionRange(cell.range, NSRange(location: 0, length: src.length))
+            return r.length > 0 ? src.substring(with: r) : ""
+        }
+        func attrs(header: Bool) -> [NSAttributedString.Key: Any] {
+            [.font: header ? tableHeaderFont : tableFont, .foregroundColor: NSColor.labelColor]
+        }
+
+        // Column widths from the widest cell per column.
+        var widths = [CGFloat](repeating: 0, count: cols)
+        for row in info.rows {
+            for cell in row.cells where cell.column < cols {
+                let w = (cellText(cell) as NSString).size(withAttributes: attrs(header: row.isHeader)).width
+                widths[cell.column] = max(widths[cell.column], w)
+            }
+        }
+        let colW = widths.map { $0 + pad * 2 }
+        let totalW = colW.reduce(0, +)
+        let rowCount = info.rows.count
+        let tableH = CGFloat(rowCount) * rh
+
+        var xs = [CGFloat]()
+        var acc = left
+        for w in colW { xs.append(acc); acc += w }
+        let right = left + totalW
+
+        // Header background.
+        NSColor.secondaryLabelColor.withAlphaComponent(0.10)
+            .setFill()
+        NSRect(x: left, y: top, width: totalW, height: rh).fill()
+
+        // Grid lines.
+        let grid = NSBezierPath()
+        grid.lineWidth = 1
+        for r in 0...rowCount {
+            let y = top + CGFloat(r) * rh
+            grid.move(to: NSPoint(x: left, y: y))
+            grid.line(to: NSPoint(x: right, y: y))
+        }
+        for i in 0...cols {
+            let x = i < xs.count ? xs[i] : right
+            grid.move(to: NSPoint(x: x, y: top))
+            grid.line(to: NSPoint(x: x, y: top + tableH))
+        }
+        NSColor.separatorColor.setStroke()
+        grid.stroke()
+
+        // Cell text.
+        for (rIdx, row) in info.rows.enumerated() {
+            let y = top + CGFloat(rIdx) * rh
+            for cell in row.cells where cell.column < cols {
+                let s = cellText(cell) as NSString
+                let a = attrs(header: row.isHeader)
+                let size = s.size(withAttributes: a)
+                let cellX = xs[cell.column]
+                let cellWidth = colW[cell.column]
+                var tx = cellX + pad
+                switch cell.alignment {
+                case .center: tx = cellX + (cellWidth - size.width) / 2
+                case .right: tx = cellX + cellWidth - pad - size.width
+                default: break
+                }
+                let ty = y + (rh - size.height) / 2
+                s.draw(at: NSPoint(x: tx, y: ty), withAttributes: a)
+            }
         }
     }
 

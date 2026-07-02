@@ -41,6 +41,11 @@ struct Snapshot {
         let layout = MarkdownLayoutManager()
         layout.markerColor = .secondaryLabelColor
         layout.bulletFont = .systemFont(ofSize: 16)
+        let theme = Theme(zoom: 1.0)
+        layout.tables = parsed.tables
+        layout.tableRowHeight = theme.tableRowHeight
+        layout.tableFont = theme.tableFont
+        layout.tableHeaderFont = theme.tableHeaderFont
         layout.imageProvider = { loader.image(forSource: $0, baseURL: URL(fileURLWithPath: inputPath).deletingLastPathComponent()) }
         storage.addLayoutManager(layout)
         let container = NSTextContainer(size: NSSize(width: width - inset * 2, height: 100_000))
