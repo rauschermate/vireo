@@ -13,14 +13,24 @@ Requires macOS 15+, Xcode 26 / Swift 6.
 # Run the test suite (parser / offset mapping)
 swift test
 
-# Build and launch a double-clickable app bundle with a sample document
-./scripts/build-app.sh debug
-open build/Vireo.app --args "$PWD/samples/welcome.md"
-
-# Or render the pipeline headlessly to a PNG (no window needed)
+# Render the pipeline headlessly to a PNG (no window needed)
 swift run VireoSnapshot samples/welcome.md /tmp/out.png          # light
 swift run VireoSnapshot samples/welcome.md /tmp/out-dark.png --dark
+
+# Build the full app with the embedded Quick Look extension (needs xcodegen)
+brew install xcodegen
+./scripts/build-app-xcode.sh Debug
+open build/Vireo.app --args "$PWD/samples/welcome.md"
+
+# Package a distributable .dmg
+./scripts/make-dmg.sh build/Vireo.app build/Vireo.dmg
+
+# Notarized release (needs a Developer ID — see scripts/release.sh)
+VIREO_TEAM_ID=… VIREO_SIGN_IDENTITY=… VIREO_NOTARY_PROFILE=… ./scripts/release.sh
 ```
+
+`scripts/build-app.sh` still produces a quick SPM-only bundle (no Quick Look
+extension) for fast iteration on the app itself.
 
 ## Architecture
 
@@ -50,6 +60,11 @@ just writing `textStorage.string` back to disk unchanged.
   folder sidebar, TOC sidebar, focus mode, in-document find (⌘F).
 - Auto-save (default) or explicit ⌘S mode; external-change reload with conflict prompt.
 - Registers `.md`/`.markdown` document types (open from Finder / command line).
+- **Quick Look preview extension** (`VireoQuickLook.appex`, embedded in the app)
+  that renders `.md` in Vireo's style when you press space in Finder, sharing the
+  exact parse → render → layout pipeline.
+- Xcode project generated from `project.yml` (XcodeGen) for the app + extension;
+  `.dmg` packaging and a Developer-ID notarization script.
 
 ## Known gaps / next steps
 
@@ -62,6 +77,6 @@ These are deliberately deferred (tracked against the eng-design phase plan):
 - **Tables** render as styled monospace (pipes visible), not a laid-out grid.
 - **Caret over hidden markers**: arrow keys step through zero-width hidden marker
   characters (the eng-design's noted option-C caret nuance). Acceptable for v1.
-- **Quick Look extension** and **notarized `.dmg`** packaging (eng-design Phase 5)
-  require a real Xcode project; `scripts/build-app.sh` produces a local, ad-hoc
-  signed bundle only.
+- **Notarization** (`scripts/release.sh`) needs an Apple Developer ID — the app,
+  Quick Look extension, dmg, and signing/notary scripts are all in place, but the
+  actual notarized build can only be produced with your credentials.

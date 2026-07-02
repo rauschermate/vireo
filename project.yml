@@ -1,0 +1,61 @@
+name: Vireo
+options:
+  bundleIdPrefix: com.materauscher
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+
+packages:
+  VireoKit:
+    path: .
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "6.0"
+    DEVELOPMENT_TEAM: ""            # set VIREO_TEAM_ID for signed/notarized builds
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"          # ad-hoc by default; release script overrides
+
+targets:
+  Vireo:
+    type: application
+    platform: macOS
+    sources:
+      - Sources/Vireo
+    dependencies:
+      - package: VireoKit
+        product: MarkdownEngine
+      - package: VireoKit
+        product: MarkdownRender
+      - package: VireoKit
+        product: MarkdownEditor
+      - package: VireoKit
+        product: VireoCore
+      - target: VireoQuickLook
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.materauscher.vireo
+        INFOPLIST_FILE: project/App-Info.plist
+        CODE_SIGN_ENTITLEMENTS: project/App.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        COMBINE_HIDPI_IMAGES: YES
+
+  VireoQuickLook:
+    type: app-extension
+    platform: macOS
+    sources:
+      - Sources/VireoQuickLook
+    dependencies:
+      - package: VireoKit
+        product: MarkdownEngine
+      - package: VireoKit
+        product: MarkdownRender
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.materauscher.vireo.QuickLook
+        INFOPLIST_FILE: project/QuickLook-Info.plist
+        CODE_SIGN_ENTITLEMENTS: project/QuickLook.entitlements
+        ENABLE_HARDENED_RUNTIME: YES

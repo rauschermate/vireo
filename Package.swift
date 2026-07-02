@@ -7,7 +7,9 @@ let package = Package(
         .macOS(.v15)
     ],
     products: [
-        .executable(name: "Vireo", targets: ["Vireo"]),
+        // Only libraries are exposed as products so the Xcode project's `Vireo`
+        // app target doesn't clash with a same-named package product. The `Vireo`
+        // and `VireoSnapshot` executables still run via `swift run <target>`.
         .library(name: "MarkdownEngine", targets: ["MarkdownEngine"]),
         .library(name: "MarkdownRender", targets: ["MarkdownRender"]),
         .library(name: "MarkdownEditor", targets: ["MarkdownEditor"]),
