@@ -14,10 +14,11 @@
         <string>$(PRODUCT_MODULE_NAME).PreviewViewController</string>
         <key>NSExtensionAttributes</key>
         <dict>
+            <!-- Markdown only — claiming public.plain-text would hijack Quick
+                 Look for every .txt/.log on the system. -->
             <key>QLSupportedContentTypes</key>
             <array>
                 <string>net.daringfireball.markdown</string>
-                <string>public.plain-text</string>
             </array>
             <key>QLSupportsSearchableItems</key>
             <false/>
