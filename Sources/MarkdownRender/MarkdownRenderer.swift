@@ -154,7 +154,7 @@ public struct MarkdownRenderer {
                 .foregroundColor: theme.linkColor,
                 .underlineStyle: NSUnderlineStyle.single.rawValue,
                 .vireoLink: link as NSString,
-                .cursor: NSCursor.pointingHand,
+                .toolTip: "⌘-click to open \(link)" as NSString,
             ], range: r)
         }
     }

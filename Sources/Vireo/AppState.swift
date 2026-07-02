@@ -65,7 +65,13 @@ final class AppState: ObservableObject {
     func register(_ doc: DocumentModel) {
         documents[doc.id] = doc
         doc.controller.zoom = zoom
-        doc.openLinkHandler = { [weak self] target in self?.requestOpen(target) }
+        doc.openLinkHandler = { [weak self] target, anchor in
+            guard let self, let opened = self.requestOpen(target) else { return }
+            if let anchor {
+                if opened.toc.isEmpty { opened.pendingAnchor = anchor }
+                else { opened.scrollToAnchor(anchor) }
+            }
+        }
     }
 
     func newDocument() -> DocumentModel {
@@ -102,19 +108,28 @@ final class AppState: ObservableObject {
 
     // MARK: Opening (routes through the window layer)
 
-    /// Open a URL in a new tabbed window, focusing an existing one if already open.
-    func requestOpen(_ url: URL) {
+    /// Open a URL in a new tabbed window — focusing an existing window if the
+    /// file is already open, or reusing a pristine untitled window if one exists.
+    @discardableResult
+    func requestOpen(_ url: URL) -> DocumentModel? {
         if let existing = documents.values.first(where: { $0.url == url }) {
             focusWindow(for: existing.id)
-            return
+            return existing
         }
-        guard let doc = makeDocument(for: url) else { return }
+        if let pristine = documents.values.first(where: { $0.url == nil && $0.source.isEmpty }) {
+            pristine.adopt(url)
+            Preferences.shared.addRecent(url)
+            focusWindow(for: pristine.id)
+            return pristine
+        }
+        guard let doc = makeDocument(for: url) else { return nil }
         if let proxy = openWindowProxy {
             windowQueue.append(doc.id)
             proxy()
         } else {
             pendingURLs.append(url)
         }
+        return doc
     }
 
     func openFilePanel() {

@@ -40,24 +40,70 @@ final class DocumentModel: ObservableObject, Identifiable {
         controller.onParsed = { [weak self] parsed in
             guard let self else { return }
             if self.toc != parsed.toc { self.toc = parsed.toc }
+            if let anchor = self.pendingAnchor, !self.toc.isEmpty {
+                self.pendingAnchor = nil
+                self.scrollToAnchor(anchor)
+            }
         }
         controller.onSourceChange = { [weak self] text in self?.handleEdit(text) }
         controller.onOpenLink = { [weak self] dest in self?.openLink(dest) }
     }
 
-    var openLinkHandler: ((URL) -> Void)?
+    var openLinkHandler: ((URL, String?) -> Void)?
+    /// Anchor to scroll to once the document has been parsed (cross-file links).
+    var pendingAnchor: String?
 
     private func openLink(_ dest: String) {
         if let u = URL(string: dest), u.scheme == "http" || u.scheme == "https" {
             NSWorkspace.shared.open(u)
             return
         }
-        // internal link relative to this document's folder
-        guard let base = url?.deletingLastPathComponent() else { return }
-        let target = base.appendingPathComponent(dest)
-        if FileManager.default.fileExists(atPath: target.path) {
-            openLinkHandler?(target)
+        // same-document anchor: `#section`
+        if dest.hasPrefix("#") {
+            scrollToAnchor(String(dest.dropFirst()))
+            return
         }
+        // internal link relative to this document's folder, optionally `file.md#anchor`
+        guard let base = url?.deletingLastPathComponent() else { return }
+        let parts = dest.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
+        let path = String(parts[0])
+        let anchor = parts.count > 1 ? String(parts[1]) : nil
+        let target = base.appendingPathComponent(path).standardizedFileURL
+        if FileManager.default.fileExists(atPath: target.path) {
+            openLinkHandler?(target, anchor)
+        }
+    }
+
+    /// Scroll to the heading whose GitHub-style slug matches `anchor`.
+    func scrollToAnchor(_ anchor: String) {
+        let want = Self.slug(anchor.removingPercentEncoding ?? anchor)
+        guard !want.isEmpty else { return }
+        if let entry = toc.first(where: { Self.slug($0.title) == want }) {
+            controller.scroll(to: entry.location)
+        }
+    }
+
+    /// GitHub-style heading slug: lowercase, punctuation dropped, spaces → "-".
+    static func slug(_ s: String) -> String {
+        var out = ""
+        for ch in s.lowercased() {
+            if ch.isLetter || ch.isNumber || ch == "-" || ch == "_" { out.append(ch) }
+            else if ch == " " { out.append("-") }
+        }
+        return out
+    }
+
+    /// Load a file into a pristine untitled document (Finder open reuses the
+    /// initial empty window instead of leaving a stray Untitled behind).
+    func adopt(_ newURL: URL) {
+        guard url == nil, let text = try? FileService.load(newURL) else { return }
+        url = newURL
+        title = newURL.lastPathComponent
+        source = text
+        isDirty = false
+        controller.baseURL = newURL.deletingLastPathComponent()
+        controller.replaceEntireSource(text)
+        startWatching()
     }
 
     // MARK: Editing / saving

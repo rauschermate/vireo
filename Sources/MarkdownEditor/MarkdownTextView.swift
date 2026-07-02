@@ -12,7 +12,11 @@ public final class MarkdownTextView: NSTextView {
     }
 
     public override func mouseDown(with event: NSEvent) {
-        if event.clickCount == 1, let link = linkDestination(at: event) {
+        // ⌘-click follows links (editor convention); a plain click must still
+        // place the caret so link text stays editable.
+        if event.clickCount == 1,
+           event.modifierFlags.contains(.command),
+           let link = linkDestination(at: event) {
             controller?.onOpenLink?(link)
             return
         }
