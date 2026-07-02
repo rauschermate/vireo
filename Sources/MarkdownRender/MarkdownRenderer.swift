@@ -12,8 +12,11 @@ public struct MarkdownRenderer {
     public weak var imageLoader: ImageLoader?
     public var isDark: Bool
     /// Table whose raw source is shown for editing (caret inside it) instead
-    /// of the drawn grid.
-    public var revealTableIndex: Int?
+    /// of the drawn grid, identified by its absolute anchor position.
+    public var revealTableAnchor: Int?
+    /// When rendering a slice of the document, the slice's absolute start —
+    /// lets position-carrying attributes (tables) stay in document coordinates.
+    public var originOffset: Int = 0
 
     public init(theme: Theme, baseURL: URL? = nil, imageLoader: ImageLoader? = nil, isDark: Bool = false) {
         self.theme = theme
@@ -203,7 +206,7 @@ public struct MarkdownRenderer {
 
         // Caret inside this table → reveal the raw source for editing (the
         // transparent-text grid would otherwise take invisible keystrokes).
-        if index == revealTableIndex {
+        if originOffset + table.anchor == revealTableAnchor {
             let p = NSMutableParagraphStyle()
             p.lineHeightMultiple = 1.2
             text.addAttributes([
@@ -233,7 +236,9 @@ public struct MarkdownRenderer {
         }
 
         if table.anchor < text.length {
-            text.addAttribute(.vireoTable, value: NSNumber(value: index),
+            // Value = the table's *absolute* anchor; the layout manager looks
+            // its TableInfo up by anchor (index-stable across slice renders).
+            text.addAttribute(.vireoTable, value: NSNumber(value: originOffset + table.anchor),
                               range: NSRange(location: table.anchor, length: 1))
         }
     }

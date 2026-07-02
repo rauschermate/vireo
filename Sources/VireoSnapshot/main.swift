@@ -14,8 +14,63 @@ struct Snapshot {
         let dark = args.contains("--dark")
 
         MainActor.assumeIsolated {
-            render(inputPath: inputPath, outPath: outPath, dark: dark)
+            if args.contains("--bench") {
+                bench(inputPath: inputPath)
+            } else {
+                render(inputPath: inputPath, outPath: outPath, dark: dark)
+            }
         }
+    }
+
+    /// `--bench`: time the parse and render stages separately (no drawing).
+    @MainActor
+    static func bench(inputPath: String) {
+        guard let source = try? String(contentsOfFile: inputPath, encoding: .utf8) else {
+            FileHandle.standardError.write("cannot read \(inputPath)\n".data(using: .utf8)!)
+            exit(1)
+        }
+        let bytes = source.utf8.count
+        let parser = MarkdownParser()
+        let loader = ImageLoader()
+        let renderer = MarkdownRenderer(theme: Theme(zoom: 1.0), imageLoader: loader, isDark: false)
+
+        // warm-up
+        _ = parser.parse(source)
+
+        func time(_ label: String, _ block: () -> Void) {
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            block()
+            let ms = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1_000_000
+            print(String(format: "%@: %.1f ms", label, ms))
+        }
+
+        var parsed = ParsedMarkdown()
+        time("full parse (incl. source mapping)") { parsed = parser.parse(source) }
+        time("full render (attributed string)") { _ = renderer.render(source: source, parsed: parsed) }
+
+        // Simulate a keystroke mid-document through the incremental path.
+        let incremental = IncrementalParser()
+        _ = incremental.update(source)
+        let ns = source as NSString
+        let mid = ns.length / 2
+        let insertAt = ns.range(of: "\n", options: [], range: NSRange(location: mid, length: ns.length - mid)).location + 1
+        let edited = ns.replacingCharacters(in: NSRange(location: insertAt, length: 0), with: "x")
+        var update: IncrementalUpdate?
+        time("incremental keystroke (parse+splice)") { update = incremental.update(edited) }
+        if let update {
+            if let dirty = update.dirtyRange {
+                var sliceMS = 0.0
+                let t0 = DispatchTime.now().uptimeNanoseconds
+                let sliceSource = (edited as NSString).substring(with: dirty)
+                let sliceParsed = update.parsed.slice(dirty)
+                _ = renderer.render(source: sliceSource, parsed: sliceParsed)
+                sliceMS = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1_000_000
+                print(String(format: "incremental slice render: %.1f ms (dirty %d chars)", sliceMS, dirty.length))
+            } else {
+                print("incremental keystroke fell back to full")
+            }
+        }
+        print("size: \(bytes / 1024) KB, blocks: \(parsed.blockRuns.count), markers: \(parsed.markerRanges.count)")
     }
 
     @MainActor
@@ -35,8 +90,9 @@ struct Snapshot {
                                         imageLoader: loader, isDark: dark)
         // --reveal-table <n>: render table n as raw source (caret-inside state)
         let args = CommandLine.arguments
-        if let i = args.firstIndex(of: "--reveal-table"), i + 1 < args.count {
-            renderer.revealTableIndex = Int(args[i + 1])
+        if let i = args.firstIndex(of: "--reveal-table"), i + 1 < args.count,
+           let n = Int(args[i + 1]), parsed.tables.indices.contains(n) {
+            renderer.revealTableAnchor = parsed.tables[n].anchor
         }
         let attributed = renderer.render(source: source, parsed: parsed)
 

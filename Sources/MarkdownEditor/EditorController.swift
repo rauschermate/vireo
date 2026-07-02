@@ -18,12 +18,13 @@ public final class EditorController: ObservableObject {
 
     @Published public var zoom: CGFloat = 1.0 { didSet { restyle() } }
 
-    private let parser = MarkdownParser()
+    private let incremental = IncrementalParser()
     private var restyleWork: DispatchWorkItem?
     public private(set) var parsed = ParsedMarkdown()
     private lazy var toolbar = FloatingToolbar(controller: self)
-    /// Table whose source is revealed because the caret is inside it.
-    private var revealedTableIndex: Int?
+    /// Table whose source is revealed because the caret is inside it
+    /// (identified by absolute anchor — stable across incremental edits).
+    private var revealedTableAnchor: Int?
 
     public init() {
         imageLoader.onChange = { [weak self] in self?.restyle() }
@@ -35,11 +36,17 @@ public final class EditorController: ObservableObject {
         guard let tv = textView else { return }
         let sel = tv.selectedRange()
 
-        // Reveal the raw source of the table the caret sits in (if any).
-        let idx = parsed.tables.firstIndex { NSLocationInRange(sel.location, $0.range) }
-        if idx != revealedTableIndex {
-            revealedTableIndex = idx
-            restyle()
+        // Reveal the raw source of the table the caret sits in (if any) —
+        // restyling only the affected table ranges, not the whole document.
+        let anchor = parsed.tables.first { NSLocationInRange(sel.location, $0.range) }?.anchor
+        if anchor != revealedTableAnchor {
+            let previous = revealedTableAnchor
+            revealedTableAnchor = anchor
+            for a in [previous, anchor].compactMap({ $0 }) {
+                if let range = parsed.tables.first(where: { $0.anchor == a })?.range {
+                    applyStyles(dirty: range)
+                }
+            }
         }
 
         guard sel.length > 0 else { toolbar.hide(); return }
@@ -82,38 +89,61 @@ public final class EditorController: ObservableObject {
 
     // MARK: Styling
 
-    /// Debounced re-parse + re-style after edits.
+    /// Debounced incremental re-parse + re-style after edits.
     public func scheduleRestyle() {
         if let tv = textView, let storage = tv.textStorage {
             onSourceChange?(storage.string)
         }
         restyleWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.restyle() }
+        let work = DispatchWorkItem { [weak self] in self?.restyleAfterEdit() }
         restyleWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
     }
 
-    /// Re-parse the source and re-apply all attributes in place. Characters are
-    /// never touched, so the selection and the on-disk source are preserved.
+    /// Edit path: incremental parse; re-apply attributes only over the dirty
+    /// region (the whole document when the parser had to fall back).
+    private func restyleAfterEdit() {
+        guard let tv = textView, let storage = tv.textStorage else { return }
+        let update = incremental.update(storage.string)
+        parsed = update.parsed
+        onParsed?(parsed)
+        applyStyles(dirty: update.dirtyRange)
+    }
+
+    /// Full restyle: theme, zoom, appearance or image loads changed, so every
+    /// attribute must be recomputed even though the text didn't change.
     public func restyle() {
         guard let tv = textView, let storage = tv.textStorage else { return }
-        let source = storage.string
-        let parsed = parser.parse(source)
-        self.parsed = parsed
+        let update = incremental.update(storage.string)
+        parsed = update.parsed
         onParsed?(parsed)
+        applyStyles(dirty: nil)
+    }
 
-        var renderer = MarkdownRenderer(theme: theme, baseURL: baseURL,
-                                        imageLoader: imageLoader, isDark: tv.isDark)
-        renderer.revealTableIndex = revealedTableIndex
-        let rendered = renderer.render(source: source, parsed: parsed)
+    /// Re-render and re-apply attributes over `dirty` (nil = whole document).
+    /// Characters are never touched, so the selection and the on-disk source
+    /// are preserved; bounding the range bounds TextKit's layout invalidation.
+    private func applyStyles(dirty: NSRange?) {
+        guard let tv = textView, let storage = tv.textStorage else { return }
         let full = NSRange(location: 0, length: storage.length)
+        let window = dirty.map { NSIntersectionRange($0, full) } ?? full
 
-        storage.beginEditing()
-        storage.setAttributes(nil, range: full)
-        rendered.enumerateAttributes(in: NSRange(location: 0, length: rendered.length)) { attrs, range, _ in
-            storage.setAttributes(attrs, range: range)
+        if window.length > 0 {
+            var renderer = MarkdownRenderer(theme: theme, baseURL: baseURL,
+                                            imageLoader: imageLoader, isDark: tv.isDark)
+            renderer.revealTableAnchor = revealedTableAnchor
+            renderer.originOffset = window.location
+            let sliceSource = (storage.string as NSString).substring(with: window)
+            let sliceParsed = window == full ? parsed : parsed.slice(window)
+            let rendered = renderer.render(source: sliceSource, parsed: sliceParsed)
+
+            storage.beginEditing()
+            rendered.enumerateAttributes(in: NSRange(location: 0, length: rendered.length)) { attrs, range, _ in
+                storage.setAttributes(attrs, range: NSRange(location: range.location + window.location,
+                                                            length: range.length))
+            }
+            storage.endEditing()
         }
-        storage.endEditing()
 
         layoutManager?.markerColor = theme.secondaryColor
         layoutManager?.bulletFont = theme.bodyFont
@@ -131,6 +161,7 @@ public final class EditorController: ObservableObject {
         guard let tv = textView, let storage = tv.textStorage else { return }
         let sel = tv.selectedRange()
         storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: s)
+        incremental.reset() // wholesale replacement — diffing history is useless
         restyle()
         let caret = min(sel.location, (s as NSString).length)
         tv.setSelectedRange(NSRange(location: caret, length: 0))

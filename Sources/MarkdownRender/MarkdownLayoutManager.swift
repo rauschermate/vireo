@@ -85,8 +85,9 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
             drawImage(img, atCharIndex: range.location, origin: origin)
         }
         storage.enumerateAttribute(.vireoTable, in: charRange) { value, range, _ in
-            guard let n = value as? NSNumber, tables.indices.contains(n.intValue) else { return }
-            drawTable(tables[n.intValue], atCharIndex: range.location, origin: origin, storage: storage)
+            guard let n = value as? NSNumber,
+                  let info = tables.first(where: { $0.anchor == n.intValue }) else { return }
+            drawTable(info, atCharIndex: range.location, origin: origin, storage: storage)
         }
     }
 

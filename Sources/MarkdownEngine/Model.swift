@@ -135,7 +135,7 @@ public struct TOCEntry: Sendable, Equatable, Identifiable {
 
 /// The fully-analysed markdown document: everything the renderer needs,
 /// all expressed as ranges over the untouched source string.
-public struct ParsedMarkdown: Sendable {
+public struct ParsedMarkdown: Sendable, Equatable {
     /// Syntax delimiter ranges to hide (`#`, `**`, `` ` ``, `[`, `](url)`, list bullets, fences, …).
     public var markerRanges: [NSRange]
     public var inlineRuns: [InlineRun]
@@ -158,5 +158,47 @@ public struct ParsedMarkdown: Sendable {
         self.listMarkers = listMarkers
         self.tables = tables
         self.toc = toc
+    }
+}
+
+public extension ParsedMarkdown {
+    /// The runs intersecting `window`, rebased so `window.location` becomes 0.
+    /// Used to restyle only the dirty region after an incremental parse; the
+    /// window aligns with block boundaries, so intersecting runs lie inside it.
+    func slice(_ window: NSRange) -> ParsedMarkdown {
+        let d = -window.location
+        func hits(_ r: NSRange) -> Bool {
+            NSIntersectionRange(r, window).length > 0
+                || (r.length == 0 && NSLocationInRange(r.location, window))
+        }
+        func shift(_ r: NSRange) -> NSRange { NSRange(location: r.location + d, length: r.length) }
+
+        var out = ParsedMarkdown()
+        out.markerRanges = markerRanges.filter(hits).map(shift)
+        out.inlineRuns = inlineRuns.filter { hits($0.range) }
+            .map { var x = $0; x.range = shift(x.range); return x }
+        out.blockRuns = blockRuns.filter { hits($0.range) }
+            .map { var x = $0; x.range = shift(x.range); return x }
+        out.images = images.filter { hits($0.range) }
+            .map { var x = $0; x.range = shift(x.range); x.anchor += d; return x }
+        out.tasks = tasks.filter { NSLocationInRange($0.anchor, window) }
+            .map { var x = $0; x.anchor += d; return x }
+        out.listMarkers = listMarkers.filter { NSLocationInRange($0.anchor, window) }
+            .map { var x = $0; x.anchor += d; return x }
+        out.tables = tables.filter { hits($0.range) }.map { t in
+            var x = t
+            x.range = shift(x.range)
+            x.anchor += d
+            if let sep = x.separatorRange { x.separatorRange = shift(sep) }
+            x.rows = x.rows.map { row in
+                var r = row
+                r.cells = r.cells.map { var c = $0; c.range = shift(c.range); return c }
+                return r
+            }
+            return x
+        }
+        out.toc = toc.filter { NSLocationInRange($0.location, window) }
+            .map { var x = $0; x.location += d; return x }
+        return out
     }
 }

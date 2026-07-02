@@ -75,8 +75,6 @@ on ⌘-click (plain click edits); `#anchor` and `file.md#anchor` links navigate.
 Implementation deviations from the eng-design are documented in
 [`docs/eng-design.md` §14](docs/eng-design.md). Remaining work:
 
-- **Incremental re-parse** — edits currently re-parse and re-style the whole
-  document (debounced); fine for notes, a perf debt for very large files.
 - **Caret over hidden markers**: arrow keys step through zero-width hidden marker
   characters (the eng-design's noted option-C caret nuance). Acceptable for v1.
 - **Notarization** (`scripts/release.sh`) needs an Apple Developer ID — the app,

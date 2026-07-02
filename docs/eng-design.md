@@ -251,9 +251,15 @@ Where the shipped implementation intentionally differs from the sections above:
   source text (null-hiding would collapse line heights). When the caret enters a
   table, its raw source is revealed for editing and the grid returns on exit —
   option-B behavior scoped to tables only.
-- **Full-document re-parse per (debounced) edit, not incremental (§5).** Correct
-  but O(document) per keystroke; fine for notes-sized files, the known perf debt
-  for large ones. Planned as a separate performance pass.
+- **Incremental re-parse (§5) — implemented.** `IncrementalParser` diffs each
+  edit against the previous source, expands to blank-line/block boundaries
+  (blocks may span blank lines: fences, HTML), re-parses only that slice with
+  cmark, and splices it into the previous parse; attributes are re-applied only
+  over the dirty range, bounding TextKit's layout invalidation. Non-local edits
+  (unbalanced fences, link reference definitions) fall back to a full parse.
+  Contract enforced by tests: incremental output must be *identical* to a full
+  re-parse (scenario + fuzz coverage). Measured keystroke cost: ~4.5 s → ~16 ms
+  on a 1.4 MB document, ~240 ms → ~1.5 ms at 162 KB (release).
 - **Liquid Glass (§8.0).** The floating toolbar uses `NSGlassEffectView` on
   macOS 26+ (material fallback on 15); sidebars use standard system materials.
 - **Quick Look thumbnail extension** (§9 stretch) not built.

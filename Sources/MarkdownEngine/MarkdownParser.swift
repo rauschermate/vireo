@@ -8,13 +8,29 @@ public struct MarkdownParser {
     public init() {}
 
     public func parse(_ source: String) -> ParsedMarkdown {
+        let bench = ProcessInfo.processInfo.environment["VIREO_BENCH"] != nil
+        func stamp() -> UInt64 { DispatchTime.now().uptimeNanoseconds }
+        func report(_ label: String, _ t0: UInt64) {
+            if bench { print(String(format: "  %@: %.1f ms", label,
+                                    Double(stamp() - t0) / 1_000_000)) }
+        }
+
+        var t = stamp()
         let map = SourceMapping(source)
+        report("source mapping", t)
+
+        t = stamp()
         let ns = source as NSString
         let doc = Document(parsing: source)
+        report("cmark parse", t)
+
+        t = stamp()
         var acc = Accumulator(map: map, ns: ns)
         for child in doc.children {
             acc.visitBlock(child, listDepth: 0, inQuote: false)
         }
+        report("AST walk", t)
+
         acc.result.markerRanges = acc.result.markerRanges
             .filter { $0.length > 0 }
             .sorted { $0.location < $1.location }
@@ -85,8 +101,15 @@ private struct Accumulator {
                 result.blockRuns.append(BlockRun(range: r, kind: .thematicBreak))
             }
 
+        case let html as HTMLBlock:
+            // Rendered as plain text, but recorded as a block so incremental
+            // window expansion sees it (HTML blocks can span blank lines).
+            if let r = map.nsRange(html.range) {
+                result.blockRuns.append(BlockRun(range: r, kind: .paragraph))
+            }
+
         default:
-            // HTMLBlock and anything else: leave visible, recurse for safety.
+            // Anything else: leave visible, recurse for safety.
             for c in node.children { visitBlock(c, listDepth: listDepth, inQuote: inQuote) }
         }
     }
