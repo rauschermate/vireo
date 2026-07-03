@@ -132,6 +132,45 @@ final class AppState: ObservableObject {
         return doc
     }
 
+    /// ⌘N: create a real `.md` on disk — in the active document's folder, else
+    /// the opened sidebar folder, else wherever the user picks — and open it.
+    func createNewFile() {
+        let folder = activeDocument?.url?.deletingLastPathComponent() ?? rootFolder?.url
+        if let folder {
+            let url = availableUntitledURL(in: folder)
+            do {
+                try FileService.save("", to: url)
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "Couldn't create “\(url.lastPathComponent)”"
+                alert.informativeText = error.localizedDescription
+                alert.runModal()
+                return
+            }
+            if let root = rootFolder { openFolder(root.url) } // refresh sidebar
+            Preferences.shared.addRecent(url)
+            requestOpen(url)
+        } else {
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = "Untitled.md"
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            try? FileService.save("", to: url)
+            Preferences.shared.addRecent(url)
+            requestOpen(url)
+        }
+    }
+
+    /// First free "Untitled.md" / "Untitled 2.md" / … in `folder`.
+    private func availableUntitledURL(in folder: URL) -> URL {
+        var candidate = folder.appendingPathComponent("Untitled.md")
+        var i = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = folder.appendingPathComponent("Untitled \(i).md")
+            i += 1
+        }
+        return candidate
+    }
+
     func openFilePanel() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = markdownTypes()
