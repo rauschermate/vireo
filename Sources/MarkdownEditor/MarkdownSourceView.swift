@@ -61,6 +61,15 @@ public struct MarkdownSourceView: NSViewRepresentable {
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = true
         scroll.documentView = textView
+
+        // Re-center the reading column on every live resize (SwiftUI's
+        // updateNSView only fires on state changes, not window resizes).
+        scroll.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            forName: NSView.frameDidChangeNotification,
+            object: scroll, queue: .main) { [weak controller] _ in
+            Task { @MainActor in controller?.recenterContent() }
+        }
         return (scroll, textView)
     }
 
@@ -82,15 +91,7 @@ public struct MarkdownSourceView: NSViewRepresentable {
     }
 
     public func updateNSView(_ scroll: NSScrollView, context: Context) {
-        guard let textView = scroll.documentView as? MarkdownTextView else { return }
-        // Keep the reading column centered with a max width.
-        let available = scroll.contentSize.width
-        let target = min(available, controller.theme.contentMaxWidth + 48)
-        let side = max(24, (available - target) / 2)
-        let inset = textView.textContainerInset
-        if abs(inset.width - side) > 0.5 {
-            textView.textContainerInset = NSSize(width: side, height: inset.height)
-        }
+        controller.recenterContent()
     }
 
     public func makeCoordinator() -> Coordinator { Coordinator(controller: controller) }
