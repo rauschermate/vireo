@@ -52,6 +52,10 @@ public final class EditorController: ObservableObject {
             }
         }
 
+        // Caret geometry on empty lines follows typingAttributes — keep them
+        // in sync with wherever the caret just moved to.
+        refreshTypingAttributes()
+
         guard sel.length > 0 else { toolbar.hide(); return }
         let rect = tv.firstRect(forCharacterRange: sel, actualRange: nil)
         toolbar.update(selectionRect: rect, hasSelection: true,
@@ -228,8 +232,38 @@ public final class EditorController: ObservableObject {
         layoutManager?.listMarkers = parsed.listMarkers
         layoutManager?.taskMarks = parsed.tasks
         layoutManager?.collapsedAnchors = collapsedAnchors
-        tv.typingAttributes = [.font: theme.bodyFont, .foregroundColor: theme.textColor]
+        refreshTypingAttributes()
         tv.needsDisplay = true
+    }
+
+    /// Typing attributes drive the caret's geometry on empty lines (TextKit's
+    /// "extra line fragment") — without the real paragraph style the caret sat
+    /// compact and unindented after Enter, then jumped down/right once the
+    /// first character brought the styled metrics in. Inherit font/paragraph
+    /// from the character before the caret; strip decorations and our custom
+    /// keys so hidden syntax and underlines don't leak into fresh typing.
+    public func refreshTypingAttributes() {
+        guard let tv = textView, let storage = tv.textStorage else { return }
+        var font = theme.bodyFont
+        var paragraph: NSParagraphStyle = {
+            let p = NSMutableParagraphStyle()
+            p.lineHeightMultiple = theme.lineHeightMultiple
+            p.paragraphSpacing = theme.baseSize * 0.5
+            return p
+        }()
+
+        let caret = tv.selectedRange().location
+        if storage.length > 0 {
+            let probe = min(max(caret - 1, 0), storage.length - 1)
+            let attrs = storage.attributes(at: probe, effectiveRange: nil)
+            if let f = attrs[.font] as? NSFont, !f.isFixedPitch { font = f }
+            if let p = attrs[.paragraphStyle] as? NSParagraphStyle { paragraph = p }
+        }
+        tv.typingAttributes = [
+            .font: font,
+            .foregroundColor: theme.textColor,
+            .paragraphStyle: paragraph,
+        ]
     }
 
     /// Replace the whole document (external reload). Programmatic storage edits
