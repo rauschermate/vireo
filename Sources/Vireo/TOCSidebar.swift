@@ -1,18 +1,36 @@
 import SwiftUI
 import MarkdownEngine
 
-/// Table of contents: sits directly on the document background (no divider,
-/// no material) so it reads as part of the page, entries dim until hovered.
+/// Table of contents: sits directly on the document background — quiet, light
+/// entries whose *text* brightens on hover (no box highlight). Hovering the
+/// panel reveals a small ✕ that hides it.
 struct TOCSidebar: View {
     @ObservedObject var document: DocumentModel
+    @EnvironmentObject private var state: AppState
+    @State private var hoveringPanel = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Contents")
-                .font(.caption).bold()
-                .foregroundStyle(.tertiary)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+            HStack {
+                Text("Contents")
+                    .font(.caption).bold()
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                Button {
+                    state.showTOC = false
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .opacity(hoveringPanel ? 1 : 0)
+                .animation(.easeInOut(duration: 0.15), value: hoveringPanel)
+                .help("Hide table of contents")
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(document.toc) { entry in
@@ -26,6 +44,7 @@ struct TOCSidebar: View {
         }
         .frame(maxHeight: .infinity)
         .background(Color(nsColor: .textBackgroundColor))
+        .onHover { hoveringPanel = $0 }
     }
 }
 
@@ -39,17 +58,16 @@ private struct TOCRow: View {
             Text(entry.title)
                 .font(.callout)
                 .lineLimit(1)
-                .foregroundStyle(hovering ? Color.primary : Color.secondary)
+                .foregroundStyle(hovering ? Color.primary.opacity(0.85)
+                                          : Color.secondary.opacity(0.7))
                 .padding(.leading, CGFloat(entry.level - 1) * 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(hovering ? Color.primary.opacity(0.06) : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 5))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 3)
+        .animation(.easeInOut(duration: 0.12), value: hovering)
         .onHover { hovering = $0 }
     }
 }
