@@ -280,10 +280,38 @@ public final class EditorController: ObservableObject {
 
     // MARK: Navigation
 
+    /// Web-style smooth scroll to a character position (TOC clicks, anchors).
     public func scroll(to location: Int) {
-        guard let tv = textView, location <= (tv.textStorage?.length ?? 0) else { return }
-        tv.scrollRangeToVisible(NSRange(location: location, length: 0))
+        guard let tv = textView, let storage = tv.textStorage,
+              location <= storage.length else { return }
         tv.setSelectedRange(NSRange(location: location, length: 0))
+
+        guard let scroll = tv.enclosingScrollView,
+              let lm = tv.layoutManager, let container = tv.textContainer else {
+            tv.scrollRangeToVisible(NSRange(location: location, length: 0))
+            return
+        }
+        // Force layout up to the target so its rect is meaningful.
+        let charRange = NSRange(location: min(location, max(0, storage.length - 1)), length: 1)
+        let glyphRange = lm.glyphRange(forCharacterRange: charRange, actualCharacterRange: nil)
+        lm.ensureLayout(forGlyphRange: glyphRange)
+        let rect = lm.boundingRect(forGlyphRange: glyphRange, in: container)
+
+        var targetY = rect.minY + tv.textContainerInset.height - 28 // breathing room above
+        let maxY = max(0, tv.frame.height - scroll.contentSize.height)
+        targetY = max(0, min(targetY, maxY))
+
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.35
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            ctx.allowsImplicitAnimation = true
+            scroll.contentView.animator().setBoundsOrigin(
+                NSPoint(x: scroll.contentView.bounds.origin.x, y: targetY))
+        }, completionHandler: { [weak scroll] in
+            MainActor.assumeIsolated {
+                if let scroll { scroll.reflectScrolledClipView(scroll.contentView) }
+            }
+        })
     }
 
     public func performFind() {
