@@ -13,6 +13,19 @@ final class DocumentModel: ObservableObject, Identifiable {
     @Published var title: String
     @Published var toc: [TOCEntry] = []
     @Published var isDirty = false
+    /// User-chosen tab title (rename) for untitled buffers.
+    @Published var customTitle: String?
+    /// Title derived from the content of an untitled buffer (H1 → first line).
+    @Published private(set) var derivedTitle: String?
+
+    /// What the tab shows: rename wins; files show their name without the
+    /// extension; untitled buffers take their first heading or first line.
+    var displayTitle: String {
+        if let customTitle, !customTitle.isEmpty { return customTitle }
+        if url != nil { return (title as NSString).deletingPathExtension }
+        if let derivedTitle, !derivedTitle.isEmpty { return derivedTitle }
+        return "Untitled"
+    }
 
     let controller = EditorController()
     private(set) var source: String
@@ -40,6 +53,7 @@ final class DocumentModel: ObservableObject, Identifiable {
         controller.onParsed = { [weak self] parsed in
             guard let self else { return }
             if self.toc != parsed.toc { self.toc = parsed.toc }
+            self.updateDerivedTitle()
             if let anchor = self.pendingAnchor, !self.toc.isEmpty {
                 self.pendingAnchor = nil
                 self.scrollToAnchor(anchor)
@@ -91,6 +105,50 @@ final class DocumentModel: ObservableObject, Identifiable {
             else if ch == " " { out.append("-") }
         }
         return out
+    }
+
+    /// Untitled tabs title themselves from content: the first H1 (or any first
+    /// heading), else the first non-empty line.
+    private func updateDerivedTitle() {
+        guard url == nil, customTitle == nil else { return }
+        let fresh: String?
+        if let heading = toc.first(where: { $0.level == 1 }) ?? toc.first {
+            fresh = heading.title
+        } else {
+            fresh = source
+                .split(separator: "\n", omittingEmptySubsequences: true)
+                .first
+                .map { String($0.prefix(40)).trimmingCharacters(in: .whitespaces) }
+        }
+        if derivedTitle != fresh { derivedTitle = fresh }
+    }
+
+    /// Rename the tab: file-backed documents rename on disk; untitled buffers
+    /// take a custom title. Returns an error message for the UI, nil on success.
+    func rename(to rawName: String) -> String? {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return nil }
+        guard let url else {
+            customTitle = name
+            return nil
+        }
+        let fileName = name.lowercased().hasSuffix(".md") ? name : name + ".md"
+        let dest = url.deletingLastPathComponent().appendingPathComponent(fileName)
+        guard dest != url else { return nil }
+        guard !FileManager.default.fileExists(atPath: dest.path) else {
+            return "A file named “\(fileName)” already exists."
+        }
+        do {
+            try FileManager.default.moveItem(at: url, to: dest)
+        } catch {
+            return error.localizedDescription
+        }
+        self.url = dest
+        self.title = dest.lastPathComponent
+        controller.baseURL = dest.deletingLastPathComponent()
+        startWatching() // re-arm on the new path
+        Preferences.shared.addRecent(dest)
+        return nil
     }
 
     /// Load a file into a pristine untitled document (Finder open reuses the
