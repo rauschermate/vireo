@@ -14,8 +14,12 @@ public struct MarkdownSourceView: NSViewRepresentable {
         self.controller = controller
     }
 
-    public func makeNSView(context: Context) -> NSScrollView {
-        let storage = NSTextStorage(string: initialSource)
+    /// Build the TextKit stack + scroll view. Factored out of `makeNSView` so
+    /// tests can assert scrolling invariants (the text view must be able to
+    /// grow past its initial frame).
+    public static func makeTextStack(source: String,
+                                     controller: EditorController) -> (scroll: NSScrollView, textView: MarkdownTextView) {
+        let storage = NSTextStorage(string: source)
         let layout = MarkdownLayoutManager()
         storage.addLayoutManager(layout)
 
@@ -26,7 +30,6 @@ public struct MarkdownSourceView: NSViewRepresentable {
 
         let textView = MarkdownTextView(frame: .zero, textContainer: container)
         textView.controller = controller
-        textView.delegate = context.coordinator
         textView.isEditable = true
         textView.isRichText = false
         textView.allowsUndo = true
@@ -42,6 +45,11 @@ public struct MarkdownSourceView: NSViewRepresentable {
         textView.autoresizingMask = [NSView.AutoresizingMask.width]
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
+        // maxSize defaults to the initial frame (zero here); without lifting it
+        // the text view can never grow vertically — killing all scrolling.
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
+                                  height: CGFloat.greatestFiniteMagnitude)
 
         controller.textView = textView
         controller.layoutManager = layout
@@ -53,6 +61,13 @@ public struct MarkdownSourceView: NSViewRepresentable {
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = true
         scroll.documentView = textView
+        return (scroll, textView)
+    }
+
+    public func makeNSView(context: Context) -> NSScrollView {
+        let (scroll, textView) = Self.makeTextStack(source: initialSource, controller: controller)
+        textView.delegate = context.coordinator
+        let controller = self.controller
 
         // Scrolling detaches the floating toolbar from its selection — hide it.
         scroll.contentView.postsBoundsChangedNotifications = true

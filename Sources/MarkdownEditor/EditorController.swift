@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import MarkdownEngine
 import MarkdownRender
 
@@ -50,7 +51,8 @@ public final class EditorController: ObservableObject {
 
         guard sel.length > 0 else { toolbar.hide(); return }
         let rect = tv.firstRect(forCharacterRange: sel, actualRange: nil)
-        toolbar.update(selectionRect: rect, hasSelection: true)
+        toolbar.update(selectionRect: rect, hasSelection: true,
+                       active: ActiveFormats.at(sel, in: parsed))
     }
 
     /// Hide the floating toolbar (scrolling detaches it from the selection).
@@ -239,6 +241,92 @@ public final class EditorController: ObservableObject {
             // place caret inside the empty URL parens
             let caret = sel.location + (replacement as NSString).length - 1
             tv.setSelectedRange(NSRange(location: caret, length: 0))
+        }
+    }
+
+    // MARK: Insert menu (tables, code blocks, images, …)
+
+    public func insertTable(columns: Int = 2, rows: Int = 2) {
+        let header = "| " + (1...columns).map { "Column \($0)" }.joined(separator: " | ") + " |"
+        let separator = "|" + Array(repeating: " --- |", count: columns).joined()
+        let body = Array(repeating: "|" + Array(repeating: "     |", count: columns).joined(),
+                         count: rows).joined(separator: "\n")
+        insertBlockSnippet("\(header)\n\(separator)\n\(body)")
+    }
+
+    public func insertCodeBlock() {
+        // caret lands on the empty line inside the fences
+        insertBlockSnippet("```\n\n```", caretOffsetInSnippet: 4)
+    }
+
+    public func insertHorizontalRule() {
+        insertBlockSnippet("---")
+    }
+
+    public func insertTaskItem() {
+        insertBlockSnippet("- [ ] ")
+    }
+
+    /// Pick an image file and insert it, preferring a path relative to the
+    /// document's folder so the file stays portable.
+    public func insertImageFromPanel() {
+        guard let tv = textView, let window = tv.window else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let path = self.relativePath(for: url)
+                self.insertBlockSnippet("![\(url.deletingPathExtension().lastPathComponent)](\(path))")
+            }
+        }
+    }
+
+    private func relativePath(for url: URL) -> String {
+        guard let base = baseURL?.standardizedFileURL else { return url.path }
+        let target = url.standardizedFileURL
+        if target.path.hasPrefix(base.path + "/") {
+            return String(target.path.dropFirst(base.path.count + 1))
+        }
+        return target.path
+    }
+
+    /// Insert a block-level snippet after the caret's line, separated by blank
+    /// lines so it parses as its own block, and place the caret usefully.
+    public func insertBlockSnippet(_ snippet: String, caretOffsetInSnippet: Int? = nil) {
+        guard let tv = textView, let storage = tv.textStorage else { return }
+        let ns = storage.string as NSString
+        let sel = tv.selectedRange()
+        let line = ns.lineRange(for: NSRange(location: sel.location, length: 0))
+        let lineText = ns.substring(with: line)
+        let lineIsBlank = lineText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        var insertLoc: Int
+        var text: String
+        if lineIsBlank {
+            insertLoc = line.location
+            text = snippet + "\n"
+        } else {
+            insertLoc = line.upperBound
+            if !lineText.hasSuffix("\n") { text = "\n\n" + snippet + "\n" }
+            else { text = "\n" + snippet + "\n" }
+        }
+
+        let r = NSRange(location: insertLoc, length: 0)
+        if tv.shouldChangeText(in: r, replacementString: text) {
+            storage.replaceCharacters(in: r, with: text)
+            tv.didChangeText()
+            let prefixLen = (text as NSString).length - (snippet as NSString).length
+                - (text.hasSuffix("\n") ? 1 : 0)
+            let caret: Int
+            if let offset = caretOffsetInSnippet {
+                caret = insertLoc + prefixLen + offset
+            } else {
+                caret = insertLoc + (text as NSString).length
+            }
+            tv.setSelectedRange(NSRange(location: min(caret, storage.length), length: 0))
+            tv.scrollRangeToVisible(tv.selectedRange())
         }
     }
 

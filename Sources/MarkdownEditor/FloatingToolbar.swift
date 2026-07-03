@@ -18,36 +18,59 @@ final class FloatingToolbar {
         var title: String?            // …or a short text label (H1/H2/H3)
         var help: String
         var separatorAfter = false
+        var isActive: (ActiveFormats) -> Bool = { _ in false }
         var action: (EditorController) -> Void
     }
 
     private let items: [Item] = [
-        Item(title: "H1", help: "Heading 1") { $0.makeHeading(1) },
-        Item(title: "H2", help: "Heading 2") { $0.makeHeading(2) },
-        Item(title: "H3", help: "Heading 3", separatorAfter: true) { $0.makeHeading(3) },
-        Item(symbol: "bold", help: "Bold") { $0.toggleBold() },
-        Item(symbol: "italic", help: "Italic") { $0.toggleItalic() },
-        Item(symbol: "strikethrough", help: "Strikethrough") { $0.toggleStrikethrough() },
+        Item(title: "H1", help: "Heading 1", isActive: { $0.headingLevel == 1 }) { $0.makeHeading(1) },
+        Item(title: "H2", help: "Heading 2", isActive: { $0.headingLevel == 2 }) { $0.makeHeading(2) },
+        Item(title: "H3", help: "Heading 3", separatorAfter: true,
+             isActive: { $0.headingLevel == 3 }) { $0.makeHeading(3) },
+        Item(symbol: "bold", help: "Bold", isActive: { $0.bold }) { $0.toggleBold() },
+        Item(symbol: "italic", help: "Italic", isActive: { $0.italic }) { $0.toggleItalic() },
+        Item(symbol: "strikethrough", help: "Strikethrough",
+             isActive: { $0.strikethrough }) { $0.toggleStrikethrough() },
         Item(symbol: "chevron.left.forwardslash.chevron.right", help: "Inline Code",
-             separatorAfter: true) { $0.toggleInlineCode() },
-        Item(symbol: "list.bullet", help: "List") { $0.toggleBulletList() },
-        Item(symbol: "text.quote", help: "Quote") { $0.toggleQuote() },
-        Item(symbol: "link", help: "Link") { $0.insertLink() },
+             separatorAfter: true, isActive: { $0.code }) { $0.toggleInlineCode() },
+        Item(symbol: "list.bullet", help: "List", isActive: { $0.list }) { $0.toggleBulletList() },
+        Item(symbol: "text.quote", help: "Quote", isActive: { $0.quote }) { $0.toggleQuote() },
+        Item(symbol: "link", help: "Link", isActive: { $0.link }) { $0.insertLink() },
     ]
+
+    private var buttons: [NSButton] = []
 
     private let buttonSize: CGFloat = 30
     private let symbolConfig = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
 
     /// Show above the given selection rect (screen coordinates), or hide if empty.
-    func update(selectionRect: NSRect?, hasSelection: Bool) {
+    func update(selectionRect: NSRect?, hasSelection: Bool, active: ActiveFormats = ActiveFormats()) {
         guard hasSelection, let rect = selectionRect else { hide(); return }
         let panel = panel ?? makePanel()
         self.panel = panel
+        applyActiveStates(active)
         let size = panel.frame.size
         let x = rect.midX - size.width / 2
         let y = rect.maxY + 8
         panel.setFrameOrigin(NSPoint(x: x, y: y))
         if !panel.isVisible { panel.orderFront(nil) }
+    }
+
+    private func applyActiveStates(_ active: ActiveFormats) {
+        for button in buttons {
+            guard items.indices.contains(button.tag) else { continue }
+            let item = items[button.tag]
+            let isOn = item.isActive(active)
+            button.contentTintColor = isOn ? .controlAccentColor : .labelColor
+            if let title = item.title {
+                button.attributedTitle = NSAttributedString(
+                    string: title,
+                    attributes: [
+                        .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
+                        .foregroundColor: isOn ? NSColor.controlAccentColor : NSColor.labelColor,
+                    ])
+            }
+        }
     }
 
     func hide() {
@@ -80,6 +103,7 @@ final class FloatingToolbar {
             button.widthAnchor.constraint(greaterThanOrEqualToConstant: buttonSize).isActive = true
             button.heightAnchor.constraint(equalToConstant: buttonSize).isActive = true
             stack.addArrangedSubview(button)
+            buttons.append(button)
 
             if item.separatorAfter {
                 let line = NSBox()
