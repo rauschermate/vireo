@@ -4,7 +4,7 @@ Vireo is a **fast**, *native* macOS markdown viewer and editor. It renders your
 document as clean, formatted text and *hides the syntax entirely* — even while
 you edit. Reading should feel like a well-typeset page, not like editing code.
 
-### Formatting basics
+## Formatting basics
 
 You can write **bold**, *italic*, ***bold italic***, ~~strikethrough~~, and
 `inline code` without ever seeing the raw markers. Select any text to format it,
