@@ -77,8 +77,7 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         }
         storage.enumerateAttribute(.vireoCheckbox, in: charRange) { value, range, _ in
             guard let n = value as? NSNumber else { return }
-            drawLeftMarker(n.boolValue ? "☑" : "☐", atCharIndex: range.location,
-                           origin: origin, color: n.boolValue ? .controlAccentColor : markerColor)
+            drawCheckbox(checked: n.boolValue, atCharIndex: range.location, origin: origin)
         }
         storage.enumerateAttribute(.vireoImage, in: charRange) { value, range, _ in
             guard let src = value as? String, let img = imageProvider?(src) else { return }
@@ -169,6 +168,44 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
                 let ty = y + (rh - size.height) / 2
                 s.draw(at: NSPoint(x: tx, y: ty), withAttributes: a)
             }
+        }
+    }
+
+    /// Native-style task checkbox: accent-filled rounded square with a white
+    /// checkmark when checked; bordered empty box when not — matching modern
+    /// macOS checkbox appearance (and the user's accent color).
+    private func drawCheckbox(checked: Bool, atCharIndex charIndex: Int, origin: NSPoint) {
+        guard charIndex < numberOfGlyphs else { return }
+        let glyph = glyphIndexForCharacter(at: charIndex)
+        guard glyph < numberOfGlyphs else { return }
+        let lineRect = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let glyphLoc = location(forGlyphAt: glyph)
+
+        let size: CGFloat = max(12, min(16, bulletFont.pointSize * 0.9))
+        let x = origin.x + lineRect.minX + glyphLoc.x - size - 6
+        let y = origin.y + lineRect.minY + (lineRect.height - size) / 2
+        let rect = NSRect(x: x, y: y, width: size, height: size)
+        let box = NSBezierPath(roundedRect: rect, xRadius: size * 0.28, yRadius: size * 0.28)
+
+        if checked {
+            NSColor.controlAccentColor.setFill()
+            box.fill()
+            // white checkmark (drawing context is flipped: +y is down)
+            let check = NSBezierPath()
+            check.lineWidth = max(1.5, size * 0.13)
+            check.lineCapStyle = .round
+            check.lineJoinStyle = .round
+            check.move(to: NSPoint(x: rect.minX + size * 0.26, y: rect.minY + size * 0.55))
+            check.line(to: NSPoint(x: rect.minX + size * 0.43, y: rect.minY + size * 0.72))
+            check.line(to: NSPoint(x: rect.minX + size * 0.74, y: rect.minY + size * 0.32))
+            NSColor.white.setStroke()
+            check.stroke()
+        } else {
+            NSColor.textBackgroundColor.setFill()
+            box.fill()
+            NSColor.tertiaryLabelColor.setStroke()
+            box.lineWidth = 1
+            box.stroke()
         }
     }
 
