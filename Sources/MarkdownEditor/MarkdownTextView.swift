@@ -87,8 +87,131 @@ public final class MarkdownTextView: NSTextView {
         return super.performKeyEquivalent(with: event)
     }
 
-    public override func didChangeText() {
-        super.didChangeText()
-        controller?.scheduleRestyle()
+    // MARK: Enter — list continuation and hidden-marker hygiene
+
+    public override func insertNewline(_ sender: Any?) {
+        if handleListNewline() { return }
+        skipTrailingClosingMarkers()
+        super.insertNewline(sender)
     }
+
+    /// Enter inside a list item continues the list (same bullet, unchecked box,
+    /// incremented number); Enter on an *empty* item removes its marker and
+    /// exits the list.
+    private func handleListNewline() -> Bool {
+        guard selectedRange().length == 0, let storage = textStorage else { return false }
+        let ns = storage.string as NSString
+        let caret = selectedRange().location
+        let line = ns.lineRange(for: NSRange(location: caret, length: 0))
+        var lineText = ns.substring(with: line)
+        if lineText.hasSuffix("\n") { lineText.removeLast() }
+        guard let info = ListLine.parse(lineText) else { return false }
+        guard caret >= line.location + info.markerEndOffset else { return false }
+
+        if info.contentIsEmpty {
+            // Exit the list: clear the marker, leaving an empty line.
+            let r = NSRange(location: line.location, length: (lineText as NSString).length)
+            if shouldChangeText(in: r, replacementString: "") {
+                storage.replaceCharacters(in: r, with: "")
+                didChangeText()
+                setSelectedRange(NSRange(location: line.location, length: 0))
+            }
+            return true
+        }
+
+        let insertion = "\n" + info.continuationPrefix
+        let sel = NSRange(location: caret, length: 0)
+        if shouldChangeText(in: sel, replacementString: insertion) {
+            storage.replaceCharacters(in: sel, with: insertion)
+            didChangeText()
+            setSelectedRange(NSRange(location: caret + (insertion as NSString).length, length: 0))
+        }
+        return true
+    }
+
+    /// When the caret sits at the end of a construct's visible text, the
+    /// hidden closing markers (`**`, `](url)`, …) come *after* it in the
+    /// source. A newline inserted there would split the construct and dump raw
+    /// markers onto the next line — step past them first.
+    private func skipTrailingClosingMarkers() {
+        guard selectedRange().length == 0, let storage = textStorage else { return }
+        var i = selectedRange().location
+        guard i > 0, i < storage.length else { return }
+        let ns = storage.string as NSString
+        // Only mid-line: at line start any following markers are *opening* ones.
+        guard ns.character(at: i - 1) != 0x0A else { return }
+        var moved = false
+        while i < storage.length,
+              ns.character(at: i) != 0x0A,
+              storage.attribute(.vireoMarker, at: i, effectiveRange: nil) != nil {
+            i += 1
+            moved = true
+        }
+        if moved { setSelectedRange(NSRange(location: i, length: 0)) }
+    }
+
+    // MARK: Tab — list indent / outdent
+
+    public override func insertTab(_ sender: Any?) {
+        if adjustListIndent(outdent: false) { return }
+        super.insertTab(sender)
+    }
+
+    public override func insertBacktab(_ sender: Any?) {
+        if adjustListIndent(outdent: true) { return }
+        super.insertBacktab(sender)
+    }
+
+    private static let indentUnit = "    " // 4 spaces nests reliably in GFM
+
+    /// Indent/outdent every list-item line touched by the selection.
+    private func adjustListIndent(outdent: Bool) -> Bool {
+        guard let storage = textStorage else { return false }
+        let ns = storage.string as NSString
+        let sel = selectedRange()
+        let lineSpan = ns.lineRange(for: sel)
+
+        // Collect the list-item lines in the span.
+        var listLines: [NSRange] = []
+        var pos = lineSpan.location
+        while pos < max(lineSpan.upperBound, lineSpan.location + 1), pos < ns.length {
+            let lr = ns.lineRange(for: NSRange(location: pos, length: 0))
+            var text = ns.substring(with: lr)
+            if text.hasSuffix("\n") { text.removeLast() }
+            if ListLine.parse(text) != nil { listLines.append(lr) }
+            if lr.upperBound == pos { break }
+            pos = lr.upperBound
+        }
+        guard !listLines.isEmpty else { return false }
+
+        var caretShift = 0
+        for lr in listLines.reversed() {
+            if outdent {
+                var remove = 0
+                while remove < Self.indentUnit.count, lr.location + remove < ns.length,
+                      ns.character(at: lr.location + remove) == 0x20 { remove += 1 }
+                if remove == 0, ns.character(at: lr.location) == 0x09 { remove = 1 }
+                guard remove > 0 else { continue }
+                let r = NSRange(location: lr.location, length: remove)
+                if shouldChangeText(in: r, replacementString: "") {
+                    storage.replaceCharacters(in: r, with: "")
+                    if lr.location <= sel.location { caretShift -= remove }
+                }
+            } else {
+                let r = NSRange(location: lr.location, length: 0)
+                if shouldChangeText(in: r, replacementString: Self.indentUnit) {
+                    storage.replaceCharacters(in: r, with: Self.indentUnit)
+                    if lr.location <= sel.location { caretShift += Self.indentUnit.count }
+                }
+            }
+        }
+        didChangeText()
+        let caret = max(0, min(sel.location + caretShift, storage.length))
+        setSelectedRange(NSRange(location: caret, length: sel.length))
+        return true
+    }
+
+    // NB: no didChangeText override — the Coordinator's textDidChange
+    // notification already triggers the (synchronous) restyle; overriding here
+    // too would restyle every keystroke twice.
 }

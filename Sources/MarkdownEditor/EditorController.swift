@@ -89,15 +89,19 @@ public final class EditorController: ObservableObject {
 
     // MARK: Styling
 
-    /// Debounced incremental re-parse + re-style after edits.
+    /// Restyle after an edit. The incremental parser makes a keystroke ~1 ms
+    /// on typical documents, so styling applies *synchronously* — no debounce,
+    /// no flash of raw markdown. The one exception is IME composition: touching
+    /// attributes mid-composition breaks marked text, so those restyles wait
+    /// until the composition commits (the commit fires textDidChange again).
     public func scheduleRestyle() {
-        if let tv = textView, let storage = tv.textStorage {
-            onSourceChange?(storage.string)
-        }
+        guard let tv = textView, let storage = tv.textStorage else { return }
+        onSourceChange?(storage.string)
+
         restyleWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.restyleAfterEdit() }
-        restyleWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
+        restyleWork = nil
+        if tv.hasMarkedText() { return }
+        restyleAfterEdit()
     }
 
     /// Edit path: incremental parse; re-apply attributes only over the dirty
