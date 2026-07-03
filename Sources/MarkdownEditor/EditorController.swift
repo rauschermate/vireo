@@ -60,6 +60,21 @@ public final class EditorController: ObservableObject {
         toolbar.hide()
     }
 
+    /// Keep the reading column centered at its max width (PRD: centered
+    /// content column, ~640–800pt). Driven by frame-change notifications so it
+    /// tracks live window resizes, not just SwiftUI updates.
+    public func recenterContent() {
+        guard let tv = textView, let scroll = tv.enclosingScrollView else { return }
+        let available = scroll.contentSize.width
+        guard available > 0 else { return }
+        let column = min(available, theme.contentMaxWidth + 48)
+        let side = max(24, (available - column) / 2)
+        if abs(tv.textContainerInset.width - side) > 0.5 {
+            tv.textContainerInset = NSSize(width: side, height: tv.textContainerInset.height)
+            tv.needsDisplay = true
+        }
+    }
+
     /// Toggle the `[ ]` / `[x]` of the task whose checkbox is drawn at `anchor`
     /// (the first visible character of the item; the raw marker sits just
     /// before it in the hidden syntax).

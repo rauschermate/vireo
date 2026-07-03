@@ -15,7 +15,7 @@ Here is a [link to Apple](https://apple.com) that opens in your browser.
 ### Lists
 
 - Reading is calm and centered
-- Syntax stays out of the way
+- Syntax stays out of the wayt
 - Everything is just plain markdown on disk
     - Nested items work too
     - As deep as you like
