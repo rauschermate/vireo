@@ -25,6 +25,9 @@ public final class EditorController: ObservableObject {
     /// Table whose source is revealed because the caret is inside it
     /// (identified by absolute anchor — stable across incremental edits).
     private var revealedTableAnchor: Int?
+    /// Collapsed list items (absolute anchors) and the hover target.
+    private var collapsedAnchors: Set<Int> = []
+    private var lastSourceLength = 0
 
     public init() {
         imageLoader.onChange = { [weak self] in self?.restyle() }
@@ -125,7 +128,59 @@ public final class EditorController: ObservableObject {
         let update = incremental.update(storage.string)
         parsed = update.parsed
         onParsed?(parsed)
+        remapCollapsedAnchors(dirty: update.dirtyRange,
+                              delta: storage.length - lastSourceLength)
+        lastSourceLength = storage.length
         applyStyles(dirty: update.dirtyRange)
+    }
+
+    /// Keep collapse state attached to the right items across edits: anchors
+    /// after the dirty window shift by the edit's delta; anchors inside it are
+    /// re-validated against the fresh parse (dropped if the item vanished).
+    private func remapCollapsedAnchors(dirty: NSRange?, delta: Int) {
+        guard !collapsedAnchors.isEmpty else { return }
+        let valid = Set(parsed.listMarkers.compactMap { $0.subtreeRange != nil ? $0.anchor : nil }
+            + parsed.tasks.compactMap { $0.subtreeRange != nil ? $0.anchor : nil })
+        if let dirty {
+            let oldDirtyEnd = dirty.location + dirty.length - delta
+            collapsedAnchors = Set(collapsedAnchors.compactMap { a in
+                if a < dirty.location { return a }
+                if a >= oldDirtyEnd { return a + delta }
+                return a // inside the edited window — keep only if still real
+            }).intersection(valid)
+        } else {
+            collapsedAnchors = collapsedAnchors.intersection(valid)
+        }
+    }
+
+    /// Toggle a list item's collapse state (chevron / `…` clicks).
+    public func toggleCollapse(anchor: Int) {
+        guard let tv = textView else { return }
+        if collapsedAnchors.contains(anchor) {
+            collapsedAnchors.remove(anchor)
+        } else {
+            collapsedAnchors.insert(anchor)
+            // Rescue the caret if it's about to be hidden.
+            let subtree = (parsed.listMarkers.first { $0.anchor == anchor }?.subtreeRange)
+                ?? (parsed.tasks.first { $0.anchor == anchor }?.subtreeRange)
+            if let subtree, NSIntersectionRange(tv.selectedRange(), subtree).length > 0
+                || NSLocationInRange(tv.selectedRange().location, subtree) {
+                tv.setSelectedRange(NSRange(location: max(0, subtree.location - 1), length: 0))
+            }
+        }
+        applyStyles(dirty: nil)
+    }
+
+    public func isCollapsible(anchor: Int) -> Bool {
+        (parsed.listMarkers.first { $0.anchor == anchor }?.subtreeRange != nil)
+            || (parsed.tasks.first { $0.anchor == anchor }?.subtreeRange != nil)
+    }
+
+    /// Hover target for the collapse chevron (set from mouse tracking).
+    public func setHoveredListAnchor(_ anchor: Int?) {
+        guard layoutManager?.hoveredAnchor != anchor else { return }
+        layoutManager?.hoveredAnchor = anchor
+        textView?.needsDisplay = true
     }
 
     /// Full restyle: theme, zoom, appearance or image loads changed, so every
@@ -150,6 +205,7 @@ public final class EditorController: ObservableObject {
             var renderer = MarkdownRenderer(theme: theme, baseURL: baseURL,
                                             imageLoader: imageLoader, isDark: tv.isDark)
             renderer.revealTableAnchor = revealedTableAnchor
+            renderer.collapsedAnchors = collapsedAnchors
             renderer.originOffset = window.location
             let sliceSource = (storage.string as NSString).substring(with: window)
             let sliceParsed = window == full ? parsed : parsed.slice(window)
@@ -169,6 +225,9 @@ public final class EditorController: ObservableObject {
         layoutManager?.tableRowHeight = theme.tableRowHeight
         layoutManager?.tableFont = theme.tableFont
         layoutManager?.tableHeaderFont = theme.tableHeaderFont
+        layoutManager?.listMarkers = parsed.listMarkers
+        layoutManager?.taskMarks = parsed.tasks
+        layoutManager?.collapsedAnchors = collapsedAnchors
         tv.typingAttributes = [.font: theme.bodyFont, .foregroundColor: theme.textColor]
         tv.needsDisplay = true
     }

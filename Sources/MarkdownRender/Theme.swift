@@ -14,6 +14,8 @@ public extension NSAttributedString.Key {
     static let vireoCheckbox = NSAttributedString.Key("vireoCheckbox")
     /// Table index (into ParsedMarkdown.tables) on the hidden anchor char (NSNumber).
     static let vireoTable = NSAttributedString.Key("vireoTable")
+    /// Range hidden because an ancestor list item is collapsed (NSNumber bool).
+    static let vireoCollapsed = NSAttributedString.Key("vireoCollapsed")
 }
 
 /// Visual design tokens. A single `zoom` factor scales the whole type system

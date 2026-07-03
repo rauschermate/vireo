@@ -19,13 +19,8 @@ Here is a [link to Apple](https://apple.com) that opens in your browser.
 - Everything is just plain markdown on disk
     - Nested items work too
     - As deep as you like
-        - sf
-        - asd
 
 1. First ordered item
-2. asd
-3. asd
-4. foesrth
 2. Second ordered item
 3. Third ordered item
 
