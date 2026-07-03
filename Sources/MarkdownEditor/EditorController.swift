@@ -19,7 +19,6 @@ public final class EditorController: ObservableObject {
     @Published public var zoom: CGFloat = 1.0 { didSet { restyle() } }
 
     private let incremental = IncrementalParser()
-    private var restyleWork: DispatchWorkItem?
     public private(set) var parsed = ParsedMarkdown()
     private lazy var toolbar = FloatingToolbar(controller: self)
     /// Table whose source is revealed because the caret is inside it
@@ -98,8 +97,6 @@ public final class EditorController: ObservableObject {
         guard let tv = textView, let storage = tv.textStorage else { return }
         onSourceChange?(storage.string)
 
-        restyleWork?.cancel()
-        restyleWork = nil
         if tv.hasMarkedText() { return }
         restyleAfterEdit()
     }
