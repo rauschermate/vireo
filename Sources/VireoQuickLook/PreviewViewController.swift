@@ -70,6 +70,10 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         textView.autoresizingMask = [.width]
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
+        // Lift the default (frame-sized) maxSize or the preview can't scroll.
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
+                                  height: CGFloat.greatestFiniteMagnitude)
         scrollView.documentView = textView
     }
 }
