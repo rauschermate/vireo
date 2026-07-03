@@ -20,7 +20,7 @@ swift run VireoSnapshot samples/welcome.md /tmp/out-dark.png --dark
 # Build the full app with the embedded Quick Look extension (needs xcodegen)
 brew install xcodegen
 ./scripts/build-app-xcode.sh Debug
-open build/Vireo.app --args "$PWD/samples/welcome.md"
+open -a build/Vireo.app samples/welcome.md
 
 # Package a distributable .dmg
 ./scripts/make-dmg.sh build/Vireo.app build/Vireo.dmg

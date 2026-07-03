@@ -14,6 +14,9 @@ struct VireoApp: App {
                 .environmentObject(state)
                 .frame(minWidth: 640, minHeight: 420)
         }
+        // Window scenes persist "was it open?" — never launch windowless.
+        .defaultLaunchBehavior(.presented)
+        .restorationBehavior(.disabled)
         .commands { commands }
 
         Settings {
@@ -122,10 +125,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls { AppState.shared.requestOpen(url) }
-        NSApp.activate(ignoringOtherApps: true)
+    /// Populate the initial tabs *outside* SwiftUI's view lifecycle —
+    /// mutating observed state while the scene is presenting its window can
+    /// leave the app running windowless (found the hard way, twice).
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let state = AppState.shared
+        guard state.documents.isEmpty else { return }
+        let pending = state.pendingURLs
+        state.pendingURLs = []
+        for url in pending { state.requestOpen(url) }
+        if state.documents.isEmpty { state.newDocument() }
+        ensureWindowVisible()
     }
+
+    /// SwiftUI creates but never orders-in the main window when the app is
+    /// launched by opening files (and with file paths in argv it may not
+    /// create it until later). Order it front ourselves — idempotent, retried
+    /// across the launch window.
+    func ensureWindowVisible() {
+        for delay in [0.05, 0.4, 1.2] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard let window = NSApp.windows.first(where: {
+                    $0.styleMask.contains(.titled) && !($0 is NSPanel)
+                }) else { return }
+                if !window.isVisible {
+                    window.makeKeyAndOrderFront(nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+            }
+        }
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        // Mutating observed state during open-event delivery can cancel the
+        // window's presentation — defer to the next runloop turn.
+        DispatchQueue.main.async { [weak self] in
+            for url in urls { AppState.shared.requestOpen(url) }
+            self?.ensureWindowVisible()
+        }
+    }
+
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
