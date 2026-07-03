@@ -38,6 +38,53 @@ public struct MarkdownParser {
     }
 }
 
+public extension MarkdownParser {
+    /// Bullet glyph cycles by depth: • ◦ ▪ then repeats.
+    static func bulletGlyph(forDepth depth: Int) -> String {
+        switch depth % 3 {
+        case 0: return "•"
+        case 1: return "◦"
+        default: return "▪"
+        }
+    }
+
+    /// Ordered markers cycle 1. → a. → i. by depth, preserving the delimiter.
+    static func orderedMarkerText(raw: String, depth: Int) -> String {
+        let delim = raw.hasSuffix(")") ? ")" : "."
+        let n = Int(raw.dropLast()) ?? 1
+        switch depth % 3 {
+        case 0: return "\(n)\(delim)"
+        case 1: return alpha(n) + delim
+        default: return roman(n) + delim
+        }
+    }
+
+    /// 1 → a, 2 → b, … 27 → aa.
+    static func alpha(_ n: Int) -> String {
+        var n = max(1, n)
+        var out = ""
+        while n > 0 {
+            n -= 1
+            out = String(UnicodeScalar(UInt8(97 + n % 26))) + out
+            n /= 26
+        }
+        return out
+    }
+
+    /// 1 → i, 4 → iv, 9 → ix, …
+    static func roman(_ n: Int) -> String {
+        var n = max(1, n)
+        let table: [(Int, String)] = [(1000, "m"), (900, "cm"), (500, "d"), (400, "cd"),
+                                      (100, "c"), (90, "xc"), (50, "l"), (40, "xl"),
+                                      (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i")]
+        var out = ""
+        for (value, symbol) in table {
+            while n >= value { out += symbol; n -= value }
+        }
+        return out
+    }
+}
+
 /// Inline style state inherited down the inline tree.
 private struct InlineStyle {
     var bold = false
@@ -121,22 +168,45 @@ private struct Accumulator {
         // Leading marker = from item start to first child block's start
         // (covers `- `, `1. ` and, for tasks, `- [ ] `). Hidden entirely; the
         // renderer draws a bullet / number / checkbox to the left of `anchor`.
+        // Empty items (`- ` just typed) get the same treatment with the anchor
+        // on the trailing newline, so continuing a list never flashes raw
+        // syntax or shifts the text when content arrives.
+        let anchor: Int
+        let markerLen: Int
         if let firstChild = item.children.first(where: { $0.range != nil }),
            let childRange = map.nsRange(firstChild.range) {
-            let markerLen = childRange.location - itemRange.location
-            if markerLen > 0 {
-                result.markerRanges.append(NSRange(location: itemRange.location, length: markerLen))
+            markerLen = childRange.location - itemRange.location
+            anchor = childRange.location
+        } else {
+            markerLen = scanMarkerLength(in: itemRange)
+            anchor = itemRange.location + markerLen
+            guard anchor < ns.length else {
+                // nothing (not even a newline) to carry the drawn marker —
+                // leave the raw `- ` visible rather than losing it entirely
+                return
             }
-            let anchor = childRange.location
-            if let box = item.checkbox {
-                result.tasks.append(TaskMark(anchor: anchor, checked: box == .checked))
-            } else if ordered {
-                let raw = ns.substring(with: NSRange(location: itemRange.location, length: max(0, markerLen)))
-                    .trimmingCharacters(in: .whitespaces)
-                result.listMarkers.append(ListMarker(anchor: anchor, text: raw, depth: depth))
-            } else {
-                result.listMarkers.append(ListMarker(anchor: anchor, text: "•", depth: depth))
-            }
+        }
+        if markerLen > 0 {
+            result.markerRanges.append(NSRange(location: itemRange.location, length: markerLen))
+        }
+
+        let subtree = subtreeRange(of: itemRange, afterFirstLineFrom: anchor)
+
+        if let box = item.checkbox {
+            result.tasks.append(TaskMark(anchor: anchor, checked: box == .checked,
+                                         subtreeRange: subtree))
+        } else if ordered {
+            let raw = ns.substring(with: NSRange(location: itemRange.location, length: max(0, markerLen)))
+                .trimmingCharacters(in: .whitespaces)
+            result.listMarkers.append(ListMarker(anchor: anchor,
+                                                 text: MarkdownParser.orderedMarkerText(raw: raw, depth: depth),
+                                                 depth: depth,
+                                                 subtreeRange: subtree))
+        } else {
+            result.listMarkers.append(ListMarker(anchor: anchor,
+                                                 text: MarkdownParser.bulletGlyph(forDepth: depth),
+                                                 depth: depth,
+                                                 subtreeRange: subtree))
         }
 
         for c in item.children {
@@ -144,6 +214,38 @@ private struct Accumulator {
             visitBlock(c, listDepth: depth + 1, inQuote: true)
         }
     }
+
+    /// Indent + bullet/number + spacing (+ task box) at the start of an item
+    /// that has no parsed children (empty item).
+    private func scanMarkerLength(in itemRange: NSRange) -> Int {
+        var i = itemRange.location
+        let end = itemRange.location + itemRange.length
+        while i < end, ns.character(at: i) == 0x20 || ns.character(at: i) == 0x09 { i += 1 }
+        let c = i < end ? ns.character(at: i) : 0
+        if c == 0x2D || c == 0x2A || c == 0x2B { // - * +
+            i += 1
+        } else if c >= 0x30, c <= 0x39 {
+            while i < end, ns.character(at: i) >= 0x30, ns.character(at: i) <= 0x39 { i += 1 }
+            if i < end, ns.character(at: i) == 0x2E || ns.character(at: i) == 0x29 { i += 1 }
+        } else {
+            return 0
+        }
+        while i < end, ns.character(at: i) == 0x20 { i += 1 }
+        return i - itemRange.location
+    }
+
+    /// Everything below the item's first line — hidden when collapsed.
+    private func subtreeRange(of itemRange: NSRange, afterFirstLineFrom anchor: Int) -> NSRange? {
+        let end = itemRange.location + itemRange.length
+        var i = anchor
+        while i < end, ns.character(at: i) != 0x0A { i += 1 }
+        let start = i + 1
+        guard start < end else { return nil }
+        let rest = ns.substring(with: NSRange(location: start, length: end - start))
+        guard !rest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return NSRange(location: start, length: end - start)
+    }
+
 
     mutating func visitTable(_ table: Table) {
         guard let tableRange = map.nsRange(table.range) else { return }

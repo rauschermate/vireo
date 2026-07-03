@@ -122,6 +122,8 @@ public struct MarkdownRenderer {
             let indent = CGFloat(depth + 1) * 22
             p.firstLineHeadIndent = indent
             p.headIndent = indent
+            // Lists read as one unit — much tighter than paragraph spacing.
+            p.paragraphSpacing = theme.baseSize * 0.15
             text.addAttribute(.paragraphStyle, value: p, range: r)
 
         case .tableRow:

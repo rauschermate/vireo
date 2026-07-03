@@ -183,7 +183,9 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
 
         let size: CGFloat = max(12, min(16, bulletFont.pointSize * 0.9))
         let x = origin.x + lineRect.minX + glyphLoc.x - size - 6
-        let y = origin.y + lineRect.minY + (lineRect.height - size) / 2
+        // Center the box on the text's cap height, anchored to the baseline.
+        let baseline = origin.y + lineRect.minY + glyphLoc.y
+        let y = baseline - bulletFont.capHeight / 2 - size / 2
         let rect = NSRect(x: x, y: y, width: size, height: size)
         let box = NSBezierPath(roundedRect: rect, xRadius: size * 0.28, yRadius: size * 0.28)
 
@@ -218,7 +220,10 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let attrs: [NSAttributedString.Key: Any] = [.font: bulletFont, .foregroundColor: color]
         let size = (s as NSString).size(withAttributes: attrs)
         let x = origin.x + lineRect.minX + glyphLoc.x - size.width - 5
-        let y = origin.y + lineRect.minY + (lineRect.height - size.height) / 2
+        // Align the marker's baseline with the text baseline (glyphLoc.y is the
+        // baseline offset within the fragment) — centering in the fragment sat
+        // markers visibly high once line-height multiples stretched the line.
+        let y = origin.y + lineRect.minY + glyphLoc.y - bulletFont.ascender
         (s as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
     }
 
