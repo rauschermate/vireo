@@ -48,5 +48,9 @@ let package = Package(
             name: "MarkdownEngineTests",
             dependencies: ["MarkdownEngine"]
         ),
+        .testTarget(
+            name: "MarkdownEditorTests",
+            dependencies: ["MarkdownEditor"]
+        ),
     ]
 )
