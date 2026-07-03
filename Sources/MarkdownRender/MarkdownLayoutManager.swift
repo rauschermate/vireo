@@ -56,22 +56,38 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         guard let storage = textStorage else { return 0 }
         let count = glyphRange.length
         var newProps = [NSLayoutManager.GlyphProperty](repeating: [], count: count)
+        var newGlyphs: [CGGlyph]?
         var changed = false
         for i in 0..<count {
             let charIndex = charIndexes[i]
-            if charIndex < storage.length,
-               storage.attribute(.vireoMarker, at: charIndex, effectiveRange: nil) != nil
+            guard charIndex < storage.length else { newProps[i] = props[i]; continue }
+            if storage.attribute(.vireoMarker, at: charIndex, effectiveRange: nil) != nil
                 || storage.attribute(.vireoCollapsed, at: charIndex, effectiveRange: nil) != nil {
                 newProps[i] = .null
                 changed = true
+            } else if storage.attribute(.vireoArrow, at: charIndex, effectiveRange: nil) != nil {
+                // Substitute the `-` of a prose `->` with a real → glyph.
+                var ch: UniChar = 0x2192 // →
+                var arrow: CGGlyph = 0
+                if CTFontGetGlyphsForCharacters(font as CTFont, &ch, &arrow, 1), arrow != 0 {
+                    if newGlyphs == nil {
+                        newGlyphs = Array(UnsafeBufferPointer(start: glyphs, count: count))
+                    }
+                    newGlyphs?[i] = arrow
+                    changed = true
+                }
+                newProps[i] = props[i]
             } else {
                 newProps[i] = props[i]
             }
         }
         guard changed else { return 0 }
-        newProps.withUnsafeBufferPointer { buf in
-            self.setGlyphs(glyphs, properties: buf.baseAddress!,
-                           characterIndexes: charIndexes, font: font, forGlyphRange: glyphRange)
+        let glyphBase = newGlyphs ?? Array(UnsafeBufferPointer(start: glyphs, count: count))
+        glyphBase.withUnsafeBufferPointer { glyphBuf in
+            newProps.withUnsafeBufferPointer { propBuf in
+                self.setGlyphs(glyphBuf.baseAddress!, properties: propBuf.baseAddress!,
+                               characterIndexes: charIndexes, font: font, forGlyphRange: glyphRange)
+            }
         }
         return count
     }

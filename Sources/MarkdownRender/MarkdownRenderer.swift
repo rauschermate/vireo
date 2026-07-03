@@ -79,7 +79,12 @@ public struct MarkdownRenderer {
             text.addAttribute(.vireoMarker, value: NSNumber(value: true), range: r)
         }
 
-        // 9. Collapse: hide the subtrees of collapsed list items.
+        // 9. Typographic arrows: display `->` as → in prose (never in code or
+        //    inside hidden syntax). The source keeps the literal characters —
+        //    the `-` is glyph-substituted at layout time and the `>` hidden.
+        applyArrowSubstitutions(to: text)
+
+        // 10. Collapse: hide the subtrees of collapsed list items.
         if !collapsedAnchors.isEmpty {
             let subtrees = parsed.listMarkers.map { ($0.anchor, $0.subtreeRange) }
                 + parsed.tasks.map { ($0.anchor, $0.subtreeRange) }
@@ -217,6 +222,28 @@ public struct MarkdownRenderer {
         text.addAttribute(.paragraphStyle, value: p, range: image.range)
         text.addAttribute(.vireoImage, value: image.source as NSString,
                           range: NSRange(location: image.anchor, length: 1))
+    }
+
+    // MARK: Typographic arrows
+
+    private func applyArrowSubstitutions(to text: NSMutableAttributedString) {
+        let ns = text.string as NSString
+        var search = NSRange(location: 0, length: ns.length)
+        while search.length > 0 {
+            let r = ns.range(of: "->", options: [], range: search)
+            guard r.location != NSNotFound else { break }
+            search = NSRange(location: r.upperBound, length: ns.length - r.upperBound)
+
+            let attrs = text.attributes(at: r.location, effectiveRange: nil)
+            let inCode = (attrs[.font] as? NSFont)?.isFixedPitch == true
+            let hidden = attrs[.vireoMarker] != nil || attrs[.vireoTable] != nil
+            guard !inCode, !hidden else { continue }
+
+            text.addAttribute(.vireoArrow, value: NSNumber(value: true),
+                              range: NSRange(location: r.location, length: 1))
+            text.addAttribute(.vireoMarker, value: NSNumber(value: true),
+                              range: NSRange(location: r.location + 1, length: 1))
+        }
     }
 
     // MARK: Tables

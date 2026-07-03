@@ -16,6 +16,8 @@ public extension NSAttributedString.Key {
     static let vireoTable = NSAttributedString.Key("vireoTable")
     /// Range hidden because an ancestor list item is collapsed (NSNumber bool).
     static let vireoCollapsed = NSAttributedString.Key("vireoCollapsed")
+    /// Char whose glyph is substituted with a typographic arrow → (NSNumber bool).
+    static let vireoArrow = NSAttributedString.Key("vireoArrow")
 }
 
 /// Visual design tokens. A single `zoom` factor scales the whole type system
