@@ -123,9 +123,20 @@ struct RecentMenu: View {
 
 // MARK: - App delegate (Finder / CLI file opens)
 
+/// Map the preference onto the whole app; nil restores "follow the system".
+@MainActor
+func applyAppearance(_ option: AppearanceOption) {
+    switch option {
+    case .system: NSApp.appearance = nil
+    case .light: NSApp.appearance = NSAppearance(named: .aqua)
+    case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = true
+        applyAppearance(Preferences.shared.appearance)
         let args = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }
         for path in args {
             let url = URL(fileURLWithPath: path)
@@ -150,6 +161,16 @@ struct PreferencesView: View {
             Text("When off, use ⌘S to save. Vireo warns before closing documents with unsaved changes.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            Picker("Appearance", selection: $prefs.appearance) {
+                ForEach(AppearanceOption.allCases) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: prefs.appearance) { _, newValue in
+                applyAppearance(newValue)
+            }
         }
         .padding(20)
         .frame(width: 360)
