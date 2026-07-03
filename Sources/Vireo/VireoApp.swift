@@ -167,7 +167,7 @@ struct PreferencesView: View {
                     Text(option.label).tag(option)
                 }
             }
-            .pickerStyle(.segmented)
+            .pickerStyle(.menu)
             .onChange(of: prefs.appearance) { _, newValue in
                 applyAppearance(newValue)
             }
