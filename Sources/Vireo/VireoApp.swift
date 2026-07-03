@@ -23,7 +23,8 @@ struct VireoApp: App {
 
     @CommandsBuilder private var commands: some Commands {
         CommandGroup(replacing: .newItem) {
-            NewWindowButton()
+            NewFileButton()
+            NewTabButton()
             OpenButton()
             Button("Open Folder…") { state.openFolderPanel() }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
@@ -85,14 +86,26 @@ struct VireoApp: App {
 
 // MARK: - Command buttons that need openWindow
 
-private struct NewWindowButton: View {
+/// ⌘N — create a real .md file next to the current document and open it.
+private struct NewFileButton: View {
     @Environment(\.openWindow) private var openWindow
     var body: some View {
-        Button("New") {
+        Button("New File") {
+            AppState.shared.openWindowProxy = { openWindow(id: "document") }
+            AppState.shared.createNewFile()
+        }.keyboardShortcut("n")
+    }
+}
+
+/// ⌘T — a fresh untitled buffer in a new tab.
+private struct NewTabButton: View {
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Button("New Tab") {
             let doc = AppState.shared.newDocument()
             AppState.shared.windowQueue.append(doc.id)
             openWindow(id: "document")
-        }.keyboardShortcut("n")
+        }.keyboardShortcut("t")
     }
 }
 
