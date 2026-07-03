@@ -56,7 +56,6 @@ private struct DocumentContentView: View {
             MarkdownSourceView(source: doc.source, controller: doc.controller)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             if state.showTOC && !state.focusMode, !doc.toc.isEmpty {
-                Divider()
                 TOCSidebar(document: doc).frame(width: 220)
             }
         }

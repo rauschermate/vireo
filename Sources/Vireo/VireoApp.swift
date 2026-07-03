@@ -38,6 +38,15 @@ struct VireoApp: App {
             Button("Save As…") { state.saveActiveAs() }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
         }
+        CommandMenu("Insert") {
+            Button("Table") { state.activeDocument?.controller.insertTable() }
+            Button("Code Block") { state.activeDocument?.controller.insertCodeBlock() }
+                .keyboardShortcut("k", modifiers: [.command, .shift])
+            Button("Image…") { state.activeDocument?.controller.insertImageFromPanel() }
+            Divider()
+            Button("Task") { state.activeDocument?.controller.insertTaskItem() }
+            Button("Horizontal Rule") { state.activeDocument?.controller.insertHorizontalRule() }
+        }
         CommandMenu("Format") {
             Button("Bold") { state.activeDocument?.controller.toggleBold() }.keyboardShortcut("b")
             Button("Italic") { state.activeDocument?.controller.toggleItalic() }.keyboardShortcut("i")
