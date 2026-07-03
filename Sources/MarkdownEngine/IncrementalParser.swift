@@ -211,14 +211,26 @@ public final class IncrementalParser {
             old.images.filter { keep($0.range) }
             + local.images.map { var x = $0; x.range = shift(x.range, newStart); x.anchor += newStart; return x }
             + old.images.filter { keepAfter($0.range) }.map { var x = $0; x.range = shift(x.range, delta); x.anchor += delta; return x }
+        func shiftTask(_ t: TaskMark, _ d: Int) -> TaskMark {
+            var x = t
+            x.anchor += d
+            if let s = x.subtreeRange { x.subtreeRange = shift(s, d) }
+            return x
+        }
+        func shiftMarker(_ m: ListMarker, _ d: Int) -> ListMarker {
+            var x = m
+            x.anchor += d
+            if let s = x.subtreeRange { x.subtreeRange = shift(s, d) }
+            return x
+        }
         out.tasks =
             old.tasks.filter { $0.anchor < oldStart }
-            + local.tasks.map { var x = $0; x.anchor += newStart; return x }
-            + old.tasks.filter { $0.anchor >= oldEnd }.map { var x = $0; x.anchor += delta; return x }
+            + local.tasks.map { shiftTask($0, newStart) }
+            + old.tasks.filter { $0.anchor >= oldEnd }.map { shiftTask($0, delta) }
         out.listMarkers =
             old.listMarkers.filter { $0.anchor < oldStart }
-            + local.listMarkers.map { var x = $0; x.anchor += newStart; return x }
-            + old.listMarkers.filter { $0.anchor >= oldEnd }.map { var x = $0; x.anchor += delta; return x }
+            + local.listMarkers.map { shiftMarker($0, newStart) }
+            + old.listMarkers.filter { $0.anchor >= oldEnd }.map { shiftMarker($0, delta) }
         func shiftTable(_ t: TableInfo, _ d: Int) -> TableInfo {
             var x = t
             x.range = shift(x.range, d)

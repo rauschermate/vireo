@@ -17,6 +17,8 @@ public struct MarkdownRenderer {
     /// When rendering a slice of the document, the slice's absolute start —
     /// lets position-carrying attributes (tables) stay in document coordinates.
     public var originOffset: Int = 0
+    /// List items whose subtrees are hidden (absolute anchor positions).
+    public var collapsedAnchors: Set<Int> = []
 
     public init(theme: Theme, baseURL: URL? = nil, imageLoader: ImageLoader? = nil, isDark: Bool = false) {
         self.theme = theme
@@ -77,6 +79,24 @@ public struct MarkdownRenderer {
             text.addAttribute(.vireoMarker, value: NSNumber(value: true), range: r)
         }
 
+        // 9. Collapse: hide the subtrees of collapsed list items.
+        if !collapsedAnchors.isEmpty {
+            let subtrees = parsed.listMarkers.map { ($0.anchor, $0.subtreeRange) }
+                + parsed.tasks.map { ($0.anchor, $0.subtreeRange) }
+            for (anchor, subtree) in subtrees {
+                guard collapsedAnchors.contains(originOffset + anchor),
+                      let subtree, subtree.upperBound <= text.length else { continue }
+                // Hide from the newline *before* the subtree through its end —
+                // leaving any newline visible produces a stray empty line
+                // fragment where the collapsed content was.
+                var hide = subtree
+                if hide.location > 0 {
+                    hide = NSRange(location: hide.location - 1, length: hide.length + 1)
+                }
+                text.addAttribute(.vireoCollapsed, value: NSNumber(value: true), range: hide)
+            }
+        }
+
         return text
     }
 
@@ -122,6 +142,8 @@ public struct MarkdownRenderer {
             let indent = CGFloat(depth + 1) * 22
             p.firstLineHeadIndent = indent
             p.headIndent = indent
+            // Lists read as one unit — much tighter than paragraph spacing.
+            p.paragraphSpacing = theme.baseSize * 0.15
             text.addAttribute(.paragraphStyle, value: p, range: r)
 
         case .tableRow:

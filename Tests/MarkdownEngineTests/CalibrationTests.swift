@@ -82,3 +82,46 @@ extension ParserTests {
         XCTAssertEqual(t.rows[1].cells.map { (src as NSString).substring(with: $0.range) }, ["1", "2"])
     }
 }
+
+extension ParserTests {
+    func testBulletGlyphCyclesByDepth() {
+        let src = "- one\n    - two\n        - three\n            - four\n"
+        let parsed = MarkdownParser().parse(src)
+        XCTAssertEqual(parsed.listMarkers.map(\.text), ["•", "◦", "▪", "•"])
+        XCTAssertEqual(parsed.listMarkers.map(\.depth), [0, 1, 2, 3])
+    }
+
+    func testOrderedMarkersCycleByDepth() {
+        let src = "1. one\n    1. two\n        1. three\n            1. four\n2. five\n"
+        let parsed = MarkdownParser().parse(src)
+        XCTAssertEqual(parsed.listMarkers.map(\.text), ["1.", "a.", "i.", "1.", "2."])
+    }
+
+    func testOrderedHelperFormats() {
+        XCTAssertEqual(MarkdownParser.alpha(1), "a")
+        XCTAssertEqual(MarkdownParser.alpha(26), "z")
+        XCTAssertEqual(MarkdownParser.alpha(27), "aa")
+        XCTAssertEqual(MarkdownParser.roman(4), "iv")
+        XCTAssertEqual(MarkdownParser.roman(9), "ix")
+        XCTAssertEqual(MarkdownParser.roman(14), "xiv")
+    }
+
+    func testSubtreeRanges() {
+        let src = "- parent\n    - child one\n    - child two\n- leaf\n"
+        let parsed = MarkdownParser().parse(src)
+        let parent = parsed.listMarkers[0]
+        XCTAssertNotNil(parent.subtreeRange)
+        let sub = (src as NSString).substring(with: parent.subtreeRange!)
+        XCTAssertTrue(sub.contains("child one") && sub.contains("child two"))
+        XCTAssertNil(parsed.listMarkers[1].subtreeRange) // child one
+        XCTAssertNil(parsed.listMarkers[3].subtreeRange) // leaf
+    }
+
+    func testEmptyListItemMarkerHidden() {
+        // `- ` followed by newline: marker hidden, bullet anchored on the \n
+        let src = "- item\n- \n- next\n"
+        let parsed = MarkdownParser().parse(src)
+        XCTAssertEqual(parsed.listMarkers.count, 3)
+        XCTAssertEqual(visible(src), "item\n\nnext\n")
+    }
+}

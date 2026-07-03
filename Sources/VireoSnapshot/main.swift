@@ -94,6 +94,14 @@ struct Snapshot {
            let n = Int(args[i + 1]), parsed.tables.indices.contains(n) {
             renderer.revealTableAnchor = parsed.tables[n].anchor
         }
+        // --collapse-first: collapse the first collapsible list item
+        var collapsed: Set<Int> = []
+        if args.contains("--collapse-first"),
+           let anchor = (parsed.listMarkers.first { $0.subtreeRange != nil }?.anchor)
+            ?? (parsed.tasks.first { $0.subtreeRange != nil }?.anchor) {
+            collapsed = [anchor]
+            renderer.collapsedAnchors = collapsed
+        }
         let attributed = renderer.render(source: source, parsed: parsed)
 
         let width: CGFloat = 760
@@ -107,6 +115,9 @@ struct Snapshot {
         layout.tableRowHeight = theme.tableRowHeight
         layout.tableFont = theme.tableFont
         layout.tableHeaderFont = theme.tableHeaderFont
+        layout.listMarkers = parsed.listMarkers
+        layout.taskMarks = parsed.tasks
+        layout.collapsedAnchors = collapsed
         layout.imageProvider = { loader.image(forSource: $0, baseURL: URL(fileURLWithPath: inputPath).deletingLastPathComponent()) }
         storage.addLayoutManager(layout)
         let container = NSTextContainer(size: NSSize(width: width - inset * 2, height: 100_000))

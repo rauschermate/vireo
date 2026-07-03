@@ -61,21 +61,29 @@ public struct ImageRun: Sendable, Equatable {
 public struct TaskMark: Sendable, Equatable {
     public var anchor: Int
     public var checked: Bool
-    public init(anchor: Int, checked: Bool) {
+    /// Nested content below the item's first line (nil for leaf items) —
+    /// the range hidden when the item is collapsed.
+    public var subtreeRange: NSRange?
+    public init(anchor: Int, checked: Bool, subtreeRange: NSRange? = nil) {
         self.anchor = anchor
         self.checked = checked
+        self.subtreeRange = subtreeRange
     }
 }
 
 /// A list bullet / number drawn to the left of `anchor` (first content char).
 public struct ListMarker: Sendable, Equatable {
     public var anchor: Int
-    public var text: String   // "•" for unordered, "1." etc. for ordered
+    public var text: String   // "•"/"◦"/"▪" by depth, "1."/"a."/"i." for ordered
     public var depth: Int
-    public init(anchor: Int, text: String, depth: Int) {
+    /// Nested content below the item's first line (nil for leaf items) —
+    /// the range hidden when the item is collapsed.
+    public var subtreeRange: NSRange?
+    public init(anchor: Int, text: String, depth: Int, subtreeRange: NSRange? = nil) {
         self.anchor = anchor
         self.text = text
         self.depth = depth
+        self.subtreeRange = subtreeRange
     }
 }
 
@@ -182,9 +190,15 @@ public extension ParsedMarkdown {
         out.images = images.filter { hits($0.range) }
             .map { var x = $0; x.range = shift(x.range); x.anchor += d; return x }
         out.tasks = tasks.filter { NSLocationInRange($0.anchor, window) }
-            .map { var x = $0; x.anchor += d; return x }
+            .map { var x = $0
+                x.anchor += d
+                if let s = x.subtreeRange { x.subtreeRange = shift(s) }
+                return x }
         out.listMarkers = listMarkers.filter { NSLocationInRange($0.anchor, window) }
-            .map { var x = $0; x.anchor += d; return x }
+            .map { var x = $0
+                x.anchor += d
+                if let s = x.subtreeRange { x.subtreeRange = shift(s) }
+                return x }
         out.tables = tables.filter { hits($0.range) }.map { t in
             var x = t
             x.range = shift(x.range)

@@ -24,6 +24,17 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     public var tableFont: NSFont = .systemFont(ofSize: 15)
     public var tableHeaderFont: NSFont = .systemFont(ofSize: 15, weight: .semibold)
 
+    // List collapse/hover state (set on each restyle / mouse move).
+    public var listMarkers: [ListMarker] = []
+    public var taskMarks: [TaskMark] = []
+    public var collapsedAnchors: Set<Int> = []
+    public var hoveredAnchor: Int?
+
+    /// Hit-test rects recorded during drawing (text-view coordinates):
+    /// chevron toggles and collapsed-`…` expanders, keyed by item anchor.
+    public private(set) var chevronRects: [Int: NSRect] = [:]
+    public private(set) var dotsRects: [Int: NSRect] = [:]
+
     public override init() {
         super.init()
         self.delegate = self
@@ -49,7 +60,8 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         for i in 0..<count {
             let charIndex = charIndexes[i]
             if charIndex < storage.length,
-               storage.attribute(.vireoMarker, at: charIndex, effectiveRange: nil) != nil {
+               storage.attribute(.vireoMarker, at: charIndex, effectiveRange: nil) != nil
+                || storage.attribute(.vireoCollapsed, at: charIndex, effectiveRange: nil) != nil {
                 newProps[i] = .null
                 changed = true
             } else {
@@ -71,22 +83,150 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         guard let storage = textStorage else { return }
         let charRange = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
 
+        func isCollapsedAway(_ index: Int) -> Bool {
+            index < storage.length
+                && storage.attribute(.vireoCollapsed, at: index, effectiveRange: nil) != nil
+        }
+
+        drawListGuides(visibleCharRange: charRange, origin: origin)
+
         storage.enumerateAttribute(.vireoBullet, in: charRange) { value, range, _ in
-            guard let s = value as? String else { return }
-            drawLeftMarker(s, atCharIndex: range.location, origin: origin, color: markerColor)
+            guard let s = value as? String, !isCollapsedAway(range.location) else { return }
+            let anchor = range.location
+            let collapsed = collapsedAnchors.contains(anchor)
+            let color: NSColor = collapsed ? .controlAccentColor : markerColor
+            if collapsed { drawCollapseHalo(atCharIndex: anchor, markerText: s, origin: origin) }
+            drawLeftMarker(s, atCharIndex: anchor, origin: origin, color: color)
+            drawListAdornments(anchor: anchor, markerText: s, origin: origin)
         }
         storage.enumerateAttribute(.vireoCheckbox, in: charRange) { value, range, _ in
-            guard let n = value as? NSNumber else { return }
+            guard let n = value as? NSNumber, !isCollapsedAway(range.location) else { return }
             drawCheckbox(checked: n.boolValue, atCharIndex: range.location, origin: origin)
+            drawListAdornments(anchor: range.location, markerText: nil, origin: origin)
         }
         storage.enumerateAttribute(.vireoImage, in: charRange) { value, range, _ in
-            guard let src = value as? String, let img = imageProvider?(src) else { return }
+            guard let src = value as? String, let img = imageProvider?(src),
+                  !isCollapsedAway(range.location) else { return }
             drawImage(img, atCharIndex: range.location, origin: origin)
         }
         storage.enumerateAttribute(.vireoTable, in: charRange) { value, range, _ in
             guard let n = value as? NSNumber,
-                  let info = tables.first(where: { $0.anchor == n.intValue }) else { return }
+                  let info = tables.first(where: { $0.anchor == n.intValue }),
+                  !isCollapsedAway(range.location) else { return }
             drawTable(info, atCharIndex: range.location, origin: origin, storage: storage)
+        }
+    }
+
+    // MARK: List collapse UI (chevrons, halo, …, guides)
+
+    private func subtree(forAnchor anchor: Int) -> NSRange? {
+        if let m = listMarkers.first(where: { $0.anchor == anchor }) { return m.subtreeRange }
+        if let t = taskMarks.first(where: { $0.anchor == anchor }) { return t.subtreeRange }
+        return nil
+    }
+
+    private func markerGeometry(anchor: Int, markerText: String?) -> (lineRect: NSRect, baseline: CGFloat, textX: CGFloat, markerWidth: CGFloat)? {
+        guard anchor < numberOfGlyphs else { return nil }
+        let glyph = glyphIndexForCharacter(at: anchor)
+        guard glyph < numberOfGlyphs else { return nil }
+        let lineRect = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let loc = location(forGlyphAt: glyph)
+        let width: CGFloat
+        if let markerText {
+            width = (markerText as NSString)
+                .size(withAttributes: [.font: bulletFont]).width
+        } else {
+            width = max(12, min(16, bulletFont.pointSize * 0.9)) // checkbox
+        }
+        return (lineRect, lineRect.minY + loc.y, lineRect.minX + loc.x, width)
+    }
+
+    /// Chevron (hover / collapsed) and the collapsed `…` expander.
+    private func drawListAdornments(anchor: Int, markerText: String?, origin: NSPoint) {
+        let collapsed = collapsedAnchors.contains(anchor)
+        let hovered = hoveredAnchor == anchor
+        chevronRects[anchor] = nil
+        dotsRects[anchor] = nil
+        guard collapsed || hovered, subtree(forAnchor: anchor) != nil,
+              let geo = markerGeometry(anchor: anchor, markerText: markerText) else { return }
+
+        // Chevron sits left of the drawn marker; points right when collapsed.
+        let center = NSPoint(x: origin.x + geo.textX - geo.markerWidth - 5 - 12,
+                             y: origin.y + geo.baseline - bulletFont.capHeight / 2)
+        let chevron = NSBezierPath()
+        chevron.lineWidth = 1.8
+        chevron.lineCapStyle = .round
+        chevron.lineJoinStyle = .round
+        if collapsed { // ›
+            chevron.move(to: NSPoint(x: center.x - 2, y: center.y - 4))
+            chevron.line(to: NSPoint(x: center.x + 2, y: center.y))
+            chevron.line(to: NSPoint(x: center.x - 2, y: center.y + 4))
+        } else {       // ⌄
+            chevron.move(to: NSPoint(x: center.x - 4, y: center.y - 2))
+            chevron.line(to: NSPoint(x: center.x, y: center.y + 2))
+            chevron.line(to: NSPoint(x: center.x + 4, y: center.y - 2))
+        }
+        (collapsed ? NSColor.controlAccentColor : NSColor.secondaryLabelColor).setStroke()
+        chevron.stroke()
+        chevronRects[anchor] = NSRect(x: center.x - 8, y: center.y - 8, width: 16, height: 16)
+
+        // `…` after the collapsed line's text; click to expand.
+        if collapsed, anchor < numberOfGlyphs {
+            let glyph = glyphIndexForCharacter(at: anchor)
+            let used = lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
+            let dots = "…" as NSString
+            let attrs: [NSAttributedString.Key: Any] = [.font: bulletFont,
+                                                        .foregroundColor: NSColor.tertiaryLabelColor]
+            let size = dots.size(withAttributes: attrs)
+            let at = NSPoint(x: origin.x + used.maxX + 8,
+                             y: origin.y + geo.baseline - bulletFont.ascender)
+            dots.draw(at: at, withAttributes: attrs)
+            dotsRects[anchor] = NSRect(x: at.x - 4, y: at.y, width: size.width + 12, height: size.height)
+        }
+    }
+
+    /// Accent halo behind a collapsed item's bullet.
+    private func drawCollapseHalo(atCharIndex anchor: Int, markerText: String, origin: NSPoint) {
+        guard let geo = markerGeometry(anchor: anchor, markerText: markerText) else { return }
+        let d = max(16, geo.markerWidth + 8)
+        let cx = origin.x + geo.textX - 5 - geo.markerWidth / 2
+        let cy = origin.y + geo.baseline - bulletFont.capHeight / 2
+        let rect = NSRect(x: cx - d / 2, y: cy - d / 2, width: d, height: d)
+        NSColor.controlAccentColor.withAlphaComponent(0.15).setFill()
+        NSBezierPath(ovalIn: rect).fill()
+    }
+
+    /// Faint vertical guides connecting a parent's marker to its subtree.
+    private func drawListGuides(visibleCharRange: NSRange, origin: NSPoint) {
+        guard let container = textContainers.first, let storage = textStorage else { return }
+        let all: [(anchor: Int, subtree: NSRange?, text: String?)] =
+            listMarkers.map { ($0.anchor, $0.subtreeRange, $0.text) }
+            + taskMarks.map { ($0.anchor, $0.subtreeRange, nil) }
+
+        for entry in all {
+            guard let sub = entry.subtree,
+                  !collapsedAnchors.contains(entry.anchor),
+                  NSIntersectionRange(sub, visibleCharRange).length > 0
+                    || NSLocationInRange(entry.anchor, visibleCharRange),
+                  entry.anchor < storage.length,
+                  storage.attribute(.vireoCollapsed, at: entry.anchor, effectiveRange: nil) == nil,
+                  let geo = markerGeometry(anchor: entry.anchor, markerText: entry.text) else { continue }
+
+            let subGlyphs = glyphRange(forCharacterRange: sub, actualCharacterRange: nil)
+            guard subGlyphs.length > 0 else { continue }
+            let bounds = boundingRect(forGlyphRange: subGlyphs, in: container)
+            guard bounds.height > 1 else { continue }
+
+            let x = origin.x + geo.textX - 5 - geo.markerWidth / 2
+            let top = origin.y + geo.lineRect.maxY + 2
+            let bottom = origin.y + bounds.maxY - 3
+            guard bottom > top else { continue }
+            let line = NSBezierPath()
+            line.lineWidth = 1
+            line.move(to: NSPoint(x: x, y: top))
+            line.line(to: NSPoint(x: x, y: bottom))
+            NSColor.separatorColor.setStroke()
+            line.stroke()
         }
     }
 
@@ -183,7 +323,9 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
 
         let size: CGFloat = max(12, min(16, bulletFont.pointSize * 0.9))
         let x = origin.x + lineRect.minX + glyphLoc.x - size - 6
-        let y = origin.y + lineRect.minY + (lineRect.height - size) / 2
+        // Center the box on the text's cap height, anchored to the baseline.
+        let baseline = origin.y + lineRect.minY + glyphLoc.y
+        let y = baseline - bulletFont.capHeight / 2 - size / 2
         let rect = NSRect(x: x, y: y, width: size, height: size)
         let box = NSBezierPath(roundedRect: rect, xRadius: size * 0.28, yRadius: size * 0.28)
 
@@ -218,7 +360,10 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let attrs: [NSAttributedString.Key: Any] = [.font: bulletFont, .foregroundColor: color]
         let size = (s as NSString).size(withAttributes: attrs)
         let x = origin.x + lineRect.minX + glyphLoc.x - size.width - 5
-        let y = origin.y + lineRect.minY + (lineRect.height - size.height) / 2
+        // Align the marker's baseline with the text baseline (glyphLoc.y is the
+        // baseline offset within the fragment) — centering in the fragment sat
+        // markers visibly high once line-height multiples stretched the line.
+        let y = origin.y + lineRect.minY + glyphLoc.y - bulletFont.ascender
         (s as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
     }
 

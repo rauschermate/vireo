@@ -12,6 +12,11 @@ public final class MarkdownTextView: NSTextView {
     }
 
     public override func mouseDown(with event: NSEvent) {
+        // Collapse chevron / `…` expander.
+        if event.clickCount == 1, let anchor = collapseTarget(at: event) {
+            controller?.toggleCollapse(anchor: anchor)
+            return
+        }
         // Click on a drawn task checkbox toggles it.
         if event.clickCount == 1, let anchor = checkboxAnchor(at: event) {
             controller?.toggleTask(atAnchor: anchor)
@@ -85,6 +90,67 @@ public final class MarkdownTextView: NSTextView {
             }
         }
         return super.performKeyEquivalent(with: event)
+    }
+
+    // MARK: List collapse — hover chevrons and click targets
+
+    public override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas where area.owner === self {
+            removeTrackingArea(area)
+        }
+        addTrackingArea(NSTrackingArea(rect: .zero,
+                                       options: [.mouseMoved, .mouseEnteredAndExited,
+                                                 .activeInKeyWindow, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+
+    public override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        controller?.setHoveredListAnchor(collapsibleAnchorOnLine(at: event))
+    }
+
+    public override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        controller?.setHoveredListAnchor(nil)
+    }
+
+    /// The collapsible list anchor on the hovered line, if any.
+    private func collapsibleAnchorOnLine(at event: NSEvent) -> Int? {
+        guard let storage = textStorage, storage.length > 0,
+              let lm = layoutManager, let container = textContainer,
+              let controller else { return nil }
+        let point = convert(event.locationInWindow, from: nil)
+        let inset = textContainerInset
+        let local = NSPoint(x: point.x - inset.width, y: point.y - inset.height)
+        let glyph = lm.glyphIndex(for: local, in: container)
+        // Cursor must actually be over that line, not in empty space below.
+        let lineRect = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        guard local.y >= lineRect.minY, local.y <= lineRect.maxY else { return nil }
+        let charIndex = lm.characterIndexForGlyph(at: glyph)
+        guard charIndex < storage.length else { return nil }
+        let line = (storage.string as NSString).lineRange(for: NSRange(location: charIndex, length: 0))
+        var anchor: Int?
+        for key: NSAttributedString.Key in [.vireoBullet, .vireoCheckbox] {
+            storage.enumerateAttribute(key, in: line) { value, range, stop in
+                if value != nil, controller.isCollapsible(anchor: range.location) {
+                    anchor = range.location
+                    stop.pointee = true
+                }
+            }
+            if anchor != nil { break }
+        }
+        return anchor
+    }
+
+    /// Chevron or `…` hit → the anchor to toggle. The recorded rects are in
+    /// view coordinates (they include the draw origin / container inset).
+    private func collapseTarget(at event: NSEvent) -> Int? {
+        guard let lm = layoutManager as? MarkdownLayoutManager else { return nil }
+        let point = convert(event.locationInWindow, from: nil)
+        for (anchor, rect) in lm.chevronRects where rect.contains(point) { return anchor }
+        for (anchor, rect) in lm.dotsRects where rect.contains(point) { return anchor }
+        return nil
     }
 
     // MARK: Enter — list continuation and hidden-marker hygiene
