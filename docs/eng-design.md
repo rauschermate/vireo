@@ -236,6 +236,12 @@ Where the shipped implementation intentionally differs from the sections above:
 - **TextKit 1, not TextKit 2 (§2, §4).** The always-hidden-syntax bet (option C)
   shipped — but via `NSLayoutManager` null glyphs, which need glyph-level control
   TextKit 2 doesn't expose. The spike's real outcome: C is achievable, on TK1.
+- **Custom tab strip, not native window tabs (§8).** Native `NSWindow` tabbing
+  shipped first, then was replaced: the system tab bar always fills the window
+  width and offers no hooks for min/max-width tabs, content-derived titles,
+  inline rename, or double-click actions (the Obsidian-style design the product
+  settled on). The app is a single `Window` scene with an ordered document list
+  and a SwiftUI tab bar; the window-close prompt walks all open tabs.
 - **Custom `DocumentModel`, not `NSDocument` (§7).** The dirty model, save-on-close
   prompts, window dirty-dot/proxy-icon and Recents are hand-rolled (a
   `WindowDelegateProxy` adds `windowShouldClose`, `Preferences` keeps Recents).

@@ -12,58 +12,49 @@ struct FileNode: Identifiable, Hashable {
     var children: [FileNode]?
 }
 
-/// Central registry. With native window tabs each document lives in its own
-/// window (one per `DocumentModel`); this holds the shared registry, the opened
-/// folder, global view toggles, and the currently-focused document (so menu
-/// commands can target it).
+/// Single window, custom Obsidian-style tab strip: ordered documents, one
+/// selected. (Native NSWindow tabs were tried first — the system bar can't do
+/// min/max-width tabs, inline rename, or custom titles; see eng-design §14.)
 @MainActor
 final class AppState: ObservableObject {
     static let shared = AppState()
 
-    @Published private(set) var documents: [UUID: DocumentModel] = [:]
+    @Published private(set) var documents: [DocumentModel] = []
+    @Published var selectedID: UUID?
     @Published var rootFolder: FileNode?
-    @Published var activeDocID: UUID?
 
     @Published var showFileSidebar = true
     @Published var showTOC = true
     @Published var focusMode = false
     @Published var zoom: CGFloat = 1.0 { didSet { applyZoom() } }
 
-    /// Requests a fresh window from the (plain) WindowGroup. Set by a live window.
-    var openWindowProxy: (() -> Void)?
-    /// FIFO of document ids the next opened window(s) should adopt.
-    var windowQueue: [UUID] = []
-    /// URLs queued before a window existed to service them.
+    /// URLs from Finder / the CLI that arrived before the window existed.
     var pendingURLs: [URL] = []
 
-    func dequeueDocID() -> UUID? {
-        windowQueue.isEmpty ? nil : windowQueue.removeFirst()
-    }
-
-    func focusWindow(for id: UUID) {
-        let ident = "vireo-\(id)"
-        for window in NSApp.windows where window.identifier?.rawValue == ident {
-            window.makeKeyAndOrderFront(nil)
-            return
-        }
-    }
-
     var activeDocument: DocumentModel? {
-        activeDocID.flatMap { documents[$0] }
+        documents.first { $0.id == selectedID }
     }
 
     private func applyZoom() {
-        for doc in documents.values { doc.controller.zoom = zoom }
+        for doc in documents { doc.controller.zoom = zoom }
     }
 
-    // MARK: Registry
+    // MARK: Tabs
 
     func document(for id: UUID?) -> DocumentModel? {
-        id.flatMap { documents[$0] }
+        documents.first { $0.id == id }
     }
 
-    func register(_ doc: DocumentModel) {
-        documents[doc.id] = doc
+    @discardableResult
+    func newDocument(select: Bool = true) -> DocumentModel {
+        let doc = DocumentModel(untitled: "")
+        register(doc)
+        documents.append(doc)
+        if select { selectedID = doc.id }
+        return doc
+    }
+
+    private func register(_ doc: DocumentModel) {
         doc.controller.zoom = zoom
         doc.openLinkHandler = { [weak self] target, anchor in
             guard let self, let opened = self.requestOpen(target) else { return }
@@ -74,62 +65,98 @@ final class AppState: ObservableObject {
         }
     }
 
-    func newDocument() -> DocumentModel {
-        let doc = DocumentModel(untitled: "")
-        register(doc)
-        return doc
+    /// Close a tab, prompting for unsaved changes first. Keeps at least one
+    /// tab alive (a fresh untitled buffer when the last one closes).
+    func closeTab(_ id: UUID) {
+        guard let idx = documents.firstIndex(where: { $0.id == id }) else { return }
+        let doc = documents[idx]
+        guard confirmDiscardIfNeeded(doc) else { return }
+        doc.flushPendingSave()
+        if doc.isDirty, doc.url != nil { doc.saveNow() }
+        documents.remove(at: idx)
+        if selectedID == id {
+            selectedID = documents.indices.contains(idx) ? documents[idx].id : documents.last?.id
+        }
+        if documents.isEmpty { newDocument() }
     }
 
-    func makeDocument(for url: URL) -> DocumentModel? {
-        if let existing = documents.values.first(where: { $0.url == url }) { return existing }
+    /// Save-changes prompt when closing would lose work. Returns true when
+    /// it's OK to proceed.
+    func confirmDiscardIfNeeded(_ doc: DocumentModel) -> Bool {
+        let needsPrompt: Bool
+        if doc.url == nil {
+            needsPrompt = !doc.source.isEmpty
+        } else {
+            needsPrompt = doc.isDirty && !Preferences.shared.autoSave
+        }
+        guard needsPrompt else { return true }
+
+        selectedID = doc.id // show what's being asked about
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Save changes to “\(doc.displayTitle)”?"
+        alert.informativeText = "Your changes will be lost if you don't save them."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Don't Save")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            if doc.url == nil {
+                let panel = NSSavePanel()
+                panel.nameFieldStringValue = "\(doc.displayTitle).md"
+                guard panel.runModal() == .OK, let saveURL = panel.url else { return false }
+                doc.save(to: saveURL)
+                Preferences.shared.addRecent(saveURL)
+            } else {
+                doc.saveNow()
+            }
+            return true
+        case .alertSecondButtonReturn:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Rename a tab (inline rename / context menu); shows an alert on failure.
+    func rename(_ doc: DocumentModel, to name: String) {
+        if let message = doc.rename(to: name) {
+            let alert = NSAlert()
+            alert.messageText = "Couldn't rename"
+            alert.informativeText = message
+            alert.runModal()
+            return
+        }
+        if let root = rootFolder { openFolder(root.url) } // refresh sidebar
+    }
+
+    // MARK: Opening
+
+    /// Open a URL in a tab — focusing it if already open, adopting a pristine
+    /// untitled tab if one is selected, else appending a new tab.
+    @discardableResult
+    func requestOpen(_ url: URL) -> DocumentModel? {
+        if let existing = documents.first(where: { $0.url == url }) {
+            selectedID = existing.id
+            return existing
+        }
+        if let pristine = documents.first(where: { $0.url == nil && $0.source.isEmpty }) {
+            pristine.adopt(url)
+            Preferences.shared.addRecent(url)
+            selectedID = pristine.id
+            return pristine
+        }
         do {
             let doc = try DocumentModel(url: url)
             register(doc)
+            documents.append(doc)
+            selectedID = doc.id
             Preferences.shared.addRecent(url)
             return doc
         } catch {
             NSLog("Vireo open failed: \(error)")
             return nil
         }
-    }
-
-    /// Remove a document from the registry when its window closes: flush any
-    /// pending autosave, save if dirty, and let the model (and its file
-    /// watcher) deallocate. The save-changes *prompt* happens earlier, in
-    /// `WindowDelegateProxy.windowShouldClose`.
-    func discard(_ id: UUID) {
-        if let doc = documents[id], doc.url != nil {
-            doc.flushPendingSave()
-            if doc.isDirty { doc.saveNow() }
-        }
-        documents[id] = nil
-        if activeDocID == id { activeDocID = nil }
-    }
-
-    // MARK: Opening (routes through the window layer)
-
-    /// Open a URL in a new tabbed window — focusing an existing window if the
-    /// file is already open, or reusing a pristine untitled window if one exists.
-    @discardableResult
-    func requestOpen(_ url: URL) -> DocumentModel? {
-        if let existing = documents.values.first(where: { $0.url == url }) {
-            focusWindow(for: existing.id)
-            return existing
-        }
-        if let pristine = documents.values.first(where: { $0.url == nil && $0.source.isEmpty }) {
-            pristine.adopt(url)
-            Preferences.shared.addRecent(url)
-            focusWindow(for: pristine.id)
-            return pristine
-        }
-        guard let doc = makeDocument(for: url) else { return nil }
-        if let proxy = openWindowProxy {
-            windowQueue.append(doc.id)
-            proxy()
-        } else {
-            pendingURLs.append(url)
-        }
-        return doc
     }
 
     /// ⌘N: create a real `.md` on disk — in the active document's folder, else
@@ -196,7 +223,7 @@ final class AppState: ObservableObject {
         guard let doc = activeDocument else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
-        panel.nameFieldStringValue = doc.title.hasSuffix(".md") ? doc.title : doc.title + ".md"
+        panel.nameFieldStringValue = doc.title.hasSuffix(".md") ? doc.title : doc.displayTitle + ".md"
         if panel.runModal() == .OK, let url = panel.url {
             doc.save(to: url)
             Preferences.shared.addRecent(url)

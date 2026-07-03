@@ -9,7 +9,7 @@ struct VireoApp: App {
     @ObservedObject private var prefs = Preferences.shared
 
     var body: some Scene {
-        WindowGroup(id: "document") {
+        Window("Vireo", id: "main") {
             DocumentWindowView()
                 .environmentObject(state)
                 .frame(minWidth: 640, minHeight: 420)
@@ -23,9 +23,9 @@ struct VireoApp: App {
 
     @CommandsBuilder private var commands: some Commands {
         CommandGroup(replacing: .newItem) {
-            NewFileButton()
-            NewTabButton()
-            OpenButton()
+            Button("New File") { state.createNewFile() }.keyboardShortcut("n")
+            Button("New Tab") { state.newDocument() }.keyboardShortcut("t")
+            Button("Open…") { state.openFilePanel() }.keyboardShortcut("o")
             Button("Open Folder…") { state.openFolderPanel() }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
             RecentMenu()
@@ -39,10 +39,10 @@ struct VireoApp: App {
             Button("Save As…") { state.saveActiveAs() }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
             Divider()
-            // Routes through performClose → windowShouldClose, so the
-            // unsaved-changes prompt and document cleanup still run.
-            Button("Close Tab") { NSApp.keyWindow?.performClose(nil) }
-                .keyboardShortcut("w")
+            Button("Close Tab") {
+                if let id = state.selectedID { state.closeTab(id) }
+            }
+            .keyboardShortcut("w")
         }
         CommandMenu("Insert") {
             Button("Table") { state.activeDocument?.controller.insertTable() }
@@ -89,57 +89,16 @@ struct VireoApp: App {
     }
 }
 
-// MARK: - Command buttons that need openWindow
-
-/// ⌘N — create a real .md file next to the current document and open it.
-private struct NewFileButton: View {
-    @Environment(\.openWindow) private var openWindow
-    var body: some View {
-        Button("New File") {
-            AppState.shared.openWindowProxy = { openWindow(id: "document") }
-            AppState.shared.createNewFile()
-        }.keyboardShortcut("n")
-    }
-}
-
-/// ⌘T — a fresh untitled buffer in a new tab.
-private struct NewTabButton: View {
-    @Environment(\.openWindow) private var openWindow
-    var body: some View {
-        Button("New Tab") {
-            let doc = AppState.shared.newDocument()
-            AppState.shared.windowQueue.append(doc.id)
-            openWindow(id: "document")
-        }.keyboardShortcut("t")
-    }
-}
-
-private struct OpenButton: View {
-    @Environment(\.openWindow) private var openWindow
-    var body: some View {
-        Button("Open…") {
-            AppState.shared.openWindowProxy = { openWindow(id: "document") }
-            AppState.shared.openFilePanel()
-        }.keyboardShortcut("o")
-    }
-}
-
 struct RecentMenu: View {
-    @Environment(\.openWindow) private var openWindow
     @ObservedObject private var prefs = Preferences.shared
     var body: some View {
         Menu("Open Recent") {
             ForEach(prefs.recentFiles, id: \.self) { url in
-                Button(url.lastPathComponent) {
-                    AppState.shared.openWindowProxy = { openWindow(id: "document") }
-                    AppState.shared.requestOpen(url)
-                }
+                Button(url.lastPathComponent) { AppState.shared.requestOpen(url) }
             }
         }
     }
 }
-
-// MARK: - App delegate (Finder / CLI file opens)
 
 /// Map the preference onto the whole app; nil restores "follow the system".
 @MainActor
@@ -153,7 +112,6 @@ func applyAppearance(_ option: AppearanceOption) {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
-        NSWindow.allowsAutomaticWindowTabbing = true
         applyAppearance(Preferences.shared.appearance)
         let args = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }
         for path in args {
@@ -166,6 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls { AppState.shared.requestOpen(url) }
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

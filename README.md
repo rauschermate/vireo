@@ -56,8 +56,9 @@ just writing `textStorage.string` back to disk unchanged.
   task checkboxes, fenced code with syntax highlighting, images (local + remote).
 - Centered reading column, OS light/dark, proportional zoom (⌘+/⌘−/⌘0).
 - Floating format toolbar on selection + ⌘B/⌘I/⌘K + Format menu.
-- Native macOS window tabs (one window per document, merged into a tab group),
-  folder sidebar, TOC sidebar, focus mode, in-document find (⌘F).
+- Obsidian-style tabs (min/max-width, content-derived titles for untitled tabs,
+  inline rename, double-click full screen, ⌘T/⌘W/⌘N), folder sidebar, TOC
+  sidebar, focus mode, in-document find (⌘F).
 - Auto-save (default) or explicit ⌘S mode; external-change reload with conflict prompt.
 - Registers `.md`/`.markdown` document types (open from Finder / command line).
 - **Quick Look preview extension** (`VireoQuickLook.appex`, embedded in the app)
