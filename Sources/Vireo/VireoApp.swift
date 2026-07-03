@@ -38,6 +38,11 @@ struct VireoApp: App {
             .disabled(prefs.autoSave && state.activeDocument?.url != nil)
             Button("Save As…") { state.saveActiveAs() }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
+            Divider()
+            // Routes through performClose → windowShouldClose, so the
+            // unsaved-changes prompt and document cleanup still run.
+            Button("Close Tab") { NSApp.keyWindow?.performClose(nil) }
+                .keyboardShortcut("w")
         }
         CommandMenu("Insert") {
             Button("Table") { state.activeDocument?.controller.insertTable() }
