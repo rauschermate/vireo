@@ -90,8 +90,11 @@ public final class MarkdownTextView: NSTextView {
     // MARK: Enter — list continuation and hidden-marker hygiene
 
     public override func insertNewline(_ sender: Any?) {
-        if handleListNewline() { return }
+        // Step past hidden closing markers *first* — otherwise a list item
+        // ending in bold/link would get the continuation inserted between the
+        // text and its closing `**`, splitting the construct.
         skipTrailingClosingMarkers()
+        if handleListNewline() { return }
         super.insertNewline(sender)
     }
 
@@ -185,6 +188,7 @@ public final class MarkdownTextView: NSTextView {
         guard !listLines.isEmpty else { return false }
 
         var caretShift = 0
+        var edited = false
         for lr in listLines.reversed() {
             if outdent {
                 var remove = 0
@@ -195,19 +199,25 @@ public final class MarkdownTextView: NSTextView {
                 let r = NSRange(location: lr.location, length: remove)
                 if shouldChangeText(in: r, replacementString: "") {
                     storage.replaceCharacters(in: r, with: "")
+                    edited = true
                     if lr.location <= sel.location { caretShift -= remove }
                 }
             } else {
                 let r = NSRange(location: lr.location, length: 0)
                 if shouldChangeText(in: r, replacementString: Self.indentUnit) {
                     storage.replaceCharacters(in: r, with: Self.indentUnit)
+                    edited = true
                     if lr.location <= sel.location { caretShift += Self.indentUnit.count }
                 }
             }
         }
+        // Swallow the Tab either way (⇧Tab on an unindented item is a no-op,
+        // not a literal tab character) — but only report a change if one happened.
+        guard edited else { return true }
         didChangeText()
         let caret = max(0, min(sel.location + caretShift, storage.length))
-        setSelectedRange(NSRange(location: caret, length: sel.length))
+        let selLen = min(sel.length, storage.length - caret)
+        setSelectedRange(NSRange(location: caret, length: selLen))
         return true
     }
 
