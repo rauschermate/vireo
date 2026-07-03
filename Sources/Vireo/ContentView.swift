@@ -30,19 +30,9 @@ struct DocumentWindowView: View {
         .animation(.easeInOut(duration: 0.18), value: state.showFileSidebar)
         .animation(.easeInOut(duration: 0.18), value: state.showTOC)
         .animation(.easeInOut(duration: 0.18), value: state.focusMode)
-        .onAppear(perform: bootstrap)
         .background(WindowConfigurator(title: state.activeDocument?.displayTitle ?? "Vireo",
                                        url: state.activeDocument?.url,
                                        edited: state.activeDocument?.isDirty ?? false))
-    }
-
-    private func bootstrap() {
-        if state.documents.isEmpty {
-            let pending = state.pendingURLs
-            state.pendingURLs = []
-            for url in pending { state.requestOpen(url) }
-            if state.documents.isEmpty { state.newDocument() }
-        }
     }
 }
 
