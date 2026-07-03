@@ -13,18 +13,30 @@ final class FloatingToolbar {
         self.controller = controller
     }
 
-    private struct Item { let symbol: String; let help: String; let action: (EditorController) -> Void }
+    private struct Item {
+        var symbol: String?           // SF Symbol…
+        var title: String?            // …or a short text label (H1/H2/H3)
+        var help: String
+        var separatorAfter = false
+        var action: (EditorController) -> Void
+    }
 
     private let items: [Item] = [
+        Item(title: "H1", help: "Heading 1") { $0.makeHeading(1) },
+        Item(title: "H2", help: "Heading 2") { $0.makeHeading(2) },
+        Item(title: "H3", help: "Heading 3", separatorAfter: true) { $0.makeHeading(3) },
         Item(symbol: "bold", help: "Bold") { $0.toggleBold() },
         Item(symbol: "italic", help: "Italic") { $0.toggleItalic() },
         Item(symbol: "strikethrough", help: "Strikethrough") { $0.toggleStrikethrough() },
-        Item(symbol: "chevron.left.forwardslash.chevron.right", help: "Inline Code") { $0.toggleInlineCode() },
-        Item(symbol: "textformat.size.larger", help: "Heading") { $0.makeHeading(2) },
+        Item(symbol: "chevron.left.forwardslash.chevron.right", help: "Inline Code",
+             separatorAfter: true) { $0.toggleInlineCode() },
         Item(symbol: "list.bullet", help: "List") { $0.toggleBulletList() },
         Item(symbol: "text.quote", help: "Quote") { $0.toggleQuote() },
         Item(symbol: "link", help: "Link") { $0.insertLink() },
     ]
+
+    private let buttonSize: CGFloat = 30
+    private let symbolConfig = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
 
     /// Show above the given selection rect (screen coordinates), or hide if empty.
     func update(selectionRect: NSRect?, hasSelection: Bool) {
@@ -45,20 +57,37 @@ final class FloatingToolbar {
     private func makePanel() -> NSPanel {
         let stack = NSStackView()
         stack.orientation = .horizontal
-        stack.spacing = 2
-        stack.edgeInsets = NSEdgeInsets(top: 4, left: 6, bottom: 4, right: 6)
-        for item in items {
+        stack.spacing = 3
+        stack.edgeInsets = NSEdgeInsets(top: 6, left: 8, bottom: 6, right: 8)
+        for (index, item) in items.enumerated() {
             let button = NSButton()
-            button.image = NSImage(systemSymbolName: item.symbol, accessibilityDescription: item.help)
+            if let symbol = item.symbol {
+                button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: item.help)?
+                    .withSymbolConfiguration(symbolConfig)
+            } else if let title = item.title {
+                button.title = title
+                button.font = .systemFont(ofSize: 13, weight: .semibold)
+            }
             button.bezelStyle = .accessoryBarAction
             button.isBordered = false
             button.toolTip = item.help
             button.setButtonType(.momentaryChange)
             button.target = self
             button.action = #selector(buttonTapped(_:))
-            button.tag = items.firstIndex { $0.help == item.help } ?? 0
+            button.tag = index
             button.contentTintColor = .labelColor
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.widthAnchor.constraint(greaterThanOrEqualToConstant: buttonSize).isActive = true
+            button.heightAnchor.constraint(equalToConstant: buttonSize).isActive = true
             stack.addArrangedSubview(button)
+
+            if item.separatorAfter {
+                let line = NSBox()
+                line.boxType = .separator
+                line.translatesAutoresizingMaskIntoConstraints = false
+                line.heightAnchor.constraint(equalToConstant: buttonSize - 12).isActive = true
+                stack.addArrangedSubview(line)
+            }
         }
         stack.layoutSubtreeIfNeeded()
         let size = stack.fittingSize
