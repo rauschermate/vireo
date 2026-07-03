@@ -50,7 +50,8 @@ public final class EditorController: ObservableObject {
 
         guard sel.length > 0 else { toolbar.hide(); return }
         let rect = tv.firstRect(forCharacterRange: sel, actualRange: nil)
-        toolbar.update(selectionRect: rect, hasSelection: true)
+        toolbar.update(selectionRect: rect, hasSelection: true,
+                       active: ActiveFormats.at(sel, in: parsed))
     }
 
     /// Hide the floating toolbar (scrolling detaches it from the selection).
