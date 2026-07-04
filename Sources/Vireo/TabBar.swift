@@ -1,8 +1,43 @@
 import SwiftUI
 import AppKit
 
-/// Obsidian-style tab strip, hosted in the window's unified toolbar (same row
-/// as the traffic lights, native Liquid Glass chrome). Tabs have a min/max
+/// The titlebar-accessory chrome row: sidebar toggle, tab strip, and the
+/// always-present overflow chevron pinned right.
+struct ChromeRow: View {
+    @EnvironmentObject private var state: AppState
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button {
+                if state.rootFolder == nil {
+                    state.openFolderPanel()
+                } else {
+                    state.showFileSidebar.toggle()
+                }
+            } label: {
+                Image(systemName: "sidebar.left")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(state.rootFolder == nil ? "Open folder" : "Toggle file sidebar")
+
+            TabStrip()
+
+            Spacer(minLength: 4)
+
+            TabOverflowMenu()
+                .padding(.trailing, 10)
+        }
+        .padding(.leading, 4)
+        .frame(maxHeight: .infinity)
+    }
+}
+
+/// Obsidian-style tab strip, hosted in the titlebar accessory (same row as
+/// the traffic lights, native Liquid Glass chrome). Tabs have a min/max
 /// width and grow with their title; the active tab reads as a white card; the
 /// ✕ is a bare icon; hovering shows a custom dark tooltip bubble under the
 /// tab after a short debounce.
@@ -12,11 +47,8 @@ struct TabStrip: View {
     private static let minTabWidth: CGFloat = 60
     private static let maxTabWidth: CGFloat = 190
     private static let spacing: CGFloat = 3
-    /// Traffic lights + sidebar button + overflow chevron + toolbar margins.
-    /// Generous on purpose: if the strip's width ever exceeded the toolbar's
-    /// available space, AppKit would collapse it into the native » overflow
-    /// and every tab would vanish.
-    private static let reservedChrome: CGFloat = 250
+    /// Traffic lights + sidebar button + overflow chevron + margins.
+    private static let reservedChrome: CGFloat = 190
     private static let plusButtonWidth: CGFloat = 30
 
     var body: some View {
@@ -88,7 +120,12 @@ struct TabOverflowMenu: View {
             showing.toggle()
         } label: {
             Image(systemName: "chevron.down")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .help("Show all tabs")
         .popover(isPresented: $showing, arrowEdge: .bottom) {
             VStack(spacing: 0) {

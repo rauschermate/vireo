@@ -24,37 +24,17 @@ struct DocumentWindowView: View {
         .animation(.easeInOut(duration: 0.18), value: state.showFileSidebar)
         .animation(.easeInOut(duration: 0.18), value: state.showTOC)
         .animation(.easeInOut(duration: 0.18), value: state.focusMode)
-        // Tabs live in the native unified toolbar — the title-bar row, right
-        // of the traffic lights, with the system's Liquid Glass chrome. The
-        // strip is leading-anchored (principal placement would center it) and
-        // sized from the measured window width.
+        // The tab strip lives in a titlebar *accessory* — inside the titlebar
+        // hierarchy next to the traffic lights (like Xcode's tabs): native
+        // glass and dragging, and none of NSToolbar's » item-overflow, which
+        // kept swallowing the strip during live resizes.
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width in
             if abs(state.contentWidth - width) > 0.5 { state.contentWidth = width }
         }
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    if state.rootFolder == nil {
-                        state.openFolderPanel()
-                    } else {
-                        state.showFileSidebar.toggle()
-                    }
-                } label: {
-                    Image(systemName: "sidebar.left")
-                }
-                .help(state.rootFolder == nil ? "Open folder" : "Toggle file sidebar")
-            }
-            ToolbarItem(placement: .navigation) {
-                TabStrip()
-            }
-            ToolbarItem(placement: .primaryAction) {
-                TabOverflowMenu()
-            }
-        }
-        .toolbar(state.focusMode ? .hidden : .visible, for: .windowToolbar)
         .background(WindowConfigurator(title: state.activeDocument?.displayTitle ?? "Vireo",
                                        url: state.activeDocument?.url,
-                                       edited: state.activeDocument?.isDirty ?? false))
+                                       edited: state.activeDocument?.isDirty ?? false,
+                                       chromeHidden: state.focusMode))
     }
 }
 
@@ -82,6 +62,7 @@ struct WindowConfigurator: NSViewRepresentable {
     let title: String
     let url: URL?
     let edited: Bool
+    let chromeHidden: Bool
 
     func makeNSView(context: Context) -> NSView {
         let view = TrackingView()
@@ -93,7 +74,10 @@ struct WindowConfigurator: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        if let window = nsView.window { apply(to: window) }
+        if let window = nsView.window {
+            apply(to: window)
+            context.coordinator.setChromeHidden(chromeHidden, in: window)
+        }
     }
 
     private func apply(to window: NSWindow) {
@@ -101,9 +85,8 @@ struct WindowConfigurator: NSViewRepresentable {
         // No system state restoration — stale scene state from earlier builds
         // can silently suppress window presentation, and tabs are ours anyway.
         window.isRestorable = false
-        // Tabs occupy the toolbar; no title text next to them.
+        // Tabs occupy the titlebar accessory; no title text next to them.
         window.titleVisibility = .hidden
-        window.toolbarStyle = .unifiedCompact
         window.title = title // still used by Mission Control / the Window menu
         window.representedURL = url
         window.isDocumentEdited = edited
@@ -123,6 +106,39 @@ struct WindowConfigurator: NSViewRepresentable {
             let proxy = WindowDelegateProxy(original: window.delegate)
             proxies[key] = proxy
             window.delegate = proxy
+            installChromeAccessory(in: window)
+        }
+
+        /// The tab strip as a titlebar accessory (Xcode-style): part of the
+        /// titlebar hierarchy — native glass and dragging, and no NSToolbar
+        /// »-overflow to swallow the tabs mid-resize. Width is managed
+        /// explicitly here and on every window resize (via the proxy).
+        private func installChromeAccessory(in window: NSWindow) {
+            guard !window.titlebarAccessoryViewControllers
+                .contains(where: { $0.identifier == Self.accessoryID }) else { return }
+
+            let host = NSHostingView(rootView: ChromeRow().environmentObject(AppState.shared))
+            let vc = NSTitlebarAccessoryViewController()
+            vc.identifier = Self.accessoryID
+            vc.view = host
+            vc.layoutAttribute = .left
+            window.addTitlebarAccessoryViewController(vc)
+            Self.layoutAccessory(in: window)
+        }
+
+        static let accessoryID = NSUserInterfaceItemIdentifier("vireo-chrome")
+
+        static func layoutAccessory(in window: NSWindow) {
+            guard let vc = window.titlebarAccessoryViewControllers
+                .first(where: { $0.identifier == accessoryID }) else { return }
+            let width = max(160, window.frame.width - 92) // clear the traffic lights
+            vc.view.frame = NSRect(x: 0, y: 0, width: width, height: 34)
+        }
+
+        func setChromeHidden(_ hidden: Bool, in window: NSWindow) {
+            guard let vc = window.titlebarAccessoryViewControllers
+                .first(where: { $0.identifier == Self.accessoryID }) else { return }
+            if vc.isHidden != hidden { vc.isHidden = hidden }
         }
     }
 
@@ -166,5 +182,16 @@ final class WindowDelegateProxy: NSObject, NSWindowDelegate {
             return original.windowShouldClose?(sender) ?? true
         }
         return true
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        if let window = notification.object as? NSWindow {
+            WindowConfigurator.Coordinator.layoutAccessory(in: window)
+        }
+        // SwiftUI's delegate may also care about resizes — keep it informed.
+        if let original,
+           original.responds(to: #selector(NSWindowDelegate.windowDidResize(_:))) {
+            original.windowDidResize?(notification)
+        }
     }
 }
