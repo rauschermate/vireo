@@ -27,6 +27,8 @@ final class AppState: ObservableObject {
     @Published var showTOC = true
     @Published var focusMode = false
     @Published var zoom: CGFloat = 1.0 { didSet { applyZoom() } }
+    /// Window content width — drives how many tabs fit before overflow.
+    @Published var contentWidth: CGFloat = 900
 
     /// URLs from Finder / the CLI that arrived before the window existed.
     var pendingURLs: [URL] = []
