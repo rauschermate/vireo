@@ -11,7 +11,8 @@ struct DocumentWindowView: View {
     var body: some View {
         VStack(spacing: 0) {
             if !state.focusMode {
-                TabBar()
+                ChromeBar()
+                    .zIndex(1) // tab tooltips hang below the bar, over the editor
                 Divider()
             }
             HStack(spacing: 0) {
@@ -79,7 +80,12 @@ struct WindowConfigurator: NSViewRepresentable {
         // No system state restoration — stale scene state from earlier builds
         // can silently suppress window presentation, and tabs are ours anyway.
         window.isRestorable = false
-        window.title = title
+        // The tab strip lives in the title-bar zone: hide the system title and
+        // let content extend to the top; the ChromeBar handles window dragging.
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.styleMask.insert(.fullSizeContentView)
+        window.title = title // still used by Mission Control / the Window menu
         window.representedURL = url
         window.isDocumentEdited = edited
     }
