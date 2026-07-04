@@ -296,7 +296,7 @@ private struct TabItem: View {
         tooltipTask?.cancel()
         if inside {
             tooltipTask = Task {
-                try? await Task.sleep(nanoseconds: 550_000_000)
+                try? await Task.sleep(nanoseconds: 900_000_000)
                 guard !Task.isCancelled, !renaming else { return }
                 if let view = anchorBox.view, let window = view.window {
                     let inWindow = view.convert(view.bounds, to: nil)
