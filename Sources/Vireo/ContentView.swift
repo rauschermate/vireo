@@ -9,32 +9,41 @@ struct DocumentWindowView: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
-        VStack(spacing: 0) {
-            if !state.focusMode {
-                ChromeBar()
-                    .zIndex(1) // tab tooltips hang below the bar, over the editor
+        HStack(spacing: 0) {
+            if state.showFileSidebar && !state.focusMode, state.rootFolder != nil {
+                FileSidebar().frame(width: 240)
                 Divider()
             }
-            HStack(spacing: 0) {
-                if state.showFileSidebar && !state.focusMode, state.rootFolder != nil {
-                    FileSidebar().frame(width: 240)
-                    Divider()
-                }
-                if let doc = state.activeDocument {
-                    EditorPane(doc: doc)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    Color(nsColor: .textBackgroundColor)
-                }
+            if let doc = state.activeDocument {
+                EditorPane(doc: doc)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Color(nsColor: .textBackgroundColor)
             }
         }
         .animation(.easeInOut(duration: 0.18), value: state.showFileSidebar)
         .animation(.easeInOut(duration: 0.18), value: state.showTOC)
         .animation(.easeInOut(duration: 0.18), value: state.focusMode)
-        // Pull the chrome up into the title-bar zone, beside the traffic
-        // lights (the transparent titlebar otherwise remains an empty strip).
-        // Focus mode keeps the safe area so text doesn't hide under the lights.
-        .ignoresSafeArea(.container, edges: state.focusMode ? [] : .top)
+        // Tabs live in the native unified toolbar — the title-bar row, right
+        // of the traffic lights, with the system's Liquid Glass chrome.
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    if state.rootFolder == nil {
+                        state.openFolderPanel()
+                    } else {
+                        state.showFileSidebar.toggle()
+                    }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                }
+                .help(state.rootFolder == nil ? "Open folder" : "Toggle file sidebar")
+            }
+            ToolbarItem(placement: .principal) {
+                TabStrip()
+            }
+        }
+        .toolbar(state.focusMode ? .hidden : .visible, for: .windowToolbar)
         .background(WindowConfigurator(title: state.activeDocument?.displayTitle ?? "Vireo",
                                        url: state.activeDocument?.url,
                                        edited: state.activeDocument?.isDirty ?? false))
@@ -84,11 +93,9 @@ struct WindowConfigurator: NSViewRepresentable {
         // No system state restoration — stale scene state from earlier builds
         // can silently suppress window presentation, and tabs are ours anyway.
         window.isRestorable = false
-        // The tab strip lives in the title-bar zone: hide the system title and
-        // let content extend to the top; the ChromeBar handles window dragging.
+        // Tabs occupy the toolbar; no title text next to them.
         window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.styleMask.insert(.fullSizeContentView)
+        window.toolbarStyle = .unifiedCompact
         window.title = title // still used by Mission Control / the Window menu
         window.representedURL = url
         window.isDocumentEdited = edited
