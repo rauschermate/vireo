@@ -31,6 +31,10 @@ struct DocumentWindowView: View {
         .animation(.easeInOut(duration: 0.18), value: state.showFileSidebar)
         .animation(.easeInOut(duration: 0.18), value: state.showTOC)
         .animation(.easeInOut(duration: 0.18), value: state.focusMode)
+        // Pull the chrome up into the title-bar zone, beside the traffic
+        // lights (the transparent titlebar otherwise remains an empty strip).
+        // Focus mode keeps the safe area so text doesn't hide under the lights.
+        .ignoresSafeArea(.container, edges: state.focusMode ? [] : .top)
         .background(WindowConfigurator(title: state.activeDocument?.displayTitle ?? "Vireo",
                                        url: state.activeDocument?.url,
                                        edited: state.activeDocument?.isDirty ?? false))
