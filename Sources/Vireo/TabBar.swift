@@ -98,9 +98,21 @@ private struct TabItem: View {
             state.selectedID = doc.id
         })
         .contextMenu {
-            Button("Rename…") { beginRename() }
+            Button { beginRename() } label: {
+                Label("Rename…", systemImage: "pencil")
+            }
             Divider()
-            Button("Close Tab") { state.closeTab(doc.id) }
+            Button { state.closeTab(doc.id) } label: {
+                Label("Close Tab", systemImage: "xmark")
+            }
+            Button { state.closeOtherTabs(keeping: doc.id) } label: {
+                Label("Close Other Tabs", systemImage: "xmark.square")
+            }
+            .disabled(state.documents.count < 2)
+            Button { state.closeTabsToTheRight(of: doc.id) } label: {
+                Label("Close Tabs to the Right", systemImage: "arrow.right.to.line")
+            }
+            .disabled(state.documents.last?.id == doc.id)
         }
         .help(doc.displayTitle) // full title tooltip for truncated tabs
         .animation(.easeInOut(duration: 0.12), value: hovering)
