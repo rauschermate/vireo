@@ -25,7 +25,12 @@ struct DocumentWindowView: View {
         .animation(.easeInOut(duration: 0.18), value: state.showTOC)
         .animation(.easeInOut(duration: 0.18), value: state.focusMode)
         // Tabs live in the native unified toolbar — the title-bar row, right
-        // of the traffic lights, with the system's Liquid Glass chrome.
+        // of the traffic lights, with the system's Liquid Glass chrome. The
+        // strip is leading-anchored (principal placement would center it) and
+        // sized from the measured window width.
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width in
+            if abs(state.contentWidth - width) > 0.5 { state.contentWidth = width }
+        }
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Button {
@@ -39,8 +44,11 @@ struct DocumentWindowView: View {
                 }
                 .help(state.rootFolder == nil ? "Open folder" : "Toggle file sidebar")
             }
-            ToolbarItem(placement: .principal) {
+            ToolbarItem(placement: .navigation) {
                 TabStrip()
+            }
+            ToolbarItem(placement: .primaryAction) {
+                TabOverflowMenu()
             }
         }
         .toolbar(state.focusMode ? .hidden : .visible, for: .windowToolbar)

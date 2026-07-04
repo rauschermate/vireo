@@ -9,26 +9,143 @@ import AppKit
 struct TabStrip: View {
     @EnvironmentObject private var state: AppState
 
+    private static let minTabWidth: CGFloat = 60
+    private static let maxTabWidth: CGFloat = 190
+    private static let spacing: CGFloat = 3
+    /// Traffic lights + sidebar button + overflow chevron + paddings.
+    private static let reservedChrome: CGFloat = 220
+
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 3) {
-                ForEach(state.documents) { doc in
-                    TabItem(doc: doc, isSelected: doc.id == state.selectedID)
+        let visible = visibleDocuments()
+        HStack(spacing: Self.spacing) {
+            ForEach(visible) { doc in
+                TabItem(doc: doc, isSelected: doc.id == state.selectedID)
+            }
+            Button {
+                state.newDocument()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("New tab (⌘T)")
+        }
+    }
+
+    /// Tabs stack from the left and shrink toward the minimum width; once even
+    /// minimum-width tabs can't all fit, show as many as do — always including
+    /// the active tab (swapped into the last slot when it would overflow).
+    private func visibleDocuments() -> [DocumentModel] {
+        let available = max(Self.minTabWidth, state.contentWidth - Self.reservedChrome)
+        let perTab = Self.minTabWidth + Self.spacing
+        let capacity = max(1, Int((available + Self.spacing) / perTab))
+        let docs = state.documents
+        guard docs.count > capacity else { return docs }
+
+        var shown = Array(docs.prefix(capacity))
+        if let selected = state.selectedID,
+           !shown.contains(where: { $0.id == selected }),
+           let active = docs.first(where: { $0.id == selected }) {
+            shown[capacity - 1] = active
+        }
+        return shown
+    }
+}
+
+/// Chevron at the toolbar's right edge — always present — listing every open
+/// tab behind a search field (autofocused; Enter selects the first match).
+struct TabOverflowMenu: View {
+    @EnvironmentObject private var state: AppState
+    @State private var showing = false
+    @State private var query = ""
+    @FocusState private var searchFocused: Bool
+
+    private var filtered: [DocumentModel] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return state.documents }
+        return state.documents.filter { $0.displayTitle.localizedCaseInsensitiveContains(q) }
+    }
+
+    var body: some View {
+        Button {
+            showing.toggle()
+        } label: {
+            Image(systemName: "chevron.down")
+        }
+        .help("Show all tabs")
+        .popover(isPresented: $showing, arrowEdge: .bottom) {
+            VStack(spacing: 0) {
+                TextField("Search tabs", text: $query)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($searchFocused)
+                    .onSubmit {
+                        if let first = filtered.first {
+                            state.selectedID = first.id
+                            showing = false
+                        }
+                    }
+                    .padding(8)
+                Divider()
+                ScrollView {
+                    VStack(spacing: 1) {
+                        ForEach(filtered) { doc in
+                            TabMenuRow(doc: doc, isSelected: doc.id == state.selectedID) {
+                                state.selectedID = doc.id
+                                showing = false
+                            }
+                        }
+                        if filtered.isEmpty {
+                            Text("No matching tabs")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .padding(.vertical, 12)
+                        }
+                    }
+                    .padding(6)
                 }
-                Button {
-                    state.newDocument()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("New tab (⌘T)")
+                .frame(maxHeight: 320)
+            }
+            .frame(width: 260)
+            .onAppear {
+                query = ""
+                DispatchQueue.main.async { searchFocused = true }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct TabMenuRow: View {
+    @ObservedObject var doc: DocumentModel
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Text(doc.displayTitle)
+                    .font(.system(size: 12.5))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(hovering ? Color.primary.opacity(0.07) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 5))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
 
@@ -78,7 +195,7 @@ private struct TabItem: View {
         .padding(.leading, 10)
         .padding(.trailing, 5)
         .frame(height: 26)
-        .frame(minWidth: 90, maxWidth: 190)
+        .frame(minWidth: 60, maxWidth: 190)
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(isSelected ? Color(nsColor: .textBackgroundColor)
