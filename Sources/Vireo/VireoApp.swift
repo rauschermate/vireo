@@ -63,15 +63,20 @@ struct VireoApp: App {
             Button("Inline Code") { state.activeDocument?.controller.toggleInlineCode() }
             Divider()
             Button("Heading 1") { state.activeDocument?.controller.makeHeading(1) }
-                .keyboardShortcut("1", modifiers: [.command, .control])
+                .keyboardShortcut("1", modifiers: [.command, .option])
             Button("Heading 2") { state.activeDocument?.controller.makeHeading(2) }
-                .keyboardShortcut("2", modifiers: [.command, .control])
+                .keyboardShortcut("2", modifiers: [.command, .option])
+            Button("Heading 3") { state.activeDocument?.controller.makeHeading(3) }
+                .keyboardShortcut("3", modifiers: [.command, .option])
             Button("Bulleted List") { state.activeDocument?.controller.toggleBulletList() }
             Button("Quote") { state.activeDocument?.controller.toggleQuote() }
             Button("Link…") { state.activeDocument?.controller.insertLink() }.keyboardShortcut("k")
         }
         CommandGroup(after: .textEditing) {
             Button("Find…") { state.activeDocument?.controller.performFind() }.keyboardShortcut("f")
+        }
+        CommandGroup(after: .windowList) {
+            TabSelectionCommands()
         }
         CommandGroup(after: .toolbar) {
             Button(state.showFileSidebar ? "Hide File Sidebar" : "Show File Sidebar") {
@@ -88,6 +93,26 @@ struct VireoApp: App {
             Button("Zoom In") { state.zoom = min(3, state.zoom + 0.1) }.keyboardShortcut("=")
             Button("Zoom Out") { state.zoom = max(0.6, state.zoom - 0.1) }.keyboardShortcut("-")
             Button("Actual Size") { state.zoom = 1 }.keyboardShortcut("0")
+        }
+    }
+}
+
+/// Window-menu tab list: ⌘1–⌘8 select tabs by position, ⌘9 the last tab
+/// (Safari convention), with live tab titles.
+struct TabSelectionCommands: View {
+    @ObservedObject private var state = AppState.shared
+
+    var body: some View {
+        Divider()
+        ForEach(Array(state.documents.prefix(8).enumerated()), id: \.element.id) { index, doc in
+            Button(doc.displayTitle) { state.selectedID = doc.id }
+                .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+        }
+        if state.documents.count > 1 {
+            Button("Last Tab") {
+                if let last = state.documents.last { state.selectedID = last.id }
+            }
+            .keyboardShortcut("9", modifiers: .command)
         }
     }
 }
