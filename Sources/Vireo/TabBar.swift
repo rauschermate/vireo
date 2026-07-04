@@ -368,6 +368,7 @@ final class TabTooltipPanel {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.ignoresMouseEvents = true
+        panel.hidesOnDeactivate = true // never float over other apps
         panel.contentView = content
 
         let x = tabScreenRect.midX - content.frame.width / 2
