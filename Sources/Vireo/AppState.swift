@@ -68,16 +68,39 @@ final class AppState: ObservableObject {
     /// Close a tab, prompting for unsaved changes first. Keeps at least one
     /// tab alive (a fresh untitled buffer when the last one closes).
     func closeTab(_ id: UUID) {
+        guard let doc = document(for: id) else { return }
+        _ = close(doc)
+        if documents.isEmpty { newDocument() }
+    }
+
+    /// Close every tab except `id`; stops if the user cancels a save prompt.
+    func closeOtherTabs(keeping id: UUID) {
+        for doc in documents where doc.id != id {
+            guard close(doc) else { return }
+        }
+        selectedID = id
+    }
+
+    /// Close all tabs after `id` (left-to-right order); stops on cancel.
+    func closeTabsToTheRight(of id: UUID) {
         guard let idx = documents.firstIndex(where: { $0.id == id }) else { return }
-        let doc = documents[idx]
-        guard confirmDiscardIfNeeded(doc) else { return }
+        for doc in Array(documents.dropFirst(idx + 1)) {
+            guard close(doc) else { return }
+        }
+        if document(for: selectedID) == nil { selectedID = id }
+    }
+
+    /// Prompt-close a single tab. Returns false when the user cancelled.
+    private func close(_ doc: DocumentModel) -> Bool {
+        guard confirmDiscardIfNeeded(doc) else { return false }
         doc.flushPendingSave()
         if doc.isDirty, doc.url != nil { doc.saveNow() }
+        guard let idx = documents.firstIndex(where: { $0.id == doc.id }) else { return true }
         documents.remove(at: idx)
-        if selectedID == id {
+        if selectedID == doc.id {
             selectedID = documents.indices.contains(idx) ? documents[idx].id : documents.last?.id
         }
-        if documents.isEmpty { newDocument() }
+        return true
     }
 
     /// Save-changes prompt when closing would lose work. Returns true when
