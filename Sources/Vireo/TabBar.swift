@@ -12,13 +12,26 @@ struct TabStrip: View {
     private static let minTabWidth: CGFloat = 60
     private static let maxTabWidth: CGFloat = 190
     private static let spacing: CGFloat = 3
-    /// Traffic lights + sidebar button + overflow chevron + paddings.
-    private static let reservedChrome: CGFloat = 220
+    /// Traffic lights + sidebar button + overflow chevron + toolbar margins.
+    /// Generous on purpose: if the strip's width ever exceeded the toolbar's
+    /// available space, AppKit would collapse it into the native » overflow
+    /// and every tab would vanish.
+    private static let reservedChrome: CGFloat = 250
+    private static let plusButtonWidth: CGFloat = 30
 
     var body: some View {
-        let visible = visibleDocuments()
+        let stripWidth = max(Self.minTabWidth + Self.plusButtonWidth,
+                             state.contentWidth - Self.reservedChrome)
+        let visible = visibleDocuments(stripWidth: stripWidth)
         HStack(spacing: Self.spacing) {
-            ForEach(visible) { doc in
+            ForEach(Array(visible.enumerated()), id: \.element.id) { index, doc in
+                if index > 0,
+                   visible[index - 1].id != state.selectedID,
+                   doc.id != state.selectedID {
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.3))
+                        .frame(width: 1, height: 14)
+                }
                 TabItem(doc: doc, isSelected: doc.id == state.selectedID)
             }
             Button {
@@ -33,13 +46,14 @@ struct TabStrip: View {
             .buttonStyle(.plain)
             .help("New tab (⌘T)")
         }
+        .frame(width: stripWidth, alignment: .leading)
     }
 
     /// Tabs stack from the left and shrink toward the minimum width; once even
     /// minimum-width tabs can't all fit, show as many as do — always including
     /// the active tab (swapped into the last slot when it would overflow).
-    private func visibleDocuments() -> [DocumentModel] {
-        let available = max(Self.minTabWidth, state.contentWidth - Self.reservedChrome)
+    private func visibleDocuments(stripWidth: CGFloat) -> [DocumentModel] {
+        let available = stripWidth - Self.plusButtonWidth
         let perTab = Self.minTabWidth + Self.spacing
         let capacity = max(1, Int((available + Self.spacing) / perTab))
         let docs = state.documents
@@ -180,6 +194,8 @@ private struct TabItem: View {
                     .foregroundStyle(isSelected ? Color.primary : Color.secondary)
             }
 
+            Spacer(minLength: 0) // title hugs the left edge, ✕ the right
+
             Button {
                 state.closeTab(doc.id)
             } label: {
@@ -195,7 +211,7 @@ private struct TabItem: View {
         .padding(.leading, 10)
         .padding(.trailing, 5)
         .frame(height: 26)
-        .frame(minWidth: 60, maxWidth: 190)
+        .frame(minWidth: 60, maxWidth: 190, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(isSelected ? Color(nsColor: .textBackgroundColor)
