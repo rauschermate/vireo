@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vireo — a simple, fast markdown editor for macOS</title>
+  <meta name="description" content="Your agent writes markdown. Vireo lets you read it. A simple, fast, native macOS markdown editor that hides the syntax — even while you edit. No vaults, no plugins, no subscription." />
+  <style>
+    :root {
+      /* Dark, slightly cool neutral base — everything else derives from this */
+      --bg:        #16171a;
+      --bg-raised: #1c1d21;
+      --text:      #b6b8bf;   /* plain body */
+      --text-dim:  #7c7e86;   /* captions, footer */
+      --text-hi:   #e9eaef;   /* strong text */
+      --hairline:  rgba(255,255,255,0.06);
+
+      /* Neumorphic shadow pair (light top-left, dark bottom-right) */
+      --nm-light:  rgba(255,255,255,0.045);
+      --nm-dark:   rgba(0,0,0,0.55);
+
+      --maxw: 660px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { -webkit-text-size-adjust: 100%; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif;
+      font-size: 18px;
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    .wrap {
+      max-width: var(--maxw);
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ---------- HERO ---------- */
+    header.hero {
+      padding: 128px 0 72px;
+      text-align: center;
+    }
+
+    /* The one neumorphic headline: subtle gradient fill + soft emboss */
+    h1 {
+      margin: 0 auto;
+      max-width: 12ch;
+      font-size: clamp(38px, 7vw, 60px);
+      line-height: 1.08;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      background: linear-gradient(180deg, #ffffff 0%, #c4c6cf 62%, #a7a9b4 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      /* faint top light + drop below = pressed/embossed feel */
+      text-shadow: 0 1px 0 rgba(255,255,255,0.04), 0 2px 14px rgba(0,0,0,0.5);
+    }
+
+    h1 .accent { white-space: nowrap; }
+
+    .subhead {
+      margin: 26px auto 0;
+      max-width: 34ch;
+      font-size: 19px;
+      color: var(--text-dim);
+    }
+
+    /* ---------- NEUMORPHIC BUTTON ---------- */
+    .cta { margin-top: 40px; }
+
+    .btn {
+      display: inline-block;
+      padding: 15px 34px;
+      border: none;
+      border-radius: 14px;
+      font-size: 17px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      color: var(--text-hi);
+      text-decoration: none;
+      cursor: pointer;
+      background: linear-gradient(180deg, #24262b 0%, #191a1e 100%);
+      /* raised: outer soft shadows + inner top highlight / bottom shade */
+      box-shadow:
+        -6px -6px 14px var(--nm-light),
+         7px  7px 18px var(--nm-dark),
+        inset 1px 1px 1px rgba(255,255,255,0.06),
+        inset -1px -1px 2px rgba(0,0,0,0.45);
+      transition: box-shadow 140ms ease, transform 140ms ease;
+    }
+
+    .btn:hover {
+      box-shadow:
+        -7px -7px 16px var(--nm-light),
+         9px  9px 22px var(--nm-dark),
+        inset 1px 1px 1px rgba(255,255,255,0.08),
+        inset -1px -1px 2px rgba(0,0,0,0.45);
+      transform: translateY(-1px);
+    }
+
+    /* pressed: shadows flip inward */
+    .btn:active {
+      transform: translateY(0);
+      box-shadow:
+        inset 4px 4px 10px var(--nm-dark),
+        inset -4px -4px 10px var(--nm-light);
+    }
+
+    .cta-meta {
+      margin-top: 16px;
+      font-size: 14px;
+      color: var(--text-dim);
+    }
+
+    /* ---------- SCREENSHOT ---------- */
+    .shot {
+      margin: 24px auto 0;
+      padding: 14px;
+      border-radius: 20px;
+      background: var(--bg-raised);
+      box-shadow:
+        -8px -8px 20px var(--nm-light),
+        10px 10px 28px var(--nm-dark);
+    }
+    .shot img {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 10px;
+    }
+
+    /* ---------- PLAIN TEXT SECTIONS ---------- */
+    section { padding: 30px 0; }
+
+    .letter p { margin: 0 0 20px; }
+    .letter .lead { color: var(--text-hi); }
+    .letter .sig { color: var(--text-dim); font-style: italic; }
+    .letter code {
+      font-family: "SF Mono", ui-monospace, "JetBrains Mono", monospace;
+      font-size: 0.86em;
+      color: var(--text-hi);
+      background: rgba(255,255,255,0.05);
+      padding: 1px 5px;
+      border-radius: 5px;
+    }
+
+    h2.kicker {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin: 0 0 22px;
+    }
+
+    ul.plain {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    ul.plain li {
+      padding: 14px 0;
+      border-top: 1px solid var(--hairline);
+    }
+    ul.plain li:last-child { border-bottom: 1px solid var(--hairline); }
+    ul.plain strong { color: var(--text-hi); font-weight: 600; }
+
+    .divider {
+      border: none;
+      border-top: 1px solid var(--hairline);
+      margin: 20px 0;
+    }
+
+    /* ---------- CLOSE ---------- */
+    .close { text-align: center; padding: 40px 0 20px; }
+    .close p { max-width: 40ch; margin: 0 auto 28px; color: var(--text); }
+
+    footer {
+      text-align: center;
+      padding: 48px 0 64px;
+      font-size: 14px;
+      color: var(--text-dim);
+    }
+    footer a { color: var(--text-dim); }
+
+    @media (max-width: 480px) {
+      header.hero { padding: 88px 0 56px; }
+      body { font-size: 17px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+
+    <!-- HERO -->
+    <header class="hero">
+      <h1>Your agent writes markdown. <span class="accent">Vireo lets you read it.</span></h1>
+      <p class="subhead">A simple, fast markdown editor for macOS. No vaults, no plugins, no subscription.</p>
+      <div class="cta">
+        <a class="btn" href="#download">Download for Mac — Free</a>
+        <p class="cta-meta">Native · 4&nbsp;MB · macOS&nbsp;15+ · Apple&nbsp;Silicon</p>
+      </div>
+    </header>
+
+    <!-- SCREENSHOT -->
+    <div class="shot">
+      <img src="hero.png" alt="A markdown document open in Vireo — rendered as clean formatted text with the syntax hidden." />
+    </div>
+
+    <!-- FOUNDER'S LETTER -->
+    <section class="letter">
+      <p class="lead">Markdown gets treated like plumbing. It deserves better. Markdown is a small miracle.</p>
+      <p>It's just text. It outlives every app that ever touches it. It's the one format your notes, your README, your agent, and your future self all speak fluently — write it once, open it anywhere, forever. Nothing else in software is that simple and that durable at the same time.</p>
+      <p>But somewhere along the way, the apps forgot that.</p>
+      <p>They bolted on vaults and plugin marketplaces. They wrapped a plain text file in a 300-megabyte browser that idles like a space heater. They locked your notes in a database and started charging you monthly rent to read your own writing. And the ones that stayed "simple" just shrugged and left the raw <code>##</code> and <code>**</code> sitting on the screen — like it's 2011 — and called it clean.</p>
+      <p>So now markdown feels like a chore. AI writes it, AI understands it. But you don't — you're left with a "vault," whatever that means, and a graph view you've looked at exactly twice.</p>
+      <p>And yet — the magic is still there. It's just buried under a decade of feature creep and neglect.</p>
+      <p>Markdown deserves a dust-off. An app that remembers it's <em>just text</em>: opens it before you blink, hides the syntax, and shows you the words. Fast. Native. Yours. Nothing in the way.</p>
+      <p>So we built it. No vaults. No plugins. No subscription. Your markdown, finally readable and editable — the way it should have been all along.</p>
+      <p>Vireo is what I think markdown should feel like. Set it as your default, and I hope you forget it's even running.</p>
+      <p class="sig">— Mate Rauscher</p>
+    </section>
+
+    <!-- WHAT IT DOES -->
+    <section>
+      <h2 class="kicker">What it does</h2>
+      <ul class="plain">
+        <li><strong>Hides the syntax — even while editing.</strong> No <code>##</code>, no <code>**</code>, no preview pane. Bold looks bold; headings look like headings.</li>
+        <li><strong>Native and fast.</strong> Swift on Apple Silicon, about 4&nbsp;MB. It opens before other editors finish launching.</li>
+        <li><strong>Your files stay <code>.md</code>.</strong> Plain GitHub-Flavored Markdown on disk, byte-for-byte. No database, no lock-in, no export button to remember.</li>
+        <li><strong>The basics, done well.</strong> Auto-save, tabs, folder sidebar, table of contents, focus mode, and find. Nothing to configure.</li>
+        <li><strong>Set it as your default.</strong> Every <code>.md</code> in Finder opens clean — and Quick Look renders in Vireo's style without even launching the app.</li>
+      </ul>
+    </section>
+
+    <!-- CLOSE -->
+    <section class="close" id="download">
+      <p>Open a <code style="font-family:'SF Mono',ui-monospace,monospace;font-size:0.9em;color:var(--text-hi);">.md</code> file in Vireo and you'll see what your writing was supposed to look like the whole time. No syntax, no spinner, no monthly fee, no catch.</p>
+      <a class="btn" href="#">Download Vireo for Mac — Free</a>
+      <p class="cta-meta" style="margin-top:16px;">macOS&nbsp;15+ · Apple&nbsp;Silicon · notarized direct download · your files stay yours</p>
+    </section>
+
+    <footer>
+      <p>Vireo — a simple, fast markdown editor for macOS.</p>
+    </footer>
+
+  </div>
+</body>
+</html>
