@@ -22,6 +22,10 @@ brew install xcodegen
 ./scripts/build-app-xcode.sh Debug
 open -a build/Vireo.app samples/welcome.md
 
+# Install into /Applications and set Vireo as the default markdown app
+# (double-clicking a .md in Finder then opens it in Vireo as a new tab)
+./scripts/install.sh          # quick bundle; --full for the Quick Look build
+
 # Package a distributable .dmg
 ./scripts/make-dmg.sh build/Vireo.app build/Vireo.dmg
 
