@@ -293,12 +293,16 @@ public final class MarkdownTextView: NSTextView {
             if !info.indent.isEmpty {
                 return adjustListIndent(outdent: true)
             }
-            // Top-level empty item: clear the marker, leaving an empty line.
+            // Top-level empty item: exit the list. Replace the marker with a
+            // newline so the item's line becomes a blank separator and the
+            // caret drops onto a fresh line below it. Just clearing the marker
+            // would leave the caret directly under the item, where typed text
+            // is a *lazy continuation* and keeps rendering inside the list.
             let r = NSRange(location: line.location, length: (lineText as NSString).length)
-            if shouldChangeText(in: r, replacementString: "") {
-                storage.replaceCharacters(in: r, with: "")
+            if shouldChangeText(in: r, replacementString: "\n") {
+                storage.replaceCharacters(in: r, with: "\n")
                 didChangeText()
-                setSelectedRange(NSRange(location: line.location, length: 0))
+                setSelectedRange(NSRange(location: line.location + 1, length: 0))
             }
             return true
         }

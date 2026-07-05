@@ -1,5 +1,6 @@
 import XCTest
 import AppKit
+import MarkdownEngine
 @testable import MarkdownEditor
 
 @MainActor
@@ -32,11 +33,23 @@ final class EnterOutdentTests: XCTestCase {
         XCTAssertEqual(tv.textStorage!.string, "- one\n- \n", "nested empty item should outdent one level")
     }
 
-    func testEnterOnTopLevelEmptyItemExitsList() {
+    func testEnterOnTopLevelEmptyItemExitsListToParagraph() {
         let (_, tv) = editor("- one\n- \n")
         caretAtEndOfLine(tv, 2)               // empty top-level bullet
         tv.insertNewline(nil)
-        XCTAssertEqual(tv.textStorage!.string, "- one\n\n", "top-level empty item should exit the list")
+        // A blank line must separate the list from the caret, else typed text
+        // is a lazy continuation and renders inside the list.
+        XCTAssertEqual(tv.textStorage!.string, "- one\n\n\n")
+        // Typing where the caret landed must produce a real paragraph.
+        tv.insertText("asd", replacementRange: tv.selectedRange())
+        let src = tv.textStorage!.string
+        let p = MarkdownParser().parse(src)
+        let asd = (src as NSString).range(of: "asd")
+        let inList = p.blockRuns.contains {
+            if case .listItem = $0.kind { return NSIntersectionRange($0.range, asd).length > 0 }
+            return false
+        }
+        XCTAssertFalse(inList, "text typed after exiting the list must not be a list item")
     }
 
     func testEnterOnNonEmptyItemContinues() {
