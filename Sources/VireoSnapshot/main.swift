@@ -99,9 +99,15 @@ struct Snapshot {
         if args.contains("--collapse-first"),
            let anchor = (parsed.listMarkers.first { $0.subtreeRange != nil }?.anchor)
             ?? (parsed.tasks.first { $0.subtreeRange != nil }?.anchor) {
-            collapsed = [anchor]
-            renderer.collapsedAnchors = collapsed
+            collapsed.insert(anchor)
         }
+        // --collapse-heading <n>: collapse the nth foldable heading (0-based)
+        if let i = args.firstIndex(of: "--collapse-heading"), i + 1 < args.count,
+           let n = Int(args[i + 1]) {
+            let foldable = parsed.headings.filter { $0.subtreeRange != nil }
+            if foldable.indices.contains(n) { collapsed.insert(foldable[n].anchor) }
+        }
+        renderer.collapsedAnchors = collapsed
         let attributed = renderer.render(source: source, parsed: parsed)
 
         let width: CGFloat = 760
@@ -117,6 +123,7 @@ struct Snapshot {
         layout.tableHeaderFont = theme.tableHeaderFont
         layout.listMarkers = parsed.listMarkers
         layout.taskMarks = parsed.tasks
+        layout.headingMarks = parsed.headings
         layout.collapsedAnchors = collapsed
         layout.imageProvider = { loader.image(forSource: $0, baseURL: URL(fileURLWithPath: inputPath).deletingLastPathComponent()) }
         storage.addLayoutManager(layout)

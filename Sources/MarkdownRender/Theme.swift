@@ -14,8 +14,11 @@ public extension NSAttributedString.Key {
     static let vireoCheckbox = NSAttributedString.Key("vireoCheckbox")
     /// Table index (into ParsedMarkdown.tables) on the hidden anchor char (NSNumber).
     static let vireoTable = NSAttributedString.Key("vireoTable")
-    /// Range hidden because an ancestor list item is collapsed (NSNumber bool).
+    /// Range hidden because an ancestor list item or heading is collapsed (NSNumber bool).
     static let vireoCollapsed = NSAttributedString.Key("vireoCollapsed")
+    /// Foldable heading's first visible char; value = level (NSNumber). The
+    /// layout manager hit-tests these for the fold chevron / `…` expander.
+    static let vireoHeading = NSAttributedString.Key("vireoHeading")
     /// Char whose glyph is substituted with a typographic arrow → (NSNumber bool).
     static let vireoArrow = NSAttributedString.Key("vireoArrow")
 }

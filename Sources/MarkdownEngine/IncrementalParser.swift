@@ -107,9 +107,14 @@ public final class IncrementalParser {
 
         // 4. Parse the slice locally and splice into the previous result.
         let local = parser.parse(newSlice)
-        let spliced = splice(old: old, local: local,
+        var spliced = splice(old: old, local: local,
                              oldStart: oldStart, oldEnd: oldEnd,
                              newStart: newStart, delta: delta)
+        // Heading fold ranges are non-local (they end at the next same-or-
+        // higher heading, possibly far outside the slice) — recompute them
+        // over the full document from the spliced TOC.
+        spliced.headings = MarkdownParser.computeHeadingMarks(source: source as NSString,
+                                                              toc: spliced.toc)
         lastParsed = spliced
         return IncrementalUpdate(parsed: spliced,
                                  dirtyRange: NSRange(location: newStart, length: newEnd - newStart))

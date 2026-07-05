@@ -24,9 +24,10 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     public var tableFont: NSFont = .systemFont(ofSize: 15)
     public var tableHeaderFont: NSFont = .systemFont(ofSize: 15, weight: .semibold)
 
-    // List collapse/hover state (set on each restyle / mouse move).
+    // List/heading collapse and hover state (set on each restyle / mouse move).
     public var listMarkers: [ListMarker] = []
     public var taskMarks: [TaskMark] = []
+    public var headingMarks: [HeadingMark] = []
     public var collapsedAnchors: Set<Int> = []
     public var hoveredAnchor: Int?
 
@@ -58,11 +59,22 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         var newProps = [NSLayoutManager.GlyphProperty](repeating: [], count: count)
         var newGlyphs: [CGGlyph]?
         var changed = false
+        let ns = storage.string as NSString
         for i in 0..<count {
             let charIndex = charIndexes[i]
             guard charIndex < storage.length else { newProps[i] = props[i]; continue }
-            if storage.attribute(.vireoMarker, at: charIndex, effectiveRange: nil) != nil
-                || storage.attribute(.vireoCollapsed, at: charIndex, effectiveRange: nil) != nil {
+            if storage.attribute(.vireoCollapsed, at: charIndex, effectiveRange: nil) != nil {
+                // Collapsed ranges keep their newlines (each hidden line stays
+                // its own ~zero-height fragment — nulling them would merge a
+                // whole folded section into one line fragment, and the TextKit-1
+                // typesetter breaks past ~16K glyphs on a line).
+                if ns.character(at: charIndex) == 0x0A {
+                    newProps[i] = props[i]
+                } else {
+                    newProps[i] = .null
+                    changed = true
+                }
+            } else if storage.attribute(.vireoMarker, at: charIndex, effectiveRange: nil) != nil {
                 newProps[i] = .null
                 changed = true
             } else if storage.attribute(.vireoArrow, at: charIndex, effectiveRange: nil) != nil {
@@ -120,6 +132,10 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
             drawCheckbox(checked: n.boolValue, atCharIndex: range.location, origin: origin)
             drawListAdornments(anchor: range.location, markerText: nil, origin: origin)
         }
+        storage.enumerateAttribute(.vireoHeading, in: charRange) { value, range, _ in
+            guard value is NSNumber, !isCollapsedAway(range.location) else { return }
+            drawHeadingAdornments(anchor: range.location, origin: origin, storage: storage)
+        }
         storage.enumerateAttribute(.vireoImage, in: charRange) { value, range, _ in
             guard let src = value as? String, let img = imageProvider?(src),
                   !isCollapsedAway(range.location) else { return }
@@ -138,6 +154,7 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     private func subtree(forAnchor anchor: Int) -> NSRange? {
         if let m = listMarkers.first(where: { $0.anchor == anchor }) { return m.subtreeRange }
         if let t = taskMarks.first(where: { $0.anchor == anchor }) { return t.subtreeRange }
+        if let h = headingMarks.first(where: { $0.anchor == anchor }) { return h.subtreeRange }
         return nil
     }
 
@@ -196,6 +213,62 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
             let size = dots.size(withAttributes: attrs)
             let at = NSPoint(x: origin.x + used.maxX + 8,
                              y: origin.y + geo.baseline - bulletFont.ascender)
+            dots.draw(at: at, withAttributes: attrs)
+            dotsRects[anchor] = NSRect(x: at.x - 4, y: at.y, width: size.width + 12, height: size.height)
+        }
+    }
+
+    /// Heading fold chevron (hover / collapsed) and the collapsed `…` expander —
+    /// same interaction as list items, sized to the heading's own font.
+    private func drawHeadingAdornments(anchor: Int, origin: NSPoint, storage: NSTextStorage) {
+        let collapsed = collapsedAnchors.contains(anchor)
+        let hovered = hoveredAnchor == anchor
+        chevronRects[anchor] = nil
+        dotsRects[anchor] = nil
+        guard collapsed || hovered, subtree(forAnchor: anchor) != nil,
+              anchor < numberOfGlyphs else { return }
+        let glyph = glyphIndexForCharacter(at: anchor)
+        guard glyph < numberOfGlyphs else { return }
+        let font = (storage.attribute(.font, at: anchor, effectiveRange: nil) as? NSFont) ?? bulletFont
+        let lineRect = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let loc = location(forGlyphAt: glyph)
+        let baseline = origin.y + lineRect.minY + loc.y
+        let textX = origin.x + lineRect.minX + loc.x
+
+        // Chevron in the left margin of the heading text; points right when
+        // collapsed (matches the list chevron's geometry and colors).
+        let center = NSPoint(x: textX - 14, y: baseline - font.capHeight / 2)
+        if collapsed {
+            let d: CGFloat = 18
+            NSColor.controlAccentColor.withAlphaComponent(0.15).setFill()
+            NSBezierPath(ovalIn: NSRect(x: center.x - d / 2, y: center.y - d / 2,
+                                        width: d, height: d)).fill()
+        }
+        let chevron = NSBezierPath()
+        chevron.lineWidth = 1.8
+        chevron.lineCapStyle = .round
+        chevron.lineJoinStyle = .round
+        if collapsed { // ›
+            chevron.move(to: NSPoint(x: center.x - 2, y: center.y - 4))
+            chevron.line(to: NSPoint(x: center.x + 2, y: center.y))
+            chevron.line(to: NSPoint(x: center.x - 2, y: center.y + 4))
+        } else {       // ⌄
+            chevron.move(to: NSPoint(x: center.x - 4, y: center.y - 2))
+            chevron.line(to: NSPoint(x: center.x, y: center.y + 2))
+            chevron.line(to: NSPoint(x: center.x + 4, y: center.y - 2))
+        }
+        (collapsed ? NSColor.controlAccentColor : NSColor.secondaryLabelColor).setStroke()
+        chevron.stroke()
+        chevronRects[anchor] = NSRect(x: center.x - 8, y: center.y - 8, width: 16, height: 16)
+
+        // `…` after the collapsed heading's text; click to expand.
+        if collapsed {
+            let used = lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
+            let dots = "…" as NSString
+            let attrs: [NSAttributedString.Key: Any] = [.font: font,
+                                                        .foregroundColor: NSColor.tertiaryLabelColor]
+            let size = dots.size(withAttributes: attrs)
+            let at = NSPoint(x: origin.x + used.maxX + 8, y: baseline - font.ascender)
             dots.draw(at: at, withAttributes: attrs)
             dotsRects[anchor] = NSRect(x: at.x - 4, y: at.y, width: size.width + 12, height: size.height)
         }
@@ -327,6 +400,21 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         }
     }
 
+    /// Baseline offset (within the line fragment) for the marker anchored at
+    /// `charIndex`. An *empty* item's anchor is its trailing newline, and
+    /// `location(forGlyphAt:)` is unreliable for control glyphs — the drawn
+    /// box/bullet sat visibly low, then jumped up when the first typed glyph
+    /// arrived. Derive the baseline from the fragment instead: the extra
+    /// lineHeightMultiple leading sits above the text, so the baseline hangs
+    /// at the bottom of the fragment minus the descent.
+    private func markerBaselineOffset(glyph: Int, charIndex: Int, lineRect: NSRect) -> CGFloat {
+        if let storage = textStorage, charIndex < storage.length,
+           (storage.string as NSString).character(at: charIndex) == 0x0A {
+            return lineRect.height + bulletFont.descender
+        }
+        return location(forGlyphAt: glyph).y
+    }
+
     /// Native-style task checkbox: accent-filled rounded square with a white
     /// checkmark when checked; bordered empty box when not — matching modern
     /// macOS checkbox appearance (and the user's accent color).
@@ -340,7 +428,8 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let size: CGFloat = max(12, min(16, bulletFont.pointSize * 0.9))
         let x = origin.x + lineRect.minX + glyphLoc.x - size - 6
         // Center the box on the text's cap height, anchored to the baseline.
-        let baseline = origin.y + lineRect.minY + glyphLoc.y
+        let baseline = origin.y + lineRect.minY
+            + markerBaselineOffset(glyph: glyph, charIndex: charIndex, lineRect: lineRect)
         let y = baseline - bulletFont.capHeight / 2 - size / 2
         let rect = NSRect(x: x, y: y, width: size, height: size)
         let box = NSBezierPath(roundedRect: rect, xRadius: size * 0.28, yRadius: size * 0.28)
@@ -379,7 +468,8 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         // Align the marker's baseline with the text baseline (glyphLoc.y is the
         // baseline offset within the fragment) — centering in the fragment sat
         // markers visibly high once line-height multiples stretched the line.
-        let y = origin.y + lineRect.minY + glyphLoc.y - bulletFont.ascender
+        let y = origin.y + lineRect.minY - bulletFont.ascender
+            + markerBaselineOffset(glyph: glyph, charIndex: charIndex, lineRect: lineRect)
         (s as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
     }
 

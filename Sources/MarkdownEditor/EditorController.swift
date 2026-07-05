@@ -138,13 +138,21 @@ public final class EditorController: ObservableObject {
         applyStyles(dirty: update.dirtyRange)
     }
 
+    /// The fold subtree owned by `anchor` — list item, task or heading.
+    private func subtree(forAnchor anchor: Int) -> NSRange? {
+        (parsed.listMarkers.first { $0.anchor == anchor }?.subtreeRange)
+            ?? (parsed.tasks.first { $0.anchor == anchor }?.subtreeRange)
+            ?? (parsed.headings.first { $0.anchor == anchor }?.subtreeRange)
+    }
+
     /// Keep collapse state attached to the right items across edits: anchors
     /// after the dirty window shift by the edit's delta; anchors inside it are
     /// re-validated against the fresh parse (dropped if the item vanished).
     private func remapCollapsedAnchors(dirty: NSRange?, delta: Int) {
         guard !collapsedAnchors.isEmpty else { return }
         let valid = Set(parsed.listMarkers.compactMap { $0.subtreeRange != nil ? $0.anchor : nil }
-            + parsed.tasks.compactMap { $0.subtreeRange != nil ? $0.anchor : nil })
+            + parsed.tasks.compactMap { $0.subtreeRange != nil ? $0.anchor : nil }
+            + parsed.headings.compactMap { $0.subtreeRange != nil ? $0.anchor : nil })
         if let dirty {
             let oldDirtyEnd = dirty.location + dirty.length - delta
             collapsedAnchors = Set(collapsedAnchors.compactMap { a in
@@ -157,7 +165,7 @@ public final class EditorController: ObservableObject {
         }
     }
 
-    /// Toggle a list item's collapse state (chevron / `…` clicks).
+    /// Toggle a list item's or heading's collapse state (chevron / `…` clicks).
     public func toggleCollapse(anchor: Int) {
         guard let tv = textView else { return }
         if collapsedAnchors.contains(anchor) {
@@ -165,9 +173,8 @@ public final class EditorController: ObservableObject {
         } else {
             collapsedAnchors.insert(anchor)
             // Rescue the caret if it's about to be hidden.
-            let subtree = (parsed.listMarkers.first { $0.anchor == anchor }?.subtreeRange)
-                ?? (parsed.tasks.first { $0.anchor == anchor }?.subtreeRange)
-            if let subtree, NSIntersectionRange(tv.selectedRange(), subtree).length > 0
+            if let subtree = subtree(forAnchor: anchor),
+               NSIntersectionRange(tv.selectedRange(), subtree).length > 0
                 || NSLocationInRange(tv.selectedRange().location, subtree) {
                 tv.setSelectedRange(NSRange(location: max(0, subtree.location - 1), length: 0))
             }
@@ -176,8 +183,17 @@ public final class EditorController: ObservableObject {
     }
 
     public func isCollapsible(anchor: Int) -> Bool {
-        (parsed.listMarkers.first { $0.anchor == anchor }?.subtreeRange != nil)
-            || (parsed.tasks.first { $0.anchor == anchor }?.subtreeRange != nil)
+        subtree(forAnchor: anchor) != nil
+    }
+
+    /// The hidden leading marker (`- `, `1. `, `- [ ] `) that `location` sits
+    /// strictly inside, if any — every position in it renders at the same
+    /// zero-width spot, so the caret should snap across it, not step through.
+    public func listMarkerRange(containing location: Int) -> NSRange? {
+        let anchors = Set(parsed.tasks.map(\.anchor) + parsed.listMarkers.map(\.anchor))
+        return parsed.markerRanges.first {
+            NSLocationInRange(location, $0) && anchors.contains($0.upperBound)
+        }
     }
 
     /// Hover target for the collapse chevron (set from mouse tracking).
@@ -203,7 +219,8 @@ public final class EditorController: ObservableObject {
     private func applyStyles(dirty: NSRange?) {
         guard let tv = textView, let storage = tv.textStorage else { return }
         let full = NSRange(location: 0, length: storage.length)
-        let window = dirty.map { NSIntersectionRange($0, full) } ?? full
+        var window = dirty.map { NSIntersectionRange($0, full) } ?? full
+        window = expandOverCollapsedSubtrees(window, storage: storage)
 
         if window.length > 0 {
             var renderer = MarkdownRenderer(theme: theme, baseURL: baseURL,
@@ -231,9 +248,42 @@ public final class EditorController: ObservableObject {
         layoutManager?.tableHeaderFont = theme.tableHeaderFont
         layoutManager?.listMarkers = parsed.listMarkers
         layoutManager?.taskMarks = parsed.tasks
+        layoutManager?.headingMarks = parsed.headings
         layoutManager?.collapsedAnchors = collapsedAnchors
         refreshTypingAttributes()
         tv.needsDisplay = true
+    }
+
+    /// A restyle window must cover any collapsed fold it touches *entirely* —
+    /// the renderer re-applies `.vireoCollapsed` from the anchor's subtree, so
+    /// re-rendering only part of one (headings especially: their folds span
+    /// many blocks) would leave that part visible. Grows the window to a fixed
+    /// point, from the anchor's line start through the subtree's end.
+    private func expandOverCollapsedSubtrees(_ window: NSRange, storage: NSTextStorage) -> NSRange {
+        guard !collapsedAnchors.isEmpty, window.length < storage.length else { return window }
+        let ns = storage.string as NSString
+        var w = window
+        var changed = true
+        var iterations = 0
+        while changed, iterations < 32 {
+            changed = false
+            iterations += 1
+            for anchor in collapsedAnchors {
+                guard let sub = subtree(forAnchor: anchor) else { continue }
+                // The hidden region includes the newline before the subtree.
+                let hide = NSRange(location: max(0, sub.location - 1),
+                                   length: sub.length + min(1, sub.location))
+                guard NSIntersectionRange(hide, w).length > 0, anchor < ns.length else { continue }
+                let lineStart = ns.lineRange(for: NSRange(location: anchor, length: 0)).location
+                let lo = min(w.location, lineStart)
+                let hi = max(w.upperBound, hide.upperBound)
+                if lo != w.location || hi != w.upperBound {
+                    w = NSRange(location: lo, length: hi - lo)
+                    changed = true
+                }
+            }
+        }
+        return NSIntersectionRange(w, NSRange(location: 0, length: storage.length))
     }
 
     /// Typing attributes drive the caret's geometry on empty lines (TextKit's
@@ -281,9 +331,12 @@ public final class EditorController: ObservableObject {
     // MARK: Navigation
 
     /// Web-style smooth scroll to a character position (TOC clicks, anchors).
+    /// Expands any folds hiding the target first — scrolling to a ~zero-height
+    /// hidden line would land nowhere visible.
     public func scroll(to location: Int) {
         guard let tv = textView, let storage = tv.textStorage,
               location <= storage.length else { return }
+        expandFolds(containing: location)
         tv.setSelectedRange(NSRange(location: location, length: 0))
 
         guard let scroll = tv.enclosingScrollView,
@@ -312,6 +365,19 @@ public final class EditorController: ObservableObject {
                 if let scroll { scroll.reflectScrolledClipView(scroll.contentView) }
             }
         })
+    }
+
+    /// Expand every collapsed item/heading whose fold hides `location`
+    /// (all levels of nesting at once).
+    private func expandFolds(containing location: Int) {
+        guard !collapsedAnchors.isEmpty else { return }
+        let hiding = collapsedAnchors.filter { anchor in
+            guard let sub = subtree(forAnchor: anchor) else { return false }
+            return NSLocationInRange(location, sub)
+        }
+        guard !hiding.isEmpty else { return }
+        collapsedAnchors.subtract(hiding)
+        applyStyles(dirty: nil)
     }
 
     public func performFind() {

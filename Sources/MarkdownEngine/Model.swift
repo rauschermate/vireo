@@ -87,6 +87,23 @@ public struct ListMarker: Sendable, Equatable {
     }
 }
 
+/// A foldable heading section. Unlike list subtrees, a heading's subtree is
+/// non-local — it runs to the next heading of the same or higher level — so
+/// these are recomputed over the whole document after every (incremental) parse.
+public struct HeadingMark: Sendable, Equatable {
+    /// First visible character of the heading text (after the hidden `# `).
+    public var anchor: Int
+    public var level: Int
+    /// Everything between the heading line and the next same-or-higher heading
+    /// (nil for empty sections) — the range hidden when the heading is collapsed.
+    public var subtreeRange: NSRange?
+    public init(anchor: Int, level: Int, subtreeRange: NSRange? = nil) {
+        self.anchor = anchor
+        self.level = level
+        self.subtreeRange = subtreeRange
+    }
+}
+
 public enum TableAlignment: Sendable, Equatable {
     case left, center, right, none
 }
@@ -153,11 +170,13 @@ public struct ParsedMarkdown: Sendable, Equatable {
     public var listMarkers: [ListMarker]
     public var tables: [TableInfo]
     public var toc: [TOCEntry]
+    public var headings: [HeadingMark]
 
     public init(markerRanges: [NSRange] = [], inlineRuns: [InlineRun] = [],
                 blockRuns: [BlockRun] = [], images: [ImageRun] = [],
                 tasks: [TaskMark] = [], listMarkers: [ListMarker] = [],
-                tables: [TableInfo] = [], toc: [TOCEntry] = []) {
+                tables: [TableInfo] = [], toc: [TOCEntry] = [],
+                headings: [HeadingMark] = []) {
         self.markerRanges = markerRanges
         self.inlineRuns = inlineRuns
         self.blockRuns = blockRuns
@@ -166,6 +185,7 @@ public struct ParsedMarkdown: Sendable, Equatable {
         self.listMarkers = listMarkers
         self.tables = tables
         self.toc = toc
+        self.headings = headings
     }
 }
 
@@ -213,6 +233,11 @@ public extension ParsedMarkdown {
         }
         out.toc = toc.filter { NSLocationInRange($0.location, window) }
             .map { var x = $0; x.location += d; return x }
+        out.headings = headings.filter { NSLocationInRange($0.anchor, window) }
+            .map { var x = $0
+                x.anchor += d
+                if let s = x.subtreeRange { x.subtreeRange = shift(s) }
+                return x }
         return out
     }
 }

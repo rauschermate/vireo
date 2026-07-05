@@ -34,7 +34,53 @@ public struct MarkdownParser {
         acc.result.markerRanges = acc.result.markerRanges
             .filter { $0.length > 0 }
             .sorted { $0.location < $1.location }
+        acc.result.headings = Self.computeHeadingMarks(source: ns, toc: acc.result.toc)
         return acc.result
+    }
+
+    /// Foldable heading sections, derived from the TOC as a whole-document
+    /// post-pass. A heading's subtree ends at the next heading of the same or
+    /// higher level — a *non-local* boundary, so the incremental parser also
+    /// recomputes this over the full spliced document (splicing local heading
+    /// marks would keep stale fold ranges). Must stay a pure function of
+    /// (source, toc) to preserve the incremental == full-parse invariant.
+    static func computeHeadingMarks(source ns: NSString, toc: [TOCEntry]) -> [HeadingMark] {
+        guard !toc.isEmpty else { return [] }
+        var out: [HeadingMark] = []
+        out.reserveCapacity(toc.count)
+        for (i, entry) in toc.enumerated() {
+            // Anchor = first visible char: past the ATX `#`s and following
+            // spaces (setext headings have no prefix — anchor at the start).
+            var anchor = entry.location
+            var hashes = 0
+            while anchor < ns.length, hashes < 6, ns.character(at: anchor) == 0x23 { anchor += 1; hashes += 1 }
+            if hashes > 0 {
+                while anchor < ns.length, ns.character(at: anchor) == 0x20 { anchor += 1 }
+            } else {
+                anchor = entry.location
+            }
+
+            // Subtree = after the heading line, up to the next heading with
+            // level ≤ this one (or end of document).
+            var lineEnd = anchor
+            while lineEnd < ns.length, ns.character(at: lineEnd) != 0x0A { lineEnd += 1 }
+            let start = lineEnd + 1
+            let boundary = toc[(i + 1)...].first { $0.level <= entry.level }?.location ?? ns.length
+            var end = boundary
+            // Keep one trailing newline visible so the collapsed heading's line
+            // fragment still terminates (mirrors the list-subtree convention:
+            // the renderer hides the *leading* newline instead).
+            if end > start, ns.character(at: end - 1) == 0x0A { end -= 1 }
+            var subtree: NSRange?
+            if start < end {
+                let rest = ns.substring(with: NSRange(location: start, length: end - start))
+                if !rest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    subtree = NSRange(location: start, length: end - start)
+                }
+            }
+            out.append(HeadingMark(anchor: min(anchor, ns.length), level: entry.level, subtreeRange: subtree))
+        }
+        return out
     }
 }
 
