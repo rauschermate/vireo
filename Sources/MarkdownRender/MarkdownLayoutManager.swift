@@ -151,38 +151,76 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
 
     // MARK: Text-only selection highlight
 
+    /// Persistent buffer backing our `rectArray` override. `NSLayoutManager`'s
+    /// contract is that the returned pointer stays valid until the next call, so
+    /// we own storage that lives across calls and grows as needed.
+    private var selectionRects: UnsafeMutablePointer<NSRect>?
+    private var selectionRectCapacity = 0
+
+    deinit { selectionRects?.deallocate() }
+
     /// Trim the selection highlight to the text itself.
     ///
-    /// `NSLayoutManager` fills the full line-*fragment* width for any line
-    /// wholly inside the selection, so a multi-line selection reads as one solid
-    /// block stretching to the container's right edge. More refined editors
-    /// (Medium, Notion, VS Code) highlight only the glyphs. We clamp each
-    /// selection rect horizontally to the line's *used* rect — the actual glyph
-    /// extent — so the highlight ends where the text does. The partial first and
-    /// last lines already stop at the selection edge, and `max`/`min` clamping
-    /// leaves those untouched.
-    public override func fillBackgroundRectArray(_ rectArray: UnsafePointer<NSRect>,
-                                                 count rectCount: Int,
-                                                 forCharacterRange charRange: NSRange,
-                                                 color: NSColor) {
-        guard let container = textContainers.first, numberOfGlyphs > 0 else {
-            super.fillBackgroundRectArray(rectArray, count: rectCount,
-                                          forCharacterRange: charRange, color: color)
-            return
+    /// This is the primitive `NSTextView` calls to compute selection rectangles.
+    /// The default merges every line wholly inside the selection into a *single*
+    /// block rect at full container width, so a multi-line selection reads as one
+    /// solid slab reaching the right margin. More refined editors (Medium,
+    /// Notion, VS Code) highlight only the glyphs. We can't just trim that merged
+    /// slab — it spans many lines of differing width — so we rebuild the rects
+    /// one line fragment at a time, each clamped to the selected glyphs' actual
+    /// horizontal extent: the line's *used* rect for a fully-covered line, or the
+    /// caret x of the selection edge on a partially-covered first/last line.
+    /// Empty lines collapse to nothing. Fixing the geometry at this single source
+    /// makes it hold across every drawing path `NSTextView` uses.
+    public override func rectArray(forCharacterRange charRange: NSRange,
+                                   withinSelectedCharacterRange selCharRange: NSRange,
+                                   in container: NSTextContainer,
+                                   rectCount: UnsafeMutablePointer<Int>) -> UnsafeMutablePointer<NSRect>? {
+        guard charRange.length > 0, numberOfGlyphs > 0 else {
+            return super.rectArray(forCharacterRange: charRange,
+                                   withinSelectedCharacterRange: selCharRange,
+                                   in: container, rectCount: rectCount)
         }
-        color.setFill()
-        for i in 0..<rectCount {
-            let rect = rectArray[i]
-            // The line this rect sits on — probe the leading edge at mid-height.
-            let probe = NSPoint(x: rect.minX, y: rect.midY)
-            let glyph = glyphIndex(for: probe, in: container)
-            let used = lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
-            let minX = max(rect.minX, used.minX)
-            let maxX = min(rect.maxX, used.maxX)
-            guard maxX > minX else { continue }
-            NSBezierPath(rect: NSRect(x: minX, y: rect.minY,
-                                      width: maxX - minX, height: rect.height)).fill()
+        let selGlyphs = glyphRange(forCharacterRange: charRange, actualCharacterRange: nil)
+        var out: [NSRect] = []
+        enumerateLineFragments(forGlyphRange: selGlyphs) { fragmentRect, usedRect, _, lineGlyphs, _ in
+            let onLine = NSIntersectionRange(selGlyphs, lineGlyphs)
+            guard onLine.length > 0 else { return }
+
+            // Left edge: the selection's start glyph if it begins mid-line,
+            // otherwise the text's own left edge (used rect).
+            var left = usedRect.minX
+            if onLine.location > lineGlyphs.location, onLine.location < self.numberOfGlyphs {
+                left = fragmentRect.minX + self.location(forGlyphAt: onLine.location).x
+            }
+            // Right edge: the selection's end glyph if it stops mid-line,
+            // otherwise the text's own right edge (used rect) — never the margin.
+            var right = usedRect.maxX
+            let end = onLine.location + onLine.length
+            if end < lineGlyphs.location + lineGlyphs.length, end < self.numberOfGlyphs {
+                right = fragmentRect.minX + self.location(forGlyphAt: end).x
+            }
+            left = max(left, usedRect.minX)
+            right = min(right, usedRect.maxX)
+            if right > left {
+                out.append(NSRect(x: left, y: fragmentRect.minY,
+                                  width: right - left, height: fragmentRect.height))
+            }
         }
+        guard !out.isEmpty else {
+            rectCount.pointee = 0
+            return super.rectArray(forCharacterRange: charRange,
+                                   withinSelectedCharacterRange: selCharRange,
+                                   in: container, rectCount: rectCount)
+        }
+        if selectionRectCapacity < out.count {
+            selectionRects?.deallocate()
+            selectionRects = .allocate(capacity: out.count)
+            selectionRectCapacity = out.count
+        }
+        for (i, r) in out.enumerated() { selectionRects![i] = r }
+        rectCount.pointee = out.count
+        return selectionRects
     }
 
     // MARK: List collapse UI (chevrons, halo, …, guides)

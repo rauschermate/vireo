@@ -169,21 +169,18 @@ struct Snapshot {
             let parts = args[i + 1].split(separator: ",").compactMap { Int($0) }
             if parts.count == 2 {
                 let sel = NSRange(location: parts[0], length: max(0, parts[1] - parts[0]))
-                let selColor = NSColor.selectedTextBackgroundColor
+                NSColor.selectedTextBackgroundColor.setFill()
                 var count = 0
+                // Mirror how NSTextView draws selection: ask the layout manager
+                // for the selection rects (now trimmed to the glyph extent) and
+                // fill them, offset to the draw origin.
                 let rects = layout.rectArray(forCharacterRange: sel,
                                              withinSelectedCharacterRange: sel,
                                              in: container, rectCount: &count)
                 if let rects {
-                    // NSTextView fills selection with the context already
-                    // translated to the container origin and rects in container
-                    // coordinates — mirror that so the override sees the same
-                    // frame it does at runtime.
-                    cg.saveGState()
-                    cg.translateBy(x: origin.x, y: origin.y)
-                    layout.fillBackgroundRectArray(rects, count: count,
-                                                   forCharacterRange: sel, color: selColor)
-                    cg.restoreGState()
+                    for k in 0..<count {
+                        NSBezierPath(rect: rects[k].offsetBy(dx: origin.x, dy: origin.y)).fill()
+                    }
                 }
             }
         }
