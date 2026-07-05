@@ -1,10 +1,17 @@
 #!/usr/bin/env swift
-// Generates Resources/AppIcon.icns: a rounded-square deep-green gradient with
-// a white bird glyph (a vireo is a songbird). Run from the repo root:
+// Builds Resources/AppIcon.icns from the designed artwork in
+// Resources/AppIcon-source.png (a finished rounded-square macOS icon: teal/green
+// "V" bird glyph on a dark body). The source is aspect-fit onto a square canvas
+// so a non-square export isn't distorted. Run from the repo root:
 //   swift scripts/make-icon.swift
 import AppKit
 
 let canvas: CGFloat = 1024
+let sourcePath = "Resources/AppIcon-source.png"
+
+guard let source = NSImage(contentsOfFile: sourcePath) else {
+    fatalError("missing \(sourcePath)")
+}
 
 func render() -> NSBitmapImageRep {
     guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil,
@@ -17,28 +24,16 @@ func render() -> NSBitmapImageRep {
     }
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = ctx
+    ctx.imageInterpolation = .high
 
-    // Big Sur-style icon: rounded rect with margins on a transparent canvas.
-    let inset: CGFloat = 100
-    let rect = NSRect(x: inset, y: inset, width: canvas - inset * 2, height: canvas - inset * 2)
-    let path = NSBezierPath(roundedRect: rect, xRadius: 185, yRadius: 185)
-    let top = NSColor(calibratedRed: 0.32, green: 0.55, blue: 0.29, alpha: 1)
-    let bottom = NSColor(calibratedRed: 0.10, green: 0.28, blue: 0.16, alpha: 1)
-    NSGradient(starting: top, ending: bottom)?.draw(in: path, angle: -90)
-
-    // White bird glyph.
-    let config = NSImage.SymbolConfiguration(pointSize: 430, weight: .medium)
-        .applying(.init(paletteColors: [.white]))
-    if let symbol = NSImage(systemSymbolName: "bird.fill", accessibilityDescription: nil)?
-        .withSymbolConfiguration(config) {
-        let size = symbol.size
-        let scale = min(440 / size.width, 440 / size.height)
-        let w = size.width * scale
-        let h = size.height * scale
-        let origin = NSPoint(x: (canvas - w) / 2, y: (canvas - h) / 2)
-        symbol.draw(in: NSRect(origin: origin, size: NSSize(width: w, height: h)),
-                    from: .zero, operation: .sourceOver, fraction: 1)
-    }
+    // Aspect-fit the artwork onto the square canvas (transparent letterbox for a
+    // non-square source; the art already carries its own rounded-rect + margin).
+    let s = source.size
+    let scale = min(canvas / s.width, canvas / s.height)
+    let w = s.width * scale, h = s.height * scale
+    let origin = NSPoint(x: (canvas - w) / 2, y: (canvas - h) / 2)
+    source.draw(in: NSRect(origin: origin, size: NSSize(width: w, height: h)),
+                from: .zero, operation: .sourceOver, fraction: 1)
 
     NSGraphicsContext.restoreGraphicsState()
     return rep
