@@ -29,9 +29,29 @@ open -a build/Vireo.app samples/welcome.md
 # Package a distributable .dmg
 ./scripts/make-dmg.sh build/Vireo.app build/Vireo.dmg
 
-# Notarized release (needs a Developer ID — see scripts/release.sh)
-VIREO_TEAM_ID=… VIREO_SIGN_IDENTITY=… VIREO_NOTARY_PROFILE=… ./scripts/release.sh
+# Notarized release + Sparkle appcast (needs a Developer ID — see scripts/release.sh)
+./scripts/updater-keys.sh          # once: generate the EdDSA signing key
+VIREO_TEAM_ID=… VIREO_SIGN_IDENTITY=… VIREO_NOTARY_PROFILE=… \
+  ./scripts/release.sh --publish   # builds, signs, generates appcast.xml, uploads
 ```
+
+### Auto-updates
+
+Vireo checks for new releases in the background (Sparkle) and shows a small blue
+**update pill** in the window's bottom-left corner when one is available. Click it
+to download, install, and relaunch; dismiss it to be reminded on the next check.
+The whole thing is driven from `VireoUpdater` (Sparkle wrapper + state machine)
+and `VireoUpdaterUI` (the pill) — Sparkle's own windows are suppressed. Preview
+the pill's states headlessly:
+
+```bash
+swift run VireoUpdaterSnapshot /tmp/pill.png          # light
+swift run VireoUpdaterSnapshot /tmp/pill.png --dark
+```
+
+Updates only activate once `scripts/updater-keys.sh` has filled `SUPublicEDKey`
+and a signed release + `appcast.xml` is published; unconfigured/dev builds keep
+the updater dormant.
 
 `scripts/build-app.sh` still produces a quick SPM-only bundle (no Quick Look
 extension) for fast iteration on the app itself.
@@ -46,6 +66,8 @@ Local SPM packages (see `docs/eng-design.md` §10), consumed by the `Vireo` app:
 | `MarkdownRender` | Ranges → styled `NSAttributedString`; custom `NSLayoutManager` that hides syntax and draws bullets/checkboxes/images |
 | `MarkdownEditor` | `NSTextView` (TextKit 1) in a SwiftUI `NSViewRepresentable`; formatting, links, floating toolbar |
 | `VireoCore` | Atomic file I/O, file watcher, preferences |
+| `VireoUpdater` | Sparkle wrapper + custom `SPUUserDriver` → observable update state machine |
+| `VireoUpdaterUI` | The bottom-left update pill (SwiftUI), driven by `VireoUpdater` |
 | `Vireo` | SwiftUI app: tabs, sidebars, TOC, menus, zoom, auto-save |
 
 **Core invariant:** the markdown *source string* is always the single source of
@@ -70,6 +92,9 @@ just writing `textStorage.string` back to disk unchanged.
   exact parse → render → layout pipeline.
 - Xcode project generated from `project.yml` (XcodeGen) for the app + extension;
   `.dmg` packaging and a Developer-ID notarization script.
+- **Background auto-updates** (Sparkle): a dismissable blue update pill in the
+  bottom-left, one-click download + install + relaunch, driven entirely from a
+  custom UI (Sparkle's own dialogs suppressed).
 
 Behavior notes: GFM tables render as a drawn grid; placing the caret inside one
 reveals its raw source for editing. Task checkboxes toggle on click. Links open

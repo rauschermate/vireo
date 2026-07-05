@@ -71,5 +71,9 @@ let package = Package(
             name: "MarkdownEditorTests",
             dependencies: ["MarkdownEditor"]
         ),
+        .testTarget(
+            name: "VireoUpdaterTests",
+            dependencies: ["VireoUpdater"]
+        ),
     ]
 )
