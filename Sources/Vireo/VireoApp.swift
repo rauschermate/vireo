@@ -26,6 +26,10 @@ struct VireoApp: App {
     }
 
     @CommandsBuilder private var commands: some Commands {
+        // Vireo ▸ Check for Updates… — sits right under "About Vireo".
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") { state.updater.checkForUpdates() }
+        }
         CommandGroup(replacing: .newItem) {
             Button("New File") { state.createNewFile() }.keyboardShortcut("n")
             Button("New Tab") { state.newDocument() }.keyboardShortcut("t")
@@ -187,6 +191,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for url in pending { state.requestOpen(url) }
         if state.documents.isEmpty { state.newDocument() }
         ensureWindowVisible()
+        // Begin watching for updates. Kicks off Sparkle's scheduled checks so the
+        // pill surfaces on its own when a new version is published. No-op on
+        // unconfigured dev builds.
+        state.updater.start()
     }
 
     /// SwiftUI creates but never orders-in the main window when the app is

@@ -14,9 +14,14 @@ let package = Package(
         .library(name: "MarkdownRender", targets: ["MarkdownRender"]),
         .library(name: "MarkdownEditor", targets: ["MarkdownEditor"]),
         .library(name: "VireoCore", targets: ["VireoCore"]),
+        .library(name: "VireoUpdater", targets: ["VireoUpdater"]),
+        .library(name: "VireoUpdaterUI", targets: ["VireoUpdaterUI"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-markdown.git", branch: "main"),
+        // Sparkle drives the auto-updater (see Sources/VireoUpdater). Pinned to a
+        // released XCFramework so `swift build` fetches a signed binary artifact.
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.4"),
     ],
     targets: [
         .target(
@@ -29,6 +34,16 @@ let package = Package(
             name: "VireoCore"
         ),
         .target(
+            name: "VireoUpdater",
+            dependencies: [
+                .product(name: "Sparkle", package: "Sparkle"),
+            ]
+        ),
+        .target(
+            name: "VireoUpdaterUI",
+            dependencies: ["VireoUpdater"]
+        ),
+        .target(
             name: "MarkdownRender",
             dependencies: ["MarkdownEngine"]
         ),
@@ -38,11 +53,15 @@ let package = Package(
         ),
         .executableTarget(
             name: "Vireo",
-            dependencies: ["MarkdownEngine", "MarkdownRender", "MarkdownEditor", "VireoCore"]
+            dependencies: ["MarkdownEngine", "MarkdownRender", "MarkdownEditor", "VireoCore", "VireoUpdater", "VireoUpdaterUI"]
         ),
         .executableTarget(
             name: "VireoSnapshot",
             dependencies: ["MarkdownEngine", "MarkdownRender"]
+        ),
+        .executableTarget(
+            name: "VireoUpdaterSnapshot",
+            dependencies: ["VireoUpdater", "VireoUpdaterUI"]
         ),
         .testTarget(
             name: "MarkdownEngineTests",

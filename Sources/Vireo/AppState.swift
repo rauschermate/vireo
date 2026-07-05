@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 import VireoCore
+import VireoUpdater
 
 /// A node in the opened-folder file tree (left sidebar).
 struct FileNode: Identifiable, Hashable {
@@ -18,6 +19,10 @@ struct FileNode: Identifiable, Hashable {
 @MainActor
 final class AppState: ObservableObject {
     static let shared = AppState()
+
+    /// Auto-updater (Sparkle-backed). Drives the update pill; dormant on
+    /// unconfigured dev builds. Started once from the app delegate.
+    let updater = UpdateController()
 
     @Published private(set) var documents: [DocumentModel] = []
     @Published var selectedID: UUID?

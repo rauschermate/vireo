@@ -16,6 +16,22 @@
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <!-- Sparkle auto-updater (see Sources/VireoUpdater). The appcast is published
+         as a "latest release" asset so this URL always resolves to the newest one.
+         SUPublicEDKey must hold the EdDSA public key printed by
+         scripts/updater-keys.sh (it can patch this file in place). Until it's set,
+         the updater stays dormant. Automatic downloads stay off — the pill's click
+         is what starts the download + install. -->
+    <key>SUFeedURL</key>
+    <string>https://github.com/rauschermate/vireo/releases/latest/download/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string></string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUScheduledCheckInterval</key>
+    <integer>3600</integer>
+    <key>SUAutomaticallyUpdate</key>
+    <false/>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
