@@ -41,17 +41,17 @@ It's just text. It outlives every app that ever touches it. It's the one format 
 
 But somewhere along the way, the apps forgot that.
 
-They bolted on vaults and graph views and plugin marketplaces. They wrapped a plain text file in a 300-megabyte browser that idles like a space heater. They locked your notes in a database and started charging you monthly rent to read your own writing. And the ones that stayed "simple" just shrugged and left the raw `##` and `**` sitting on the screen — like it's 2011 — and called it clean.
+They bolted on vaults and plugin marketplaces. They wrapped a plain text file in a 300-megabyte browser that idles like a space heater. They locked your notes in a database and started charging you monthly rent to read your own writing. And the ones that stayed "simple" just shrugged and left the raw `##` and `**` sitting on the screen — like it's 2011 — and called it clean.
 
-So now the simplest format in computing feels like a chore. You configure it. You maintain it. You pay a subscription for it. You open a graph view you've looked at exactly twice.
+So now markdown feels like a chore. AI writes it, AI understands it. But you don't — you're left with a "vault," whatever that means, and a graph view you've looked at exactly twice.
 
 And yet — the magic is still there. It's just buried under a decade of feature creep and neglect.
 
 Markdown deserves a dust-off. An app that remembers it's *just text*: opens it before you blink, hides the syntax, and shows you the words. Fast. Native. Yours. Nothing in the way.
 
-So we built it. No vaults. No plugins. No subscription. Your markdown, finally readable — the way it should have been all along.
+So we built it. No vaults. No plugins. No subscription. Your markdown, finally readable and editable — the way it should have been all along.
 
-Vireo is our love letter to markdown. Set it as your default, and we hope you forget it's even running.
+Vireo is what I think markdown should feel like. Set it as your default, and I hope you forget it's even running.
 
 — Mate Rauscher
 
