@@ -53,7 +53,7 @@ So we built it. No vaults. No plugins. No subscription. Your markdown, finally r
 
 Vireo is our love letter to markdown. Set it as your default, and we hope you forget it's even running.
 
-— The Vireo team
+— Mate Rauscher
 
 ---
 
