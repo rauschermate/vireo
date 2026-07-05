@@ -46,6 +46,19 @@ public struct MarkdownParser {
     /// (source, toc) to preserve the incremental == full-parse invariant.
     static func computeHeadingMarks(source ns: NSString, toc: [TOCEntry]) -> [HeadingMark] {
         guard !toc.isEmpty else { return [] }
+
+        // Each heading's subtree ends at the next heading of level ≤ its own.
+        // Resolve every boundary in one reverse pass with a monotonic stack of
+        // still-open headings (O(n)), instead of an O(n²) forward scan per
+        // heading.
+        var boundary = [Int](repeating: ns.length, count: toc.count)
+        var open: [Int] = [] // indices, strictly increasing level from the base
+        for i in stride(from: toc.count - 1, through: 0, by: -1) {
+            while let top = open.last, toc[top].level > toc[i].level { open.removeLast() }
+            boundary[i] = open.last.map { toc[$0].location } ?? ns.length
+            open.append(i)
+        }
+
         var out: [HeadingMark] = []
         out.reserveCapacity(toc.count)
         for (i, entry) in toc.enumerated() {
@@ -60,23 +73,27 @@ public struct MarkdownParser {
                 anchor = entry.location
             }
 
-            // Subtree = after the heading line, up to the next heading with
-            // level ≤ this one (or end of document).
+            // Subtree = after the heading line, up to the boundary computed above.
             var lineEnd = anchor
             while lineEnd < ns.length, ns.character(at: lineEnd) != 0x0A { lineEnd += 1 }
             let start = lineEnd + 1
-            let boundary = toc[(i + 1)...].first { $0.level <= entry.level }?.location ?? ns.length
-            var end = boundary
+            var end = boundary[i]
             // Keep one trailing newline visible so the collapsed heading's line
             // fragment still terminates (mirrors the list-subtree convention:
             // the renderer hides the *leading* newline instead).
             if end > start, ns.character(at: end - 1) == 0x0A { end -= 1 }
+            // Empty (all-whitespace) sections aren't foldable. Scan in place
+            // rather than materialising and trimming the whole section string.
             var subtree: NSRange?
             if start < end {
-                let rest = ns.substring(with: NSRange(location: start, length: end - start))
-                if !rest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    subtree = NSRange(location: start, length: end - start)
+                var k = start
+                var hasContent = false
+                while k < end {
+                    let c = ns.character(at: k)
+                    if c != 0x20, c != 0x09, c != 0x0A, c != 0x0D { hasContent = true; break }
+                    k += 1
                 }
+                if hasContent { subtree = NSRange(location: start, length: end - start) }
             }
             out.append(HeadingMark(anchor: min(anchor, ns.length), level: entry.level, subtreeRange: subtree))
         }
