@@ -1,8 +1,9 @@
 # Vireo — Landing Page Copy
 
-> Draft 4 — agent-era hero, premium register. Direct-response (Gary Halbert method).
-> Voice: confident, calm, category-defining — not shouty. Named-competitor callouts kept below.
+> Draft 5 — agent-era hero + HEY-style founder's letter. Direct-response (Gary Halbert method).
+> Voice: confident, personal, a bit spicy and funny. The fight is implied, not named.
 > macOS 15+, native, free direct download. Sections top-to-bottom as they'd appear.
+> (Working notes — headline options — moved to the appendix at the bottom.)
 
 ---
 
@@ -14,7 +15,7 @@
 
 ### Subhead
 
-A simple, fast markdown editor. No vaults, no plugins, no subscription.
+A simple, fast markdown editor for macOS. No vaults, no plugins, no subscription.
 
 ### CTA
 
@@ -23,48 +24,36 @@ Native. 4 MB. Opens before the others finish launching.
 
 ---
 
-## HEADLINE OPTIONS CONSIDERED
+## SCREENSHOT
 
-The agent-era hooks explored before landing on the pairing above (headline #1 + subhead #2):
-
-1. **Your agent writes markdown. Vireo lets you read it.** — *chosen hero.* Clean, symmetric, whole value in seven words; premium because it doesn't strain.
-2. **The markdown reader for the age of agents.** — *chosen subhead / positioning line.* Category-defining, calm, no asterisks — iA Writer / Linear register.
-3. **AI made markdown the world's most-written language. We made it readable.** — bigger claim, still elegant; "most-written language" is a specific, believable flex.
-4. **Your agent thinks in markdown. Now you can read it that way too.** — warm and human; "thinks in markdown" is the quietly clever line.
-5. **Everything writes markdown now. Vireo is where you read it.** — short, inevitable; "where you read it" positions it as the destination, not a tool.
-6. **Fluent markdown, finally rendered for humans.** — compact; "for humans" does the agent contrast implicitly without naming a model.
-
-Earlier, punchier/aggressive hooks (kept in reserve for ads/social):
-- Your agent speaks fluent markdown. Your eyes shouldn't have to.
-- AI writes markdown all day. You're the one stuck reading the raw code.
-- Every markdown app shows you the code. This one shows you the words.
-- Delete the app that still shows you `##`.
+> [ Full-bleed hero screenshot of Vireo: a real `.md` file rendered clean — a
+> heading, some bold, a checkbox list, a code block with color. No visible
+> syntax anywhere. Light mode, centered reading column. This image *is* the
+> argument — it should make the headline obvious before anyone reads a word. ]
 
 ---
 
-## THE AGENT ANGLE (the timely wedge)
+## A LETTER ON WHY WE BUILT THIS
 
-Markdown won. It's the native tongue of every LLM on earth — your agent emits it by the screenful, your notes are full of it, your whole workflow now runs on `.md`.
+Markdown gets treated like plumbing. It deserves better. Markdown is a small miracle.
 
-So why are *you* the only one still reading the raw syntax?
+It's just text. It outlives every app that ever touches it. It's the one format your notes, your README, your agent, and your future self all speak fluently — write it once, open it anywhere, forever. Nothing else in software is that simple and that durable at the same time.
 
-Your agent doesn't see `## Heading` — it understands a heading. You should too. Vireo is the reader that finally caught up to how much markdown you actually deal with now.
+But somewhere along the way, the apps forgot that.
 
----
+They bolted on vaults and graph views and plugin marketplaces. They wrapped a plain text file in a 300-megabyte browser that idles like a space heater. They locked your notes in a database and started charging you monthly rent to read your own writing. And the ones that stayed "simple" just shrugged and left the raw `##` and `**` sitting on the screen — like it's 2011 — and called it clean.
 
-## THE FIGHT (name the enemy)
+So now the simplest format in computing feels like a chore. You configure it. You maintain it. You pay a subscription for it. You open a graph view you've looked at exactly twice.
 
-Let's be honest about what you're using right now.
+And yet — the magic is still there. It's just buried under a decade of feature creep and neglect.
 
-If it's **Obsidian**, it's a web browser cosplaying as a Mac app — 300 megabytes of RAM to hold a text file, a plugin marketplace you'll spend a weekend configuring, and a graph view you've looked at exactly twice.
+Markdown deserves a dust-off. An app that remembers it's *just text*: opens it before you blink, hides the syntax, and shows you the words. Fast. Native. Yours. Nothing in the way.
 
-If it's **Typora**, same browser, different costume — and it still can't decide if it's a document or a code editor.
+So we built it. No vaults. No plugins. No subscription. Your markdown, finally readable — the way it should have been all along.
 
-If it's **MarkEdit** or VS Code, congratulations: you're staring at raw `**bold**` and `# headings` like it's 2011, calling it "clean."
+Vireo is our love letter to markdown. Set it as your default, and we hope you forget it's even running.
 
-If it's **Bear** or **Ulysses**, your notes aren't even `.md` anymore — they're locked in a database behind a subscription, hostage to a monthly fee.
-
-Every one of them made you compromise. You just stopped noticing.
+— The Vireo team
 
 ---
 
@@ -144,3 +133,22 @@ macOS 15+ · Apple Silicon · notarized direct download · your files stay yours
 - **Speed line:** 4 megabytes, not 400. Native, not a browser in a costume.
 - **Ownership line:** It's your `.md` file the whole time. We just stopped making you stare at the syntax.
 - **Shade line:** Obsidian uses 30× the memory to hold the same text file. You feel it. We fixed it.
+
+---
+
+## APPENDIX — HEADLINE OPTIONS CONSIDERED (working notes, not page copy)
+
+Agent-era hooks explored before landing on the pairing above (headline #1 + the current plain subhead):
+
+1. **Your agent writes markdown. Vireo lets you read it.** — *chosen hero.* Clean, symmetric, whole value in seven words; premium because it doesn't strain.
+2. **The markdown reader for the age of agents.** — category-defining positioning line; calm, iA Writer / Linear register.
+3. **AI made markdown the world's most-written language. We made it readable.** — bigger claim, still elegant.
+4. **Your agent thinks in markdown. Now you can read it that way too.** — warm and human; "thinks in markdown" is the quietly clever line.
+5. **Everything writes markdown now. Vireo is where you read it.** — short, inevitable; positions it as the destination.
+6. **Fluent markdown, finally rendered for humans.** — compact; "for humans" does the agent contrast without naming a model.
+
+Punchier/aggressive hooks (kept in reserve for ads/social):
+- Your agent speaks fluent markdown. Your eyes shouldn't have to.
+- AI writes markdown all day. You're the one stuck reading the raw code.
+- Every markdown app shows you the code. This one shows you the words.
+- Delete the app that still shows you `##`.
