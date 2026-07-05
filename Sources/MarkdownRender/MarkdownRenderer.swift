@@ -20,6 +20,11 @@ public struct MarkdownRenderer {
     /// List items whose subtrees are hidden (absolute anchor positions).
     public var collapsedAnchors: Set<Int> = []
 
+    /// Shared boolean marker value — reused for every `.vireoMarker` /
+    /// `.vireoArrow` range so a full render doesn't allocate one `NSNumber` per
+    /// range (tens of thousands on a large document).
+    private static let trueValue = NSNumber(value: true)
+
     public init(theme: Theme, baseURL: URL? = nil, imageLoader: ImageLoader? = nil, isDark: Bool = false) {
         self.theme = theme
         self.baseURL = baseURL
@@ -82,7 +87,7 @@ public struct MarkdownRenderer {
 
         // 8. Hide syntax markers (applied last so nothing clobbers it).
         for r in parsed.markerRanges where r.upperBound <= text.length {
-            text.addAttribute(.vireoMarker, value: NSNumber(value: true), range: r)
+            text.addAttribute(.vireoMarker, value: Self.trueValue, range: r)
         }
 
         // 9. Typographic arrows: display `->` as → in prose (never in code or
@@ -255,9 +260,9 @@ public struct MarkdownRenderer {
             let hidden = attrs[.vireoMarker] != nil || attrs[.vireoTable] != nil
             guard !inCode, !hidden else { continue }
 
-            text.addAttribute(.vireoArrow, value: NSNumber(value: true),
+            text.addAttribute(.vireoArrow, value: Self.trueValue,
                               range: NSRange(location: r.location, length: 1))
-            text.addAttribute(.vireoMarker, value: NSNumber(value: true),
+            text.addAttribute(.vireoMarker, value: Self.trueValue,
                               range: NSRange(location: r.location + 1, length: 1))
         }
     }

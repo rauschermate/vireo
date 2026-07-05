@@ -58,11 +58,23 @@ public struct Theme: Sendable {
     public var tableHeaderFont: NSFont { .systemFont(ofSize: baseSize * 0.95, weight: .semibold) }
     public var tableRowHeight: CGFloat { ceil(baseSize * 1.35) + 16 }
     public var boldFont: NSFont { .systemFont(ofSize: baseSize, weight: .semibold) }
-    public var italicFont: NSFont {
-        NSFontManager.shared.convert(bodyFont, toHaveTrait: .italicFontMask)
-    }
-    public var boldItalicFont: NSFont {
-        NSFontManager.shared.convert(boldFont, toHaveTrait: .italicFontMask)
+    public var italicFont: NSFont { Self.italic(of: bodyFont) }
+    public var boldItalicFont: NSFont { Self.italic(of: boldFont) }
+
+    /// `NSFontManager.convert` acquires a global lock and is comparatively slow;
+    /// a full render asks for the italic/bold-italic face once per inline run
+    /// (thousands of times on a large document). Memoize by point size + weight
+    /// so each distinct face is derived only once for the whole process.
+    private static let italicLock = NSLock()
+    nonisolated(unsafe) private static var italicCache: [String: NSFont] = [:]
+    private static func italic(of font: NSFont) -> NSFont {
+        let key = "\(font.fontName)-\(font.pointSize)"
+        italicLock.lock()
+        defer { italicLock.unlock() }
+        if let cached = italicCache[key] { return cached }
+        let derived = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
+        italicCache[key] = derived
+        return derived
     }
 
     // Colors (all appearance-aware / dynamic).
