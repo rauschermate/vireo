@@ -33,7 +33,7 @@ struct FileSidebar: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(SidebarVibrancy())
+        .modifier(SidebarBackground())
     }
 
     /// A file selection opens it; a folder selection just expands/highlights —
@@ -78,8 +78,23 @@ private struct FileRow: View {
     }
 }
 
+/// Sidebar backdrop: the real macOS 26 Liquid Glass when available (the bright,
+/// luminous glass Finder uses on Tahoe), falling back to the legacy
+/// `.behindWindow` sidebar vibrancy on macOS 15.
+private struct SidebarBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.background {
+                Color.clear.glassEffect(.regular, in: Rectangle())
+            }
+        } else {
+            content.background(SidebarVibrancy())
+        }
+    }
+}
+
 /// A `.behindWindow` sidebar-material blur — the native Finder-sidebar backdrop
-/// that samples and blurs the desktop behind the window.
+/// that samples and blurs the desktop behind the window (pre-Liquid-Glass).
 private struct SidebarVibrancy: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
