@@ -1,7 +1,7 @@
 # Vireo — Landing Page Copy
 
-> Draft 3 — aggressive cut, agent-era hero. Direct-response (Gary Halbert method).
-> Voice: fast, cocky, picks a fight. Names the enemy. Every line earns the next.
+> Draft 4 — agent-era hero, premium register. Direct-response (Gary Halbert method).
+> Voice: confident, calm, category-defining — not shouty. Named-competitor callouts kept below.
 > macOS 15+, native, free direct download. Sections top-to-bottom as they'd appear.
 
 ---
@@ -10,21 +10,35 @@
 
 ### Headline
 
-**Your agent reads markdown fluently. You're stuck squinting at asterisks.**
+**Your agent writes markdown. Vireo lets you read it.**
 
 ### Subhead
 
-Every model you talk to — Claude, ChatGPT, Cursor — thinks and writes in markdown. Then it hands you a wall of `**this**` and `## that` and calls it a document. Vireo hides the syntax while you edit and shows you the actual page — the instant you open the file. Finally, an app that reads markdown as well as your agent writes it.
+The markdown reader for the age of agents. It hides the syntax while you edit and shows you the actual page — clean, calm, the instant you open the file.
 
 ### CTA
 
 **[ Download for Mac — Free ]**
 Native. 4 MB. Opens before the others finish launching.
 
-*Alt headline A:* **Your agent speaks fluent markdown. Your eyes shouldn't have to.**
-*Alt headline B:* **AI writes markdown all day. You're the one stuck reading the raw code.**
-*Alt headline C:* **Every markdown app shows you the code. This one shows you the words.**
-*Alt headline D:* **Delete the app that still shows you `##`.**
+---
+
+## HEADLINE OPTIONS CONSIDERED
+
+The agent-era hooks explored before landing on the pairing above (headline #1 + subhead #2):
+
+1. **Your agent writes markdown. Vireo lets you read it.** — *chosen hero.* Clean, symmetric, whole value in seven words; premium because it doesn't strain.
+2. **The markdown reader for the age of agents.** — *chosen subhead / positioning line.* Category-defining, calm, no asterisks — iA Writer / Linear register.
+3. **AI made markdown the world's most-written language. We made it readable.** — bigger claim, still elegant; "most-written language" is a specific, believable flex.
+4. **Your agent thinks in markdown. Now you can read it that way too.** — warm and human; "thinks in markdown" is the quietly clever line.
+5. **Everything writes markdown now. Vireo is where you read it.** — short, inevitable; "where you read it" positions it as the destination, not a tool.
+6. **Fluent markdown, finally rendered for humans.** — compact; "for humans" does the agent contrast implicitly without naming a model.
+
+Earlier, punchier/aggressive hooks (kept in reserve for ads/social):
+- Your agent speaks fluent markdown. Your eyes shouldn't have to.
+- AI writes markdown all day. You're the one stuck reading the raw code.
+- Every markdown app shows you the code. This one shows you the words.
+- Delete the app that still shows you `##`.
 
 ---
 
