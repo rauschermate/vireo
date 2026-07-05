@@ -13,6 +13,20 @@ public enum AppearanceOption: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// Whether the table of contents starts open: always, never, or only for
+/// long documents (dynamic).
+public enum TOCDefaultOption: String, CaseIterable, Identifiable, Sendable {
+    case on, off, dynamic
+    public var id: String { rawValue }
+    public var label: String {
+        switch self {
+        case .on: return "On"
+        case .off: return "Off"
+        case .dynamic: return "Dynamic"
+        }
+    }
+}
+
 /// Thin typed wrapper over UserDefaults for the handful of v1 preferences.
 @MainActor
 public final class Preferences: ObservableObject {
@@ -23,6 +37,7 @@ public final class Preferences: ObservableObject {
         static let autoSave = "vireo.autoSave"
         static let recentFiles = "vireo.recentFiles"
         static let appearance = "vireo.appearance"
+        static let tocDefault = "vireo.tocDefault"
     }
 
     /// Auto-save on by default (PRD §2).
@@ -35,9 +50,15 @@ public final class Preferences: ObservableObject {
         didSet { defaults.set(appearance.rawValue, forKey: Keys.appearance) }
     }
 
+    /// Dynamic out of the box: TOC opens only for long documents.
+    @Published public var tocDefault: TOCDefaultOption = .dynamic {
+        didSet { defaults.set(tocDefault.rawValue, forKey: Keys.tocDefault) }
+    }
+
     public init() {
         autoSave = defaults.object(forKey: Keys.autoSave) as? Bool ?? true
         appearance = AppearanceOption(rawValue: defaults.string(forKey: Keys.appearance) ?? "") ?? .system
+        tocDefault = TOCDefaultOption(rawValue: defaults.string(forKey: Keys.tocDefault) ?? "") ?? .dynamic
     }
 
     public var recentFiles: [URL] {

@@ -12,6 +12,9 @@ final class DocumentModel: ObservableObject, Identifiable {
     @Published var url: URL?
     @Published var title: String
     @Published var toc: [TOCEntry] = []
+    /// TOC visibility is per-document: the "dynamic" default depends on each
+    /// file's length, and a manual toggle should stick to its tab.
+    @Published var showTOC = true
     @Published var isDirty = false
     /// User-chosen tab title (rename) for untitled buffers.
     @Published var customTitle: String?
@@ -37,6 +40,7 @@ final class DocumentModel: ObservableObject, Identifiable {
         self.url = url
         self.source = try FileService.load(url)
         self.title = url.lastPathComponent
+        self.showTOC = Self.defaultTOCVisibility(for: source)
         configure()
         startWatching()
     }
@@ -45,7 +49,22 @@ final class DocumentModel: ObservableObject, Identifiable {
         self.url = nil
         self.source = untitled
         self.title = "Untitled"
+        self.showTOC = Self.defaultTOCVisibility(for: source)
         configure()
+    }
+
+    /// Initial TOC state per the preference. "Dynamic" opens it only for long
+    /// documents — ≥ 4,000 characters or ≥ 100 lines, roughly the point where
+    /// jumping by heading beats scrolling. Resolved once at open time; the
+    /// user's toggle owns it afterwards.
+    static func defaultTOCVisibility(for source: String) -> Bool {
+        switch Preferences.shared.tocDefault {
+        case .on: return true
+        case .off: return false
+        case .dynamic:
+            return source.count >= 4_000
+                || source.lazy.filter { $0 == "\n" }.count >= 100
+        }
     }
 
     private func configure() {
@@ -158,6 +177,7 @@ final class DocumentModel: ObservableObject, Identifiable {
         url = newURL
         title = newURL.lastPathComponent
         source = text
+        showTOC = Self.defaultTOCVisibility(for: text) // pristine tab: re-resolve for the real content
         isDirty = false
         controller.baseURL = newURL.deletingLastPathComponent()
         controller.replaceEntireSource(text)

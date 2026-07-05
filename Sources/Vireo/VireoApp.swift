@@ -12,11 +12,12 @@ struct VireoApp: App {
         Window("Vireo", id: "main") {
             DocumentWindowView()
                 .environmentObject(state)
-                .frame(minWidth: 640, minHeight: 420)
+                .frame(minWidth: 480, minHeight: 420)
         }
         // Window scenes persist "was it open?" — never launch windowless.
         .defaultLaunchBehavior(.presented)
         .restorationBehavior(.disabled)
+        .defaultSize(width: 1100, height: 760)
         .commands { commands }
 
         Settings {
@@ -82,9 +83,7 @@ struct VireoApp: App {
             Button(state.showFileSidebar ? "Hide File Sidebar" : "Show File Sidebar") {
                 state.showFileSidebar.toggle()
             }.keyboardShortcut("\\", modifiers: [.command])
-            Button(state.showTOC ? "Hide Table of Contents" : "Show Table of Contents") {
-                state.showTOC.toggle()
-            }.keyboardShortcut("\\", modifiers: [.command, .option])
+            TOCToggleCommand()
             Button(state.focusMode ? "Exit Focus Mode" : "Focus Mode") {
                 state.focusMode.toggle()
             }.keyboardShortcut(".", modifiers: [.command, .shift])
@@ -94,6 +93,33 @@ struct VireoApp: App {
             Button("Zoom Out") { state.zoom = max(0.6, state.zoom - 0.1) }.keyboardShortcut("-")
             Button("Actual Size") { state.zoom = 1 }.keyboardShortcut("0")
         }
+    }
+}
+
+/// View menu TOC toggle. TOC visibility lives on the document, so this
+/// observes the active document directly — the label must flip when the
+/// per-tab state (or the selected tab) changes.
+struct TOCToggleCommand: View {
+    @ObservedObject private var state = AppState.shared
+
+    var body: some View {
+        if let doc = state.activeDocument {
+            TOCToggleButton(doc: doc)
+        } else {
+            Button("Show Table of Contents") {}
+                .keyboardShortcut("\\", modifiers: [.command, .option])
+                .disabled(true)
+        }
+    }
+}
+
+private struct TOCToggleButton: View {
+    @ObservedObject var doc: DocumentModel
+
+    var body: some View {
+        Button(doc.showTOC ? "Hide Table of Contents" : "Show Table of Contents") {
+            doc.showTOC.toggle()
+        }.keyboardShortcut("\\", modifiers: [.command, .option])
     }
 }
 
@@ -212,6 +238,16 @@ struct PreferencesView: View {
             .onChange(of: prefs.appearance) { _, newValue in
                 applyAppearance(newValue)
             }
+
+            Picker("Table of contents", selection: $prefs.tocDefault) {
+                ForEach(TOCDefaultOption.allCases) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+            .pickerStyle(.menu)
+            Text("Whether the table of contents starts open. Dynamic opens it only for longer documents. Applies to documents opened afterwards.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding(20)
         .frame(width: 360)

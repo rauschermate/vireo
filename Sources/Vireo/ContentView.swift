@@ -22,7 +22,6 @@ struct DocumentWindowView: View {
             }
         }
         .animation(.easeInOut(duration: 0.18), value: state.showFileSidebar)
-        .animation(.easeInOut(duration: 0.18), value: state.showTOC)
         .animation(.easeInOut(duration: 0.18), value: state.focusMode)
         // The tab strip lives in a titlebar *accessory* — inside the titlebar
         // hierarchy next to the traffic lights (like Xcode's tabs): native
@@ -49,10 +48,11 @@ private struct EditorPane: View {
             MarkdownSourceView(source: doc.source, controller: doc.controller)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .id(doc.id)
-            if state.showTOC && !state.focusMode, !doc.toc.isEmpty {
+            if doc.showTOC && !state.focusMode, !doc.toc.isEmpty {
                 TOCSidebar(document: doc).frame(width: 220)
             }
         }
+        .animation(.easeInOut(duration: 0.18), value: doc.showTOC)
     }
 }
 
