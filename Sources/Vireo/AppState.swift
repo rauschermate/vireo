@@ -23,7 +23,7 @@ final class AppState: ObservableObject {
     @Published var selectedID: UUID?
     @Published var rootFolder: FileNode?
 
-    @Published var showFileSidebar = true
+    @Published var showFileSidebar = false
     @Published var focusMode = false
     @Published var zoom: CGFloat = 1.0 { didSet { applyZoom() } }
     /// Window content width — drives how many tabs fit before overflow.
@@ -151,7 +151,7 @@ final class AppState: ObservableObject {
             alert.runModal()
             return
         }
-        if let root = rootFolder { openFolder(root.url) } // refresh sidebar
+        if showFileSidebar { refreshFileTree() } // refresh sidebar
     }
 
     // MARK: Opening
@@ -186,7 +186,7 @@ final class AppState: ObservableObject {
     /// ⌘N: create a real `.md` on disk — in the active document's folder, else
     /// the opened sidebar folder, else wherever the user picks — and open it.
     func createNewFile() {
-        let folder = activeDocument?.url?.deletingLastPathComponent() ?? rootFolder?.url
+        let folder = activeDocument?.url?.deletingLastPathComponent()
         if let folder {
             let url = availableUntitledURL(in: folder)
             do {
@@ -198,7 +198,7 @@ final class AppState: ObservableObject {
                 alert.runModal()
                 return
             }
-            if let root = rootFolder { openFolder(root.url) } // refresh sidebar
+            if showFileSidebar { refreshFileTree() } // refresh sidebar
             Preferences.shared.addRecent(url)
             requestOpen(url)
         } else {
@@ -231,16 +231,24 @@ final class AppState: ObservableObject {
         }
     }
 
-    func openFolderPanel() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        if panel.runModal() == .OK, let url = panel.url { openFolder(url) }
+    // MARK: File sidebar
+
+    /// Toggle the left file panel. When opening, (re)build the tree from the
+    /// active document's containing folder.
+    func toggleFileSidebar() {
+        showFileSidebar.toggle()
+        if showFileSidebar { refreshFileTree() }
     }
 
-    func openFolder(_ url: URL) {
-        rootFolder = buildTree(url)
-        showFileSidebar = true
+    /// Rebuild the sidebar tree from the active document's containing folder.
+    /// Cleared to `nil` when the active document is untitled (no folder to
+    /// browse) — the sidebar then shows its empty state.
+    func refreshFileTree() {
+        if let folder = activeDocument?.url?.deletingLastPathComponent() {
+            rootFolder = buildTree(folder)
+        } else {
+            rootFolder = nil
+        }
     }
 
     func saveActiveAs() {

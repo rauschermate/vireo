@@ -9,20 +9,16 @@ struct ChromeRow: View {
     var body: some View {
         HStack(spacing: 6) {
             Button {
-                if state.rootFolder == nil {
-                    state.openFolderPanel()
-                } else {
-                    state.showFileSidebar.toggle()
-                }
+                state.toggleFileSidebar()
             } label: {
                 Image(systemName: "sidebar.left")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(state.showFileSidebar ? Color.accentColor : .secondary)
                     .frame(width: 26, height: 26)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(state.rootFolder == nil ? "Open folder" : "Toggle file sidebar")
+            .help(state.showFileSidebar ? "Hide file sidebar" : "Show file sidebar")
 
             TabStrip()
 
