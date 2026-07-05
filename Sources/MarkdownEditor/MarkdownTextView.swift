@@ -80,8 +80,14 @@ public final class MarkdownTextView: NSTextView {
     /// top, so the default full-fragment caret towers above the glyphs while
     /// hugging their bottom. Shrink it to the caret font's span, anchored to
     /// the fragment's bottom (where the text sits).
+    /// Where the caret was last actually drawn (already corrected). Used to
+    /// invalidate the old location when the caret moves off a relocated line.
+    private var lastDrawnCaretRect: NSRect?
+
     public override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
-        super.drawInsertionPoint(in: insertionRect(for: rect), color: color, turnedOn: flag)
+        let corrected = insertionRect(for: rect)
+        lastDrawnCaretRect = corrected
+        super.drawInsertionPoint(in: corrected, color: color, turnedOn: flag)
     }
 
     private func insertionRect(for rect: NSRect) -> NSRect {
@@ -89,10 +95,15 @@ public final class MarkdownTextView: NSTextView {
 
         // Directly after hidden marker glyphs (a fresh "3. " / "- [ ] " line)
         // AppKit anchors the caret to the last *real* glyph — the previous
-        // line's newline. Recompute from the glyph at the caret instead.
+        // line's newline. Recompute from the glyph at the caret instead — but
+        // only when that glyph is already laid out, so this never *forces*
+        // layout (it runs from setNeedsDisplay, which may pass
+        // avoidAdditionalLayout). An unlaid caret isn't on screen anyway; it
+        // relocates on the next draw once layout reaches it.
         let caret = selectedRange().location
         if let storage = textStorage, let lm = layoutManager,
            caret > 0, caret < storage.length,
+           caret < lm.firstUnlaidCharacterIndex(),
            storage.attribute(.vireoMarker, at: caret - 1, effectiveRange: nil) != nil {
             let glyph = lm.glyphIndexForCharacter(at: caret)
             if glyph < lm.numberOfGlyphs {
@@ -116,13 +127,15 @@ public final class MarkdownTextView: NSTextView {
         return r
     }
 
-    /// The system invalidates the caret's *uncorrected* rect on every blink;
-    /// when we relocate it (other line), the drawn caret would never be
-    /// erased. Union in the corrected rect for caret-sized invalidations.
+    /// The system invalidates the caret's *uncorrected* rect on every blink.
+    /// When we relocate the caret (onto another line), union in both its new
+    /// corrected rect and the last place it was drawn — otherwise the old
+    /// pixel is never erased and lingers as a ghost when the caret moves away.
     public override func setNeedsDisplay(_ invalidRect: NSRect, avoidAdditionalLayout flag: Bool) {
         var union = invalidRect
         if invalidRect.width <= 2, selectedRange().length == 0 {
             union = union.union(insertionRect(for: invalidRect))
+            if let last = lastDrawnCaretRect { union = union.union(last) }
         }
         super.setNeedsDisplay(union, avoidAdditionalLayout: flag)
     }
