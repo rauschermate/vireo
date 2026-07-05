@@ -14,7 +14,7 @@
 
 ### Subhead
 
-The markdown reader for the age of agents. It hides the syntax while you edit and shows you the actual page — clean, calm, the instant you open the file.
+A simple, fast markdown editor. No vaults, no plugins, no subscription.
 
 ### CTA
 
