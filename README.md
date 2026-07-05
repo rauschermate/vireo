@@ -22,6 +22,10 @@ brew install xcodegen
 ./scripts/build-app-xcode.sh Debug
 open -a build/Vireo.app samples/welcome.md
 
+# Install into /Applications and set Vireo as the default markdown app
+# (double-clicking a .md in Finder then opens it in Vireo as a new tab)
+./scripts/install.sh          # quick bundle; --full for the Quick Look build
+
 # Package a distributable .dmg
 ./scripts/make-dmg.sh build/Vireo.app build/Vireo.dmg
 
@@ -73,8 +77,10 @@ on ⌘-click (plain click edits); `#anchor` and `file.md#anchor` links navigate.
 
 ## Known gaps / next steps
 
-Implementation deviations from the eng-design are documented in
-[`docs/eng-design.md` §14](docs/eng-design.md). Remaining work:
+Smaller engineering follow-ups (from the PR #16 review) are tracked in
+[`docs/roadmap.md`](docs/roadmap.md). Implementation deviations from the
+eng-design are documented in [`docs/eng-design.md` §14](docs/eng-design.md).
+Remaining work:
 
 - **Caret over hidden markers**: arrow keys step through zero-width hidden marker
   characters (the eng-design's noted option-C caret nuance). Acceptable for v1.

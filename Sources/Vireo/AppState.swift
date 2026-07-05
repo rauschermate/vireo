@@ -24,7 +24,6 @@ final class AppState: ObservableObject {
     @Published var rootFolder: FileNode?
 
     @Published var showFileSidebar = true
-    @Published var showTOC = true
     @Published var focusMode = false
     @Published var zoom: CGFloat = 1.0 { didSet { applyZoom() } }
     /// Window content width — drives how many tabs fit before overflow.

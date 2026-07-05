@@ -74,6 +74,12 @@ public struct MarkdownRenderer {
                               range: NSRange(location: t.anchor, length: 1))
         }
 
+        // 7b. Foldable headings: tag the anchor for chevron/`…` hit-testing.
+        for h in parsed.headings where h.anchor < text.length && h.subtreeRange != nil {
+            text.addAttribute(.vireoHeading, value: NSNumber(value: h.level),
+                              range: NSRange(location: h.anchor, length: 1))
+        }
+
         // 8. Hide syntax markers (applied last so nothing clobbers it).
         for r in parsed.markerRanges where r.upperBound <= text.length {
             text.addAttribute(.vireoMarker, value: NSNumber(value: true), range: r)
@@ -84,21 +90,31 @@ public struct MarkdownRenderer {
         //    the `-` is glyph-substituted at layout time and the `>` hidden.
         applyArrowSubstitutions(to: text)
 
-        // 10. Collapse: hide the subtrees of collapsed list items.
+        // 10. Collapse: hide the subtrees of collapsed list items and headings.
         if !collapsedAnchors.isEmpty {
             let subtrees = parsed.listMarkers.map { ($0.anchor, $0.subtreeRange) }
                 + parsed.tasks.map { ($0.anchor, $0.subtreeRange) }
+                + parsed.headings.map { ($0.anchor, $0.subtreeRange) }
             for (anchor, subtree) in subtrees {
                 guard collapsedAnchors.contains(originOffset + anchor),
                       let subtree, subtree.upperBound <= text.length else { continue }
-                // Hide from the newline *before* the subtree through its end —
-                // leaving any newline visible produces a stray empty line
-                // fragment where the collapsed content was.
+                // Hide from the newline *before* the subtree through its end.
                 var hide = subtree
                 if hide.location > 0 {
                     hide = NSRange(location: hide.location - 1, length: hide.length + 1)
                 }
                 text.addAttribute(.vireoCollapsed, value: NSNumber(value: true), range: hide)
+                // The layout manager keeps the hidden newlines (see
+                // shouldGenerateGlyphs), so collapse each hidden line's
+                // fragment to ~zero height — same trick as table separators.
+                let flat = NSMutableParagraphStyle()
+                flat.minimumLineHeight = 0.01
+                flat.maximumLineHeight = 0.01
+                text.addAttribute(.paragraphStyle, value: flat, range: hide)
+                // Null glyphs are zero-width but their background still draws —
+                // an inline-code span in the hidden range would leave a thin
+                // colored sliver at the collapse point.
+                text.removeAttribute(.backgroundColor, range: hide)
             }
         }
 

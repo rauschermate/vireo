@@ -44,60 +44,80 @@ struct ChromeRow: View {
 struct TabStrip: View {
     @EnvironmentObject private var state: AppState
 
-    private static let minTabWidth: CGFloat = 60
-    private static let maxTabWidth: CGFloat = 190
+    private static let minTabWidth: CGFloat = 72
+    /// The active tab stays readable: it never shrinks below this even when
+    /// the others are squeezed to `minTabWidth`.
+    private static let activeMinTabWidth: CGFloat = 96
+    private static let maxTabWidth: CGFloat = 200
     private static let spacing: CGFloat = 3
     /// Traffic lights + sidebar button + overflow chevron + margins.
     private static let reservedChrome: CGFloat = 190
     private static let plusButtonWidth: CGFloat = 30
+    private static let dividerWidth: CGFloat = 1
 
     var body: some View {
         let stripWidth = max(Self.minTabWidth + Self.plusButtonWidth,
                              state.contentWidth - Self.reservedChrome)
-        let visible = visibleDocuments(stripWidth: stripWidth)
-        HStack(spacing: Self.spacing) {
-            ForEach(Array(visible.enumerated()), id: \.element.id) { index, doc in
-                if index > 0,
-                   visible[index - 1].id != state.selectedID,
-                   doc.id != state.selectedID {
-                    Rectangle()
-                        .fill(Color.secondary.opacity(0.3))
-                        .frame(width: 1, height: 14)
+        let widths = tabWidths(stripWidth: stripWidth)
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: Self.spacing) {
+                    ForEach(Array(state.documents.enumerated()), id: \.element.id) { index, doc in
+                        if index > 0,
+                           state.documents[index - 1].id != state.selectedID,
+                           doc.id != state.selectedID {
+                            Rectangle()
+                                .fill(Color.secondary.opacity(0.3))
+                                .frame(width: Self.dividerWidth, height: 14)
+                        }
+                        TabItem(doc: doc,
+                                isSelected: doc.id == state.selectedID,
+                                width: doc.id == state.selectedID ? widths.active : widths.tab)
+                            .id(doc.id)
+                    }
+                    Button {
+                        state.newDocument()
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 24, height: 24)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("New tab (⌘T)")
                 }
-                TabItem(doc: doc, isSelected: doc.id == state.selectedID)
+                // Room for the active tab's shadow — the scroll view clips
+                // exactly at its bounds.
+                .padding(.vertical, 3)
             }
-            Button {
-                state.newDocument()
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 24, height: 24)
-                    .contentShape(Rectangle())
+            .frame(width: stripWidth, alignment: .leading)
+            .onChange(of: state.selectedID) { _, id in
+                guard let id else { return }
+                withAnimation(.easeInOut(duration: 0.15)) { proxy.scrollTo(id) }
             }
-            .buttonStyle(.plain)
-            .help("New tab (⌘T)")
+            .onAppear {
+                if let id = state.selectedID { proxy.scrollTo(id) }
+            }
         }
-        .frame(width: stripWidth, alignment: .leading)
     }
 
-    /// Tabs stack from the left and shrink toward the minimum width; once even
-    /// minimum-width tabs can't all fit, show as many as do — always including
-    /// the active tab (swapped into the last slot when it would overflow).
-    private func visibleDocuments(stripWidth: CGFloat) -> [DocumentModel] {
-        let available = stripWidth - Self.plusButtonWidth
-        let perTab = Self.minTabWidth + Self.spacing
-        let capacity = max(1, Int((available + Self.spacing) / perTab))
-        let docs = state.documents
-        guard docs.count > capacity else { return docs }
-
-        var shown = Array(docs.prefix(capacity))
-        if let selected = state.selectedID,
-           !shown.contains(where: { $0.id == selected }),
-           let active = docs.first(where: { $0.id == selected }) {
-            shown[capacity - 1] = active
-        }
-        return shown
+    /// Tabs share one width, shrinking from the maximum toward the minimum as
+    /// tabs are added; once even minimum-width tabs can't all fit, the strip
+    /// scrolls horizontally instead of hiding tabs. Below `activeMinTabWidth`
+    /// the active tab stops shrinking and the rest absorb the difference.
+    private func tabWidths(stripWidth: CGFloat) -> (tab: CGFloat, active: CGFloat) {
+        let count = max(1, state.documents.count)
+        // One gap per tab (between tabs and before the + button), plus a
+        // worst-case allowance for the inter-tab dividers.
+        let gaps = CGFloat(count) * Self.spacing
+        let dividers = CGFloat(max(0, count - 2)) * (Self.dividerWidth + Self.spacing)
+        let available = stripWidth - Self.plusButtonWidth - gaps - dividers
+        let equal = min(Self.maxTabWidth, max(Self.minTabWidth, available / CGFloat(count)))
+        guard equal < Self.activeMinTabWidth, count > 1 else { return (equal, equal) }
+        let rest = max(Self.minTabWidth,
+                       (available - Self.activeMinTabWidth) / CGFloat(count - 1))
+        return (rest, Self.activeMinTabWidth)
     }
 }
 
@@ -203,6 +223,7 @@ private struct TabMenuRow: View {
 private struct TabItem: View {
     @ObservedObject var doc: DocumentModel
     let isSelected: Bool
+    let width: CGFloat
     @EnvironmentObject private var state: AppState
     @State private var hovering = false
     @State private var tooltipTask: Task<Void, Never>?
@@ -225,7 +246,7 @@ private struct TabItem: View {
                     }
             } else {
                 Text(doc.displayTitle)
-                    .font(.system(size: 12.5, weight: isSelected ? .medium : .regular))
+                    .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .foregroundStyle(isSelected ? Color.primary : Color.secondary)
@@ -248,7 +269,7 @@ private struct TabItem: View {
         .padding(.leading, 10)
         .padding(.trailing, 5)
         .frame(height: 26)
-        .frame(minWidth: 60, maxWidth: 190, alignment: .leading)
+        .frame(width: width, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(isSelected ? Color(nsColor: .textBackgroundColor)
@@ -257,6 +278,8 @@ private struct TabItem: View {
         )
         .contentShape(Rectangle())
         .background(AnchorGrabber(box: anchorBox))
+        // Middle-click (scroll-wheel button) closes the tab, like Chrome.
+        .overlay(MiddleClickCatcher { state.closeTab(doc.id) })
         .onHover(perform: hoverChanged)
         // Double-click → full screen with this tab active; single click selects.
         .gesture(TapGesture(count: 2).onEnded {
@@ -345,6 +368,48 @@ private struct AnchorGrabber: NSViewRepresentable {
     }
 }
 
+// MARK: - Middle-click to close
+
+/// Transparent overlay that closes the tab on a middle-click (scroll-wheel
+/// button), like Chrome. It claims the hit *only* while a middle-mouse event is
+/// being routed; left-click (select), double-click (full screen), right-click
+/// (context menu) and hover all fall straight through to the SwiftUI tab.
+private struct MiddleClickCatcher: NSViewRepresentable {
+    let action: () -> Void
+    func makeNSView(context: Context) -> MiddleClickView { MiddleClickView(action: action) }
+    func updateNSView(_ nsView: MiddleClickView, context: Context) { nsView.action = action }
+}
+
+private final class MiddleClickView: NSView {
+    var action: () -> Void
+    init(action: @escaping () -> Void) {
+        self.action = action
+        super.init(frame: .zero)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// Only intercept middle-button events; return nil for everything else so
+    /// the click reaches the tab's own gestures/buttons underneath.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let event = NSApp.currentEvent else { return nil }
+        switch event.type {
+        case .otherMouseDown, .otherMouseUp, .otherMouseDragged:
+            return event.buttonNumber == 2 ? self : nil
+        default:
+            return nil
+        }
+    }
+
+    // Accept the press so the matching release is delivered here; fire on the
+    // release, and only if it lands back on the tab (Chrome behaviour).
+    override func otherMouseDown(with event: NSEvent) {}
+    override func otherMouseUp(with event: NSEvent) {
+        guard event.buttonNumber == 2,
+              bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        action()
+    }
+}
+
 // MARK: - Tooltip panel
 
 /// Floating dark tooltip bubble with an up-arrow, shown under a tab. A panel
@@ -368,6 +433,7 @@ final class TabTooltipPanel {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.ignoresMouseEvents = true
+        panel.hidesOnDeactivate = true // never float over other apps
         panel.contentView = content
 
         let x = tabScreenRect.midX - content.frame.width / 2

@@ -147,7 +147,9 @@ final class FloatingToolbar {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.contentView = effect
-        panel.hidesOnDeactivate = false
+        // Float above Vireo only — hide when the app deactivates (AppKit
+        // restores it on reactivation while the selection persists).
+        panel.hidesOnDeactivate = true
         return panel
     }
 

@@ -34,7 +34,70 @@ public struct MarkdownParser {
         acc.result.markerRanges = acc.result.markerRanges
             .filter { $0.length > 0 }
             .sorted { $0.location < $1.location }
+        acc.result.headings = Self.computeHeadingMarks(source: ns, toc: acc.result.toc)
         return acc.result
+    }
+
+    /// Foldable heading sections, derived from the TOC as a whole-document
+    /// post-pass. A heading's subtree ends at the next heading of the same or
+    /// higher level — a *non-local* boundary, so the incremental parser also
+    /// recomputes this over the full spliced document (splicing local heading
+    /// marks would keep stale fold ranges). Must stay a pure function of
+    /// (source, toc) to preserve the incremental == full-parse invariant.
+    static func computeHeadingMarks(source ns: NSString, toc: [TOCEntry]) -> [HeadingMark] {
+        guard !toc.isEmpty else { return [] }
+
+        // Each heading's subtree ends at the next heading of level ≤ its own.
+        // Resolve every boundary in one reverse pass with a monotonic stack of
+        // still-open headings (O(n)), instead of an O(n²) forward scan per
+        // heading.
+        var boundary = [Int](repeating: ns.length, count: toc.count)
+        var open: [Int] = [] // indices, strictly increasing level from the base
+        for i in stride(from: toc.count - 1, through: 0, by: -1) {
+            while let top = open.last, toc[top].level > toc[i].level { open.removeLast() }
+            boundary[i] = open.last.map { toc[$0].location } ?? ns.length
+            open.append(i)
+        }
+
+        var out: [HeadingMark] = []
+        out.reserveCapacity(toc.count)
+        for (i, entry) in toc.enumerated() {
+            // Anchor = first visible char: past the ATX `#`s and following
+            // spaces (setext headings have no prefix — anchor at the start).
+            var anchor = entry.location
+            var hashes = 0
+            while anchor < ns.length, hashes < 6, ns.character(at: anchor) == 0x23 { anchor += 1; hashes += 1 }
+            if hashes > 0 {
+                while anchor < ns.length, ns.character(at: anchor) == 0x20 { anchor += 1 }
+            } else {
+                anchor = entry.location
+            }
+
+            // Subtree = after the heading line, up to the boundary computed above.
+            var lineEnd = anchor
+            while lineEnd < ns.length, ns.character(at: lineEnd) != 0x0A { lineEnd += 1 }
+            let start = lineEnd + 1
+            var end = boundary[i]
+            // Keep one trailing newline visible so the collapsed heading's line
+            // fragment still terminates (mirrors the list-subtree convention:
+            // the renderer hides the *leading* newline instead).
+            if end > start, ns.character(at: end - 1) == 0x0A { end -= 1 }
+            // Empty (all-whitespace) sections aren't foldable. Scan in place
+            // rather than materialising and trimming the whole section string.
+            var subtree: NSRange?
+            if start < end {
+                var k = start
+                var hasContent = false
+                while k < end {
+                    let c = ns.character(at: k)
+                    if c != 0x20, c != 0x09, c != 0x0A, c != 0x0D { hasContent = true; break }
+                    k += 1
+                }
+                if hasContent { subtree = NSRange(location: start, length: end - start) }
+            }
+            out.append(HeadingMark(anchor: min(anchor, ns.length), level: entry.level, subtreeRange: subtree))
+        }
+        return out
     }
 }
 
@@ -48,14 +111,13 @@ public extension MarkdownParser {
         }
     }
 
-    /// Ordered markers cycle 1. → a. → i. by depth, preserving the delimiter.
-    static func orderedMarkerText(raw: String, depth: Int) -> String {
-        let delim = raw.hasSuffix(")") ? ")" : "."
-        let n = Int(raw.dropLast()) ?? 1
+    /// Ordered markers cycle 1. → a. → i. by depth (the 4th level wraps back
+    /// to numbers), preserving the source's delimiter.
+    static func orderedMarkerText(ordinal: Int, delimiter: String, depth: Int) -> String {
         switch depth % 3 {
-        case 0: return "\(n)\(delim)"
-        case 1: return alpha(n) + delim
-        default: return roman(n) + delim
+        case 0: return "\(ordinal)\(delimiter)"
+        case 1: return alpha(ordinal) + delimiter
+        default: return roman(ordinal) + delimiter
         }
     }
 
@@ -104,11 +166,42 @@ private struct Accumulator {
         switch node {
         case let heading as Heading:
             guard let r = map.nsRange(heading.range) else { return }
+            // A `-` setext underline is really an (indented) empty list marker:
+            // `text\n- ` (Enter makes a fresh bullet), or `- one\n    - \n- two`
+            // (Tab indents a fresh bullet mid-list). cmark reads the `-` line as
+            // a setext-H2 underline and can inflate the heading's range past the
+            // following list siblings — so derive the underline from the text's
+            // own line, not `r.upperBound`, and if it's a marker-only line,
+            // render the text as a paragraph plus a drawn (nested) marker instead
+            // of flashing a heading. ATX headings (leading `#`) never apply.
+            let textLine = ns.lineRange(for: NSRange(location: r.location, length: 0))
+            if heading.level == 2, r.location < ns.length, ns.character(at: r.location) != 0x23,
+               textLine.upperBound < ns.length {
+                let underline = ns.lineRange(for: NSRange(location: textLine.upperBound, length: 0))
+                if synthesizeDanglingItem(endingAt: NSRange(location: r.location,
+                                                            length: underline.upperBound - r.location),
+                                          listDepth: listDepth) {
+                    if !inQuote, textLine.upperBound - 1 > r.location {
+                        let para = NSRange(location: r.location,
+                                           length: textLine.upperBound - 1 - r.location)
+                        result.blockRuns.append(BlockRun(range: para, kind: .paragraph))
+                    }
+                    for c in heading.children { visitInline(c, style: InlineStyle()) }
+                    return
+                }
+            }
             result.blockRuns.append(BlockRun(range: r, kind: .heading(level: heading.level)))
             addSubtractionMarkers(parent: r, children: heading.children)
-            result.toc.append(TOCEntry(level: heading.level,
-                                       title: plainText(heading).trimmingCharacters(in: .whitespaces),
-                                       location: r.location))
+            // Only document-level headings join the TOC (and so become
+            // foldable). A heading nested in a list item or block quote
+            // (`inQuote`) is styled but not an outline entry — its fold subtree
+            // is computed against document-order headings and would otherwise
+            // run past the container, hiding sibling/parent content.
+            if !inQuote {
+                result.toc.append(TOCEntry(level: heading.level,
+                                           title: plainText(heading).trimmingCharacters(in: .whitespaces),
+                                           location: r.location))
+            }
             for c in heading.children { visitInline(c, style: InlineStyle()) }
 
         case let para as Paragraph:
@@ -116,6 +209,12 @@ private struct Accumulator {
                 result.blockRuns.append(BlockRun(range: r, kind: .paragraph))
             }
             for c in para.children { visitInline(c, style: InlineStyle()) }
+            // An empty item can't interrupt a paragraph (CommonMark), so the
+            // marker-only line Tab just created rides along as lazy
+            // continuation text — draw its marker anyway.
+            if let r = map.nsRange(para.range) {
+                synthesizeDanglingItem(endingAt: r, listDepth: listDepth)
+            }
 
         case let quote as BlockQuote:
             guard let r = map.nsRange(quote.range) else { return }
@@ -129,16 +228,20 @@ private struct Accumulator {
             addFenceMarkers(in: r)
 
         case let list as UnorderedList:
+            recordWholeListRun(list)
             for item in list.listItems {
                 visitListItem(item, depth: listDepth, ordered: false)
             }
-            _ = list
 
         case let list as OrderedList:
-            for item in list.listItems {
-                visitListItem(item, depth: listDepth, ordered: true)
+            recordWholeListRun(list)
+            // Displayed numbers are the item's *ordinal* (list start + position),
+            // not the raw source digits — inserting an item mid-list renumbers
+            // everything after it on screen even while the source lags behind.
+            let start = Int(list.startIndex)
+            for (i, item) in list.listItems.enumerated() {
+                visitListItem(item, depth: listDepth, ordered: true, ordinal: start + i)
             }
-            _ = list
 
         case let table as Table:
             visitTable(table)
@@ -161,7 +264,17 @@ private struct Accumulator {
         }
     }
 
-    mutating func visitListItem(_ item: ListItem, depth: Int, ordered: Bool) {
+    /// Whole-list block run (styling no-op, like HTML blocks): item ordinals
+    /// depend on the entire list, so the incremental parser's window expansion
+    /// must never re-parse a list from the middle — a slice starting at item
+    /// 3 would restart its numbering at that item's raw digits.
+    private mutating func recordWholeListRun(_ list: Markup) {
+        if let r = map.nsRange(list.range) {
+            result.blockRuns.append(BlockRun(range: r, kind: .paragraph))
+        }
+    }
+
+    mutating func visitListItem(_ item: ListItem, depth: Int, ordered: Bool, ordinal: Int = 1) {
         guard let itemRange = map.nsRange(item.range) else { return }
         result.blockRuns.append(BlockRun(range: itemRange, kind: .listItem(depth: depth, ordered: ordered)))
 
@@ -198,8 +311,11 @@ private struct Accumulator {
         } else if ordered {
             let raw = ns.substring(with: NSRange(location: itemRange.location, length: max(0, markerLen)))
                 .trimmingCharacters(in: .whitespaces)
+            let delimiter = raw.hasSuffix(")") ? ")" : "."
             result.listMarkers.append(ListMarker(anchor: anchor,
-                                                 text: MarkdownParser.orderedMarkerText(raw: raw, depth: depth),
+                                                 text: MarkdownParser.orderedMarkerText(ordinal: ordinal,
+                                                                                        delimiter: delimiter,
+                                                                                        depth: depth),
                                                  depth: depth,
                                                  subtreeRange: subtree))
         } else {
@@ -213,6 +329,86 @@ private struct Accumulator {
             // paragraphs inside a list item shouldn't add their own block run
             visitBlock(c, listDepth: depth + 1, inQuote: true)
         }
+    }
+
+    /// A marker-only line (`    1. `, `- `, `- [ ] `) that Tab or Enter just
+    /// created doesn't parse as a list item: an empty item can't interrupt a
+    /// paragraph, so cmark folds it into the previous block. Detect it as the
+    /// block's trailing line and synthesize the item it is about to become —
+    /// drawn marker at the depth a nested list would get here, raw syntax
+    /// hidden — so indenting never flashes `1.` (or the wrong marker style)
+    /// before content arrives. Returns false if the line isn't marker-only.
+    @discardableResult
+    private mutating func synthesizeDanglingItem(endingAt r: NSRange, listDepth: Int) -> Bool {
+        guard r.length > 0, r.upperBound <= ns.length else { return false }
+        let line = ns.lineRange(for: NSRange(location: r.upperBound - 1, length: 0))
+        guard line.location > r.location else { return false } // first line would be a real item
+
+        var contentEnd = min(line.upperBound, ns.length)
+        if contentEnd > line.location, ns.character(at: contentEnd - 1) == 0x0A { contentEnd -= 1 }
+
+        var i = line.location
+        while i < contentEnd, ns.character(at: i) == 0x20 || ns.character(at: i) == 0x09 { i += 1 }
+        let markerStart = i
+        var ordered = false
+        var ordinal = 1
+        var delimiter = "."
+        switch i < contentEnd ? ns.character(at: i) : 0 {
+        case 0x2D, 0x2A, 0x2B: // - * +
+            i += 1
+        case 0x30...0x39:
+            while i < contentEnd, ns.character(at: i) >= 0x30, ns.character(at: i) <= 0x39 { i += 1 }
+            guard i < contentEnd,
+                  ns.character(at: i) == 0x2E || ns.character(at: i) == 0x29 else { return false }
+            ordinal = Int(ns.substring(with: NSRange(location: markerStart,
+                                                     length: i - markerStart))) ?? 1
+            delimiter = ns.character(at: i) == 0x29 ? ")" : "."
+            ordered = true
+            i += 1
+        default:
+            return false
+        }
+        // Whitespace after the marker is required: a bare `-` under text is a
+        // deliberate setext underline, and an item needs the space anyway.
+        guard i < contentEnd, ns.character(at: i) == 0x20 || ns.character(at: i) == 0x09 else { return false }
+        while i < contentEnd, ns.character(at: i) == 0x20 || ns.character(at: i) == 0x09 { i += 1 }
+        var checked: Bool?
+        if !ordered, i + 3 <= contentEnd,
+           ns.character(at: i) == 0x5B, ns.character(at: i + 2) == 0x5D { // [ ]
+            switch ns.character(at: i + 1) {
+            case 0x20: checked = false
+            case 0x78, 0x58: checked = true // x X
+            default: break
+            }
+            if checked != nil {
+                i += 3
+                while i < contentEnd, ns.character(at: i) == 0x20 { i += 1 }
+            }
+        }
+        // Marker-only means nothing else on the line, and a newline must exist
+        // to carry the drawn marker (same rule as empty items in visitListItem).
+        guard i >= contentEnd, contentEnd < ns.length else { return false }
+        let anchor = contentEnd
+
+        result.markerRanges.append(NSRange(location: line.location,
+                                           length: anchor - line.location))
+        result.blockRuns.append(BlockRun(range: NSRange(location: line.location,
+                                                        length: anchor - line.location),
+                                         kind: .listItem(depth: listDepth, ordered: ordered)))
+        if let checked {
+            result.tasks.append(TaskMark(anchor: anchor, checked: checked))
+        } else if ordered {
+            result.listMarkers.append(ListMarker(anchor: anchor,
+                                                 text: MarkdownParser.orderedMarkerText(ordinal: ordinal,
+                                                                                        delimiter: delimiter,
+                                                                                        depth: listDepth),
+                                                 depth: listDepth))
+        } else {
+            result.listMarkers.append(ListMarker(anchor: anchor,
+                                                 text: MarkdownParser.bulletGlyph(forDepth: listDepth),
+                                                 depth: listDepth))
+        }
+        return true
     }
 
     /// Indent + bullet/number + spacing (+ task box) at the start of an item
@@ -231,6 +427,16 @@ private struct Accumulator {
             return 0
         }
         while i < end, ns.character(at: i) == 0x20 { i += 1 }
+        // Task box on an otherwise empty item ("- [ ] " just typed) — without
+        // this the box syntax stays visible next to the drawn checkbox until
+        // the first character of content arrives.
+        if i + 2 < end, ns.character(at: i) == 0x5B, ns.character(at: i + 2) == 0x5D { // [ ]
+            let mid = ns.character(at: i + 1)
+            if mid == 0x20 || mid == 0x78 || mid == 0x58 { // ' ', x, X
+                i += 3
+                while i < end, ns.character(at: i) == 0x20 { i += 1 }
+            }
+        }
         return i - itemRange.location
     }
 

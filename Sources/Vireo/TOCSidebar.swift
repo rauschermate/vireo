@@ -6,7 +6,6 @@ import MarkdownEngine
 /// panel reveals a small ✕ that hides it.
 struct TOCSidebar: View {
     @ObservedObject var document: DocumentModel
-    @EnvironmentObject private var state: AppState
     @State private var hoveringPanel = false
 
     var body: some View {
@@ -17,7 +16,7 @@ struct TOCSidebar: View {
                     .foregroundStyle(.tertiary)
                 Spacer()
                 Button {
-                    state.showTOC = false
+                    document.showTOC = false
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .semibold))

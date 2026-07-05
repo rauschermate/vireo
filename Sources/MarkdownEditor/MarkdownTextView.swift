@@ -31,6 +31,7 @@ public final class MarkdownTextView: NSTextView {
             return
         }
         super.mouseDown(with: event)
+        snapCaretAfterListMarker() // clicks land inside hidden markers too
     }
 
     /// If the click lands on a drawn checkbox (left of a task item's first
@@ -73,6 +74,72 @@ public final class MarkdownTextView: NSTextView {
         return storage.attribute(.vireoLink, at: charIndex, effectiveRange: nil) as? String
     }
 
+    // MARK: Insertion point
+
+    /// Line fragments are 1.35× the font height with the extra leading on
+    /// top, so the default full-fragment caret towers above the glyphs while
+    /// hugging their bottom. Shrink it to the caret font's span, anchored to
+    /// the fragment's bottom (where the text sits).
+    /// Where the caret was last actually drawn (already corrected). Used to
+    /// invalidate the old location when the caret moves off a relocated line.
+    private var lastDrawnCaretRect: NSRect?
+
+    public override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
+        let corrected = insertionRect(for: rect)
+        lastDrawnCaretRect = corrected
+        super.drawInsertionPoint(in: corrected, color: color, turnedOn: flag)
+    }
+
+    private func insertionRect(for rect: NSRect) -> NSRect {
+        var r = rect
+
+        // Directly after hidden marker glyphs (a fresh "3. " / "- [ ] " line)
+        // AppKit anchors the caret to the last *real* glyph — the previous
+        // line's newline. Recompute from the glyph at the caret instead — but
+        // only when that glyph is already laid out, so this never *forces*
+        // layout (it runs from setNeedsDisplay, which may pass
+        // avoidAdditionalLayout). An unlaid caret isn't on screen anyway; it
+        // relocates on the next draw once layout reaches it.
+        let caret = selectedRange().location
+        if let storage = textStorage, let lm = layoutManager,
+           caret > 0, caret < storage.length,
+           caret < lm.firstUnlaidCharacterIndex(),
+           storage.attribute(.vireoMarker, at: caret - 1, effectiveRange: nil) != nil {
+            let glyph = lm.glyphIndexForCharacter(at: caret)
+            if glyph < lm.numberOfGlyphs {
+                let lineRect = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+                r = NSRect(x: lineRect.minX + lm.location(forGlyphAt: glyph).x + textContainerInset.width,
+                           y: lineRect.minY + textContainerInset.height,
+                           width: rect.width, height: lineRect.height)
+            }
+        }
+
+        var font = typingAttributes[.font] as? NSFont
+        if let storage = textStorage, storage.length > 0 {
+            let idx = min(max(caret - 1, 0), storage.length - 1)
+            if let f = storage.attribute(.font, at: idx, effectiveRange: nil) as? NSFont { font = f }
+        }
+        guard let font else { return r }
+        let height = ceil(font.ascender - font.descender) + 2
+        guard r.height > height else { return r }
+        r.origin.y += r.height - height
+        r.size.height = height
+        return r
+    }
+
+    /// The system invalidates the caret's *uncorrected* rect on every blink.
+    /// When we relocate the caret (onto another line), union in both its new
+    /// corrected rect and the last place it was drawn — otherwise the old
+    /// pixel is never erased and lingers as a ghost when the caret moves away.
+    public override func setNeedsDisplay(_ invalidRect: NSRect, avoidAdditionalLayout flag: Bool) {
+        var union = invalidRect
+        if invalidRect.width <= 2, selectedRange().length == 0 {
+            union = union.union(insertionRect(for: invalidRect))
+            if let last = lastDrawnCaretRect { union = union.union(last) }
+        }
+        super.setNeedsDisplay(union, avoidAdditionalLayout: flag)
+    }
+
     public override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         controller?.restyle()
@@ -106,8 +173,13 @@ public final class MarkdownTextView: NSTextView {
     }
 
     public override func mouseMoved(with event: NSEvent) {
-        super.mouseMoved(with: event)
+        super.mouseMoved(with: event) // sets the I-beam
         controller?.setHoveredListAnchor(collapsibleAnchorOnLine(at: event))
+        // Arrow cursor over the clickable controls (fold chevron / `…` /
+        // task checkboxes) — a subtle hint that they're clickable, not text.
+        if collapseTarget(at: event) != nil || checkboxAnchor(at: event) != nil {
+            NSCursor.arrow.set()
+        }
     }
 
     public override func mouseExited(with event: NSEvent) {
@@ -115,7 +187,7 @@ public final class MarkdownTextView: NSTextView {
         controller?.setHoveredListAnchor(nil)
     }
 
-    /// The collapsible list anchor on the hovered line, if any.
+    /// The collapsible list-item or heading anchor on the hovered line, if any.
     private func collapsibleAnchorOnLine(at event: NSEvent) -> Int? {
         guard let storage = textStorage, storage.length > 0,
               let lm = layoutManager, let container = textContainer,
@@ -131,7 +203,7 @@ public final class MarkdownTextView: NSTextView {
         guard charIndex < storage.length else { return nil }
         let line = (storage.string as NSString).lineRange(for: NSRange(location: charIndex, length: 0))
         var anchor: Int?
-        for key: NSAttributedString.Key in [.vireoBullet, .vireoCheckbox] {
+        for key: NSAttributedString.Key in [.vireoBullet, .vireoCheckbox, .vireoHeading] {
             storage.enumerateAttribute(key, in: line) { value, range, stop in
                 if value != nil, controller.isCollapsible(anchor: range.location) {
                     anchor = range.location
@@ -153,6 +225,49 @@ public final class MarkdownTextView: NSTextView {
         return nil
     }
 
+    // MARK: Caret vs hidden list markers
+
+    /// A list item's leading marker (`- [ ] `, `1. `, …) is 2–8 invisible
+    /// zero-width caret stops — arrows appeared stuck and clicks landed
+    /// "nowhere". Snap the caret across the whole marker instead: forward to
+    /// the item's first visible char, or (moving left) past it entirely.
+    private func snapCaretAfterListMarker() {
+        guard selectedRange().length == 0, let controller else { return }
+        if let marker = controller.listMarkerRange(containing: selectedRange().location),
+           selectedRange().location != marker.upperBound {
+            setSelectedRange(NSRange(location: marker.upperBound, length: 0))
+        }
+    }
+
+    public override func moveRight(_ sender: Any?) {
+        super.moveRight(sender)
+        snapCaretAfterListMarker()
+    }
+
+    public override func moveLeft(_ sender: Any?) {
+        super.moveLeft(sender)
+        guard selectedRange().length == 0, let controller else { return }
+        if let marker = controller.listMarkerRange(containing: selectedRange().location) {
+            setSelectedRange(NSRange(location: max(0, marker.location - 1), length: 0))
+        }
+    }
+
+    // NB: moveUp/moveDown deliberately do NOT snap out of hidden markers.
+    // setSelectedRange resets AppKit's remembered goal column, so snapping on
+    // every vertical step made the caret drift horizontally when scanning up/
+    // down past list lines. A caret that lands inside a zero-width marker still
+    // renders at the item's first visible glyph, and the next horizontal move,
+    // click, or keystroke snaps it out (below / moveLeft / moveRight / mouseDown).
+
+    public override func insertText(_ string: Any, replacementRange: NSRange) {
+        // A vertical arrow may have left the caret inside a hidden marker; snap
+        // out first so typed text lands in the item's content, not its syntax.
+        if replacementRange.location == NSNotFound, !hasMarkedText() {
+            snapCaretAfterListMarker()
+        }
+        super.insertText(string, replacementRange: replacementRange)
+    }
+
     // MARK: Enter — list continuation and hidden-marker hygiene
 
     public override func insertNewline(_ sender: Any?) {
@@ -165,8 +280,10 @@ public final class MarkdownTextView: NSTextView {
     }
 
     /// Enter inside a list item continues the list (same bullet, unchecked box,
-    /// incremented number); Enter on an *empty* item removes its marker and
-    /// exits the list.
+    /// incremented number). Enter on an *empty* item walks out one nesting level
+    /// at a time (like Shift-Tab); once it's a top-level empty item, Enter
+    /// removes the marker and exits the list. So repeatedly pressing Enter
+    /// climbs out of a deep list and finally lands on a plain line.
     private func handleListNewline() -> Bool {
         guard selectedRange().length == 0, let storage = textStorage else { return false }
         let ns = storage.string as NSString
@@ -178,12 +295,20 @@ public final class MarkdownTextView: NSTextView {
         guard caret >= line.location + info.markerEndOffset else { return false }
 
         if info.contentIsEmpty {
-            // Exit the list: clear the marker, leaving an empty line.
+            // Nested empty item: outdent one level instead of exiting.
+            if !info.indent.isEmpty {
+                return adjustListIndent(outdent: true)
+            }
+            // Top-level empty item: exit the list. Replace the marker with a
+            // newline so the item's line becomes a blank separator and the
+            // caret drops onto a fresh line below it. Just clearing the marker
+            // would leave the caret directly under the item, where typed text
+            // is a *lazy continuation* and keeps rendering inside the list.
             let r = NSRange(location: line.location, length: (lineText as NSString).length)
-            if shouldChangeText(in: r, replacementString: "") {
-                storage.replaceCharacters(in: r, with: "")
+            if shouldChangeText(in: r, replacementString: "\n") {
+                storage.replaceCharacters(in: r, with: "\n")
                 didChangeText()
-                setSelectedRange(NSRange(location: line.location, length: 0))
+                setSelectedRange(NSRange(location: line.location + 1, length: 0))
             }
             return true
         }
@@ -241,13 +366,13 @@ public final class MarkdownTextView: NSTextView {
         let lineSpan = ns.lineRange(for: sel)
 
         // Collect the list-item lines in the span.
-        var listLines: [NSRange] = []
+        var listLines: [(range: NSRange, info: ListLine)] = []
         var pos = lineSpan.location
         while pos < max(lineSpan.upperBound, lineSpan.location + 1), pos < ns.length {
             let lr = ns.lineRange(for: NSRange(location: pos, length: 0))
             var text = ns.substring(with: lr)
             if text.hasSuffix("\n") { text.removeLast() }
-            if ListLine.parse(text) != nil { listLines.append(lr) }
+            if let info = ListLine.parse(text) { listLines.append((lr, info)) }
             if lr.upperBound == pos { break }
             pos = lr.upperBound
         }
@@ -255,7 +380,7 @@ public final class MarkdownTextView: NSTextView {
 
         var caretShift = 0
         var edited = false
-        for lr in listLines.reversed() {
+        for (lr, info) in listLines.reversed() {
             if outdent {
                 var remove = 0
                 while remove < Self.indentUnit.count, lr.location + remove < ns.length,
@@ -269,11 +394,26 @@ public final class MarkdownTextView: NSTextView {
                     if lr.location <= sel.location { caretShift -= remove }
                 }
             } else {
-                let r = NSRange(location: lr.location, length: 0)
-                if shouldChangeText(in: r, replacementString: Self.indentUnit) {
-                    storage.replaceCharacters(in: r, with: Self.indentUnit)
+                // Indenting makes the line the first item of a (new) nested
+                // list. A sublist directly under an item's text only parses
+                // when it starts with 1 (CommonMark's can't-interrupt-a-
+                // paragraph rule), so rewrite the ordered number to 1 —
+                // the display renumbers from ordinals anyway.
+                var replaceLen = 0
+                var insert = Self.indentUnit
+                if info.isOrdered {
+                    let digitsLen = (info.marker as NSString).length - 1
+                    let indentLen = (info.indent as NSString).length
+                    replaceLen = indentLen + digitsLen
+                    insert = Self.indentUnit + info.indent + "1"
+                }
+                let r = NSRange(location: lr.location, length: replaceLen)
+                if shouldChangeText(in: r, replacementString: insert) {
+                    storage.replaceCharacters(in: r, with: insert)
                     edited = true
-                    if lr.location <= sel.location { caretShift += Self.indentUnit.count }
+                    if lr.location <= sel.location {
+                        caretShift += (insert as NSString).length - replaceLen
+                    }
                 }
             }
         }
