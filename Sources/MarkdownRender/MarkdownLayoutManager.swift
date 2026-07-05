@@ -149,6 +149,42 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         }
     }
 
+    // MARK: Text-only selection highlight
+
+    /// Trim the selection highlight to the text itself.
+    ///
+    /// `NSLayoutManager` fills the full line-*fragment* width for any line
+    /// wholly inside the selection, so a multi-line selection reads as one solid
+    /// block stretching to the container's right edge. More refined editors
+    /// (Medium, Notion, VS Code) highlight only the glyphs. We clamp each
+    /// selection rect horizontally to the line's *used* rect — the actual glyph
+    /// extent — so the highlight ends where the text does. The partial first and
+    /// last lines already stop at the selection edge, and `max`/`min` clamping
+    /// leaves those untouched.
+    public override func fillBackgroundRectArray(_ rectArray: UnsafePointer<NSRect>,
+                                                 count rectCount: Int,
+                                                 forCharacterRange charRange: NSRange,
+                                                 color: NSColor) {
+        guard let container = textContainers.first, numberOfGlyphs > 0 else {
+            super.fillBackgroundRectArray(rectArray, count: rectCount,
+                                          forCharacterRange: charRange, color: color)
+            return
+        }
+        color.setFill()
+        for i in 0..<rectCount {
+            let rect = rectArray[i]
+            // The line this rect sits on — probe the leading edge at mid-height.
+            let probe = NSPoint(x: rect.minX, y: rect.midY)
+            let glyph = glyphIndex(for: probe, in: container)
+            let used = lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
+            let minX = max(rect.minX, used.minX)
+            let maxX = min(rect.maxX, used.maxX)
+            guard maxX > minX else { continue }
+            NSBezierPath(rect: NSRect(x: minX, y: rect.minY,
+                                      width: maxX - minX, height: rect.height)).fill()
+        }
+    }
+
     // MARK: List collapse UI (chevrons, halo, …, guides)
 
     private func subtree(forAnchor anchor: Int) -> NSRange? {

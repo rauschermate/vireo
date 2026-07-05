@@ -161,6 +161,33 @@ struct Snapshot {
         let glyphRange = layout.glyphRange(for: container)
         let origin = NSPoint(x: inset, y: inset)
         layout.drawBackground(forGlyphRange: glyphRange, at: origin)
+
+        // --select A,B: draw a selection highlight over character range [A,B),
+        // mimicking how NSTextView fills selection rects, to verify the
+        // text-only highlight in MarkdownLayoutManager.fillBackgroundRectArray.
+        if let i = args.firstIndex(of: "--select"), i + 1 < args.count {
+            let parts = args[i + 1].split(separator: ",").compactMap { Int($0) }
+            if parts.count == 2 {
+                let sel = NSRange(location: parts[0], length: max(0, parts[1] - parts[0]))
+                let selColor = NSColor.selectedTextBackgroundColor
+                var count = 0
+                let rects = layout.rectArray(forCharacterRange: sel,
+                                             withinSelectedCharacterRange: sel,
+                                             in: container, rectCount: &count)
+                if let rects {
+                    // NSTextView fills selection with the context already
+                    // translated to the container origin and rects in container
+                    // coordinates — mirror that so the override sees the same
+                    // frame it does at runtime.
+                    cg.saveGState()
+                    cg.translateBy(x: origin.x, y: origin.y)
+                    layout.fillBackgroundRectArray(rects, count: count,
+                                                   forCharacterRange: sel, color: selColor)
+                    cg.restoreGState()
+                }
+            }
+        }
+
         layout.drawGlyphs(forGlyphRange: glyphRange, at: origin)
 
         NSGraphicsContext.restoreGraphicsState()
