@@ -1,40 +1,51 @@
 import SwiftUI
+import AppKit
 
 /// Left panel: a tree of the active tab's containing folder — subfolders and
 /// markdown files only (the app can't open anything else). Re-roots to the new
 /// document's folder whenever the active tab changes.
+///
+/// Styled like a native Finder sidebar: `.behindWindow` vibrancy so the desktop
+/// blurs through ("liquid glass"), an uppercased section header, and native
+/// rounded selection pills.
 struct FileSidebar: View {
     @EnvironmentObject private var state: AppState
+    @State private var selection: URL?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        Group {
             if let root = state.rootFolder {
-                HStack(spacing: 6) {
-                    Image(systemName: "folder")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Text(root.name)
-                        .font(.caption).bold()
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-
-                List {
-                    OutlineGroup(root.children ?? [], children: \.children) { node in
-                        FileRow(node: node)
+                List(selection: $selection) {
+                    Section(root.name) {
+                        OutlineGroup(root.children ?? [], children: \.children) { node in
+                            FileRow(node: node).tag(node.url)
+                        }
                     }
                 }
                 .listStyle(.sidebar)
+                .scrollContentBackground(.hidden) // let the vibrancy show through
+                .environment(\.defaultMinListRowHeight, 30)
+                .onChange(of: selection) { _, url in openIfFile(url) }
+                .onChange(of: state.activeDocument?.url) { _, url in selection = url }
+                .onAppear { selection = state.activeDocument?.url }
             } else {
                 emptyState
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.regularMaterial)
+        .background(SidebarVibrancy())
+    }
+
+    /// A file selection opens it; a folder selection just expands/highlights —
+    /// snap the pill back to the active file so it never looks "lost".
+    private func openIfFile(_ url: URL?) {
+        guard let url else { return }
+        let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? url.hasDirectoryPath
+        if isDir {
+            if selection != state.activeDocument?.url { selection = state.activeDocument?.url }
+        } else if url != state.activeDocument?.url {
+            state.requestOpen(url)
+        }
     }
 
     /// Shown when the active document is untitled (has no folder to browse).
@@ -58,18 +69,29 @@ struct FileSidebar: View {
 
 private struct FileRow: View {
     let node: FileNode
-    @EnvironmentObject private var state: AppState
 
     var body: some View {
-        if node.isDirectory {
-            Label(node.name, systemImage: "folder")
-                .font(.callout)
-        } else {
-            Label(node.name, systemImage: "doc.text")
-                .font(.callout)
-                .foregroundStyle(state.activeDocument?.url == node.url ? Color.accentColor : .primary)
-                .contentShape(Rectangle())
-                .onTapGesture { state.requestOpen(node.url) }
-        }
+        Label(node.name, systemImage: node.isDirectory ? "folder" : "doc.text")
+            .font(.system(size: 13))
+            .lineLimit(1)
+            .truncationMode(.middle)
+    }
+}
+
+/// A `.behindWindow` sidebar-material blur — the native Finder-sidebar backdrop
+/// that samples and blurs the desktop behind the window.
+private struct SidebarVibrancy: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        view.isEmphasized = true
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
     }
 }
