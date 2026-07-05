@@ -49,7 +49,9 @@
       text-align: center;
     }
 
-    /* The one neumorphic headline: subtle gradient fill + soft emboss */
+    /* The one neumorphic headline: subtle gradient fill + soft emboss.
+       Gradient floor stays light (#cdced6) so multi-line wrapping never
+       pushes any word into the unreadable dark. */
     h1 {
       margin: 0 auto;
       max-width: 12ch;
@@ -57,15 +59,13 @@
       line-height: 1.08;
       font-weight: 700;
       letter-spacing: -0.02em;
-      background: linear-gradient(180deg, #ffffff 0%, #c4c6cf 62%, #a7a9b4 100%);
+      background: linear-gradient(180deg, #fbfbfd 0%, #cdced6 100%);
       -webkit-background-clip: text;
       background-clip: text;
       color: transparent;
-      /* faint top light + drop below = pressed/embossed feel */
-      text-shadow: 0 1px 0 rgba(255,255,255,0.04), 0 2px 14px rgba(0,0,0,0.5);
+      /* faint light lift under the glyphs = gentle raised emboss, no darkening */
+      text-shadow: 0 1px 1px rgba(255,255,255,0.05);
     }
-
-    h1 .accent { white-space: nowrap; }
 
     .subhead {
       margin: 26px auto 0;
