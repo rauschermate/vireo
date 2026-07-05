@@ -1,8 +1,8 @@
 # Vireo — Landing Page Copy
 
-> Draft 1. Direct-response copy (Gary Halbert method) for the Vireo marketing site.
-> Voice: fast, clean, a little cocky. Every line earns the next. macOS 15+, native, free direct download.
-> Sections are ordered top-to-bottom as they'd appear on the page. Alternates noted inline.
+> Draft 2 — aggressive cut. Direct-response (Gary Halbert method).
+> Voice: fast, cocky, picks a fight. Names the enemy. Every line earns the next.
+> macOS 15+, native, free direct download. Sections top-to-bottom as they'd appear.
 
 ---
 
@@ -10,104 +10,111 @@
 
 ### Headline
 
-**Your markdown app is still showing you the code.**
+**Your markdown editor thinks you can't handle a clean page.**
 
 ### Subhead
 
-Vireo hides the syntax — even while you're editing. No `**stars**`. No `# hashes`. No preview pane. Just your words, clean, the instant you open the file.
+So it shows you the code. `**this**`. `## that`. Or it spins up a 300-megabyte browser to fake a heading. Vireo does neither. It hides the syntax while you edit and shows you the actual document — the instant you open the file.
 
 ### CTA
 
 **[ Download for Mac — Free ]**
-macOS 15+ · Apple Silicon native · 4 MB · opens before you blink
+Native. 4 MB. Opens before the others finish launching.
 
-*Alt headline A:* **Stop editing syntax. Start reading your own writing.**
-*Alt headline B:* **Markdown, without the markup.**
-
----
-
-## THE PUNCH (problem, stated plainly)
-
-Every other markdown editor makes you a deal:
-
-You want clean formatted text? Fine — but stare at raw `**bold**` and `## headings` while you type it. You want it to render live? Great — here's a 300-megabyte browser pretending to be an app, idling like a space heater and stuttering on a file that should've opened instantly.
-
-That's not a choice. That's two bad options wearing a trench coat.
-
-Vireo doesn't make the deal.
+*Alt headline A:* **Delete the app that shows you `##`.**
+*Alt headline B:* **Markdown, without the markup. Finally.**
+*Alt headline C:* **Every markdown app shows you the code. This one shows you the words.**
 
 ---
 
-## THE TURN (what Vireo does)
+## THE FIGHT (name the enemy)
 
-You see a **document**. Bold looks bold. Headings look like headings. Lists have real bullets, checkboxes you click, code with color.
+Let's be honest about what you're using right now.
 
-The markdown is still there — it's a plain `.md` file on your disk, byte-for-byte, forever yours. You just never have to *look* at the plumbing.
+If it's **Obsidian**, it's a web browser cosplaying as a Mac app — 300 megabytes of RAM to hold a text file, a plugin marketplace you'll spend a weekend configuring, and a graph view you've looked at exactly twice.
 
-Select a word, a little toolbar appears. ⌘B. Done. It writes the markdown for you, under the surface, where it belongs.
+If it's **Typora**, same browser, different costume — and it still can't decide if it's a document or a code editor.
 
-It feels like Medium. It saves like Notepad. It's a real file the whole time.
+If it's **MarkEdit** or VS Code, congratulations: you're staring at raw `**bold**` and `# headings` like it's 2011, calling it "clean."
 
----
+If it's **Bear** or **Ulysses**, your notes aren't even `.md` anymore — they're locked in a database behind a subscription, hostage to a monthly fee.
 
-## PROOF / DIFFERENTIATORS (the receipts)
-
-**Hidden syntax, even while editing.**
-Not a preview mode you toggle. Not "it renders after you move your cursor away." The `*` and `#` are genuinely invisible on screen the entire time you write — and still sitting in the file when you save.
-
-**~4 MB. Not ~300.**
-Obsidian idles at roughly 30× the memory. Typora ships a whole web browser to show you a heading. Vireo is native Swift on Apple Silicon — it launches faster than the others draw their spinner.
-
-**Your files stay `.md`. Full stop.**
-No proprietary "Polar Bear" flavor. No hidden database. No lock-in. Vireo edits the exact GitHub-Flavored Markdown on your disk — open it in anything, tomorrow or in ten years.
-
-**Set it and forget it's there.**
-Make Vireo the default for `.md`. Now every markdown file in Finder opens clean in a tab. Hit space on one — Quick Look renders it in Vireo's style without even opening the app.
-
-**Auto-save, tabs, folder sidebar, table of contents, focus mode, ⌘F.**
-The basics — done right, done fast, done quietly. Nothing you have to configure. Nothing you have to learn.
+Every one of them made you compromise. You just stopped noticing.
 
 ---
 
-## THE "NO" LIST (confidence through restraint)
+## THE TURN (what Vireo actually does)
 
-No plugins to install. No graph view. No AI trying to finish your sentence. No themes to fiddle with, no split panes, no accounts, no sync upsell, no monthly fee.
+Vireo shows you a **document.** Bold looks bold. Headings look like headings. Real bullets. Checkboxes you click. Code with color.
 
-Vireo does one thing: it shows you your markdown as clean text and lets you edit it in place, instantly.
+The markdown never disappears — it's a plain `.md` file on your disk, byte-for-byte, yours forever. You just never have to *look* at the plumbing again.
 
-We'd rather be the best in the world at the basics than mediocre at everything.
+Select a word. A little toolbar shows up. ⌘B. Done. Vireo writes the syntax underneath, where syntax belongs — out of your face.
+
+Feels like Medium. Saves like a text file. Real markdown the whole time.
 
 ---
 
-## WHO IT'S FOR
+## THE RECEIPTS
 
-- You write `.md` all day but you're **not a "markdown person"** — you just want the file to look like a document.
-- You **love your Mac** and resent apps that feel like Windows software in a costume.
-- You've got a folder full of notes and you want to **read** it, not decode it.
-- You'll set an app as your default and never think about it again — if it's fast enough to deserve that.
+**The syntax is gone. Not toggled — gone.**
+Not a preview mode. Not "it renders once your cursor leaves." The `*` and the `#` are invisible on screen the entire time you type — and still in the file the second you save. Nobody else does this.
+
+**4 megabytes. They ship 400.**
+Obsidian idles at roughly **30× the memory.** Typora bundles an entire browser to draw a heading. Vireo is native Swift on Apple Silicon — it's open before their splash screen finishes fading in.
+
+**Your files stay `.md`. Non-negotiable.**
+No "Polar Bear" flavor. No database. No export button you have to remember. Vireo edits the exact GitHub-Flavored Markdown on your disk. Open it in anything, tomorrow or in ten years. Try leaving Bear with ten years of notes and see how that feels.
+
+**Make it the default. Forget it exists.**
+Set Vireo as your `.md` handler and every markdown file in Finder opens clean, in a tab. Tap space on one — Quick Look renders it in Vireo's style without even launching the app.
+
+**The basics, done ruthlessly well.**
+Auto-save. Tabs. Folder sidebar. Table of contents. Focus mode. ⌘F. Nothing to configure. Nothing to learn. Nothing to pay.
+
+---
+
+## THE "NO" LIST (the flex)
+
+No plugins. No graph view. No AI finishing your sentences. No themes to tweak, no split panes, no accounts, no sync upsell, no $8-a-month anything.
+
+Vireo does exactly one thing: it shows you your markdown as a clean document and lets you edit it in place, instantly.
+
+Everyone else is busy being a "second brain." We'd rather just open your file faster than you can blink and get out of the way.
+
+---
+
+## WHO THIS IS FOR
+
+- You write `.md` all day and you are **done** pretending raw syntax is "clean."
+- You **love your Mac** and you're tired of apps that feel like Windows freeware in a hoodie.
+- You want to **read** your notes folder, not decode it.
+- You'll set a default app once and never think about it again — if it earns it. This one earns it.
 
 ---
 
 ## THE CLOSE
 
-Here's the whole pitch: open a `.md` file in Vireo and you'll see what your writing was supposed to look like the entire time.
+Here's the entire pitch, and it takes ten seconds to prove:
 
-No syntax. No spinner. No 300 megabytes. No catch.
+Open a `.md` file in Vireo. That's it. You'll see what your writing was supposed to look like the whole time — no syntax, no spinner, no 300 megabytes, no monthly fee, no catch.
 
-It's free, it's native, it's a 4-megabyte download, and it'll be your default markdown app about ten seconds after it finishes.
+It's free. It's native. It's a 4-megabyte download. And it'll be your default markdown app before the download folder finishes bouncing.
 
 **[ Download Vireo for Mac — Free ]**
 macOS 15+ · Apple Silicon · notarized direct download · your files stay yours
 
-*P.S.* — Already have a markdown editor? Open the same file in both. One shows you `## Notes`. The other shows you **Notes**. That's the whole difference, and once you've seen it you won't go back.
+*P.S.* — Don't take my word for it. Open the same file in Vireo and whatever you use now. One shows you `## Notes`. The other shows you **Notes**. That's the whole game. Once you've seen it, the other one's going in the trash.
 
 ---
 
-## MICROCOPY / SUPPORTING LINES (grab-bag for buttons, meta, social)
+## MICROCOPY / SUPPORTING LINES (buttons, meta, social)
 
 - **Tagline (short):** Markdown, without the markup.
-- **Tagline (feeling):** The file opens before you notice it wasn't already open.
-- **Meta description:** A fast, native macOS markdown editor that hides the syntax — even while you edit. Plain `.md` files, ~4 MB, free.
-- **Social one-liner:** Every other markdown app shows you the code. Vireo just shows you the words.
-- **Speed line:** 4 megabytes, not 400. Native, not a browser in a trench coat.
-- **Ownership line:** It's your `.md` file the whole time. Vireo just stops making you stare at the syntax.
+- **Tagline (aggressive):** Delete the app that shows you `##`.
+- **Tagline (feeling):** Open before you notice it wasn't already.
+- **Meta description:** A fast, native macOS markdown editor that hides the syntax while you edit. Plain `.md` files, 4 MB, free. Everything Obsidian isn't.
+- **Social one-liner:** Every markdown app shows you the code. Vireo shows you the words.
+- **Speed line:** 4 megabytes, not 400. Native, not a browser in a costume.
+- **Ownership line:** It's your `.md` file the whole time. We just stopped making you stare at the syntax.
+- **Shade line:** Obsidian uses 30× the memory to hold the same text file. You feel it. We fixed it.
