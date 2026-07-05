@@ -278,6 +278,8 @@ private struct TabItem: View {
         )
         .contentShape(Rectangle())
         .background(AnchorGrabber(box: anchorBox))
+        // Middle-click (scroll-wheel button) closes the tab, like Chrome.
+        .overlay(MiddleClickCatcher { state.closeTab(doc.id) })
         .onHover(perform: hoverChanged)
         // Double-click → full screen with this tab active; single click selects.
         .gesture(TapGesture(count: 2).onEnded {
@@ -363,6 +365,48 @@ private struct AnchorGrabber: NSViewRepresentable {
     }
     func updateNSView(_ nsView: NSView, context: Context) {
         box.view = nsView
+    }
+}
+
+// MARK: - Middle-click to close
+
+/// Transparent overlay that closes the tab on a middle-click (scroll-wheel
+/// button), like Chrome. It claims the hit *only* while a middle-mouse event is
+/// being routed; left-click (select), double-click (full screen), right-click
+/// (context menu) and hover all fall straight through to the SwiftUI tab.
+private struct MiddleClickCatcher: NSViewRepresentable {
+    let action: () -> Void
+    func makeNSView(context: Context) -> MiddleClickView { MiddleClickView(action: action) }
+    func updateNSView(_ nsView: MiddleClickView, context: Context) { nsView.action = action }
+}
+
+private final class MiddleClickView: NSView {
+    var action: () -> Void
+    init(action: @escaping () -> Void) {
+        self.action = action
+        super.init(frame: .zero)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// Only intercept middle-button events; return nil for everything else so
+    /// the click reaches the tab's own gestures/buttons underneath.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let event = NSApp.currentEvent else { return nil }
+        switch event.type {
+        case .otherMouseDown, .otherMouseUp, .otherMouseDragged:
+            return event.buttonNumber == 2 ? self : nil
+        default:
+            return nil
+        }
+    }
+
+    // Accept the press so the matching release is delivered here; fire on the
+    // release, and only if it lands back on the tab (Chrome behaviour).
+    override func otherMouseDown(with event: NSEvent) {}
+    override func otherMouseUp(with event: NSEvent) {
+        guard event.buttonNumber == 2,
+              bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        action()
     }
 }
 
