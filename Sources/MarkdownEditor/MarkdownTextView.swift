@@ -274,8 +274,10 @@ public final class MarkdownTextView: NSTextView {
     }
 
     /// Enter inside a list item continues the list (same bullet, unchecked box,
-    /// incremented number); Enter on an *empty* item removes its marker and
-    /// exits the list.
+    /// incremented number). Enter on an *empty* item walks out one nesting level
+    /// at a time (like Shift-Tab); once it's a top-level empty item, Enter
+    /// removes the marker and exits the list. So repeatedly pressing Enter
+    /// climbs out of a deep list and finally lands on a plain line.
     private func handleListNewline() -> Bool {
         guard selectedRange().length == 0, let storage = textStorage else { return false }
         let ns = storage.string as NSString
@@ -287,7 +289,11 @@ public final class MarkdownTextView: NSTextView {
         guard caret >= line.location + info.markerEndOffset else { return false }
 
         if info.contentIsEmpty {
-            // Exit the list: clear the marker, leaving an empty line.
+            // Nested empty item: outdent one level instead of exiting.
+            if !info.indent.isEmpty {
+                return adjustListIndent(outdent: true)
+            }
+            // Top-level empty item: clear the marker, leaving an empty line.
             let r = NSRange(location: line.location, length: (lineText as NSString).length)
             if shouldChangeText(in: r, replacementString: "") {
                 storage.replaceCharacters(in: r, with: "")
