@@ -16,6 +16,10 @@ final class UpdateDriver: NSObject, SPUUserDriver {
     /// install" prompt. We invoke it when the user clicks the pill (install) or
     /// dismisses it. Non-Sendable but only ever touched on the main actor.
     private var updateChoiceReply: ((SPUUserUpdateChoice) -> Void)?
+    /// Action that re-runs an update check, wired by ``UpdateController``. Backs
+    /// the pill's "retry" after an error (kept here rather than on the model,
+    /// whose per-phase callbacks get cleared as the flow advances).
+    var onRetryCheck: (() -> Void)?
     /// Accumulated bytes / expected length for download progress.
     private var expectedLength: UInt64 = 0
     private var receivedLength: UInt64 = 0
@@ -76,7 +80,10 @@ final class UpdateDriver: NSObject, SPUUserDriver {
 
     func showUpdaterError(_ error: any Error,
                           acknowledgement: @escaping () -> Void) {
-        model.setError(shortMessage(for: error), retry: nil)
+        updateChoiceReply = nil
+        model.setError(shortMessage(for: error), retry: onRetryCheck.map { retry in
+            { retry() }
+        })
         acknowledgement()
     }
 

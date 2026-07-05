@@ -63,8 +63,9 @@ public final class UpdateController: ObservableObject {
         )
         self.updater = updater
 
-        // Retry after an error re-runs a check.
-        model.onRetry = { [weak updater] in updater?.checkForUpdates() }
+        // Retry after an error re-runs a check. Owned by the driver so it isn't
+        // cleared as the model advances through the update phases.
+        driver.onRetryCheck = { [weak updater] in updater?.checkForUpdates() }
 
         do {
             try updater.start()
