@@ -252,14 +252,20 @@ public final class MarkdownTextView: NSTextView {
         }
     }
 
-    public override func moveUp(_ sender: Any?) {
-        super.moveUp(sender)
-        snapCaretAfterListMarker()
-    }
+    // NB: moveUp/moveDown deliberately do NOT snap out of hidden markers.
+    // setSelectedRange resets AppKit's remembered goal column, so snapping on
+    // every vertical step made the caret drift horizontally when scanning up/
+    // down past list lines. A caret that lands inside a zero-width marker still
+    // renders at the item's first visible glyph, and the next horizontal move,
+    // click, or keystroke snaps it out (below / moveLeft / moveRight / mouseDown).
 
-    public override func moveDown(_ sender: Any?) {
-        super.moveDown(sender)
-        snapCaretAfterListMarker()
+    public override func insertText(_ string: Any, replacementRange: NSRange) {
+        // A vertical arrow may have left the caret inside a hidden marker; snap
+        // out first so typed text lands in the item's content, not its syntax.
+        if replacementRange.location == NSNotFound, !hasMarkedText() {
+            snapCaretAfterListMarker()
+        }
+        super.insertText(string, replacementRange: replacementRange)
     }
 
     // MARK: Enter — list continuation and hidden-marker hygiene
