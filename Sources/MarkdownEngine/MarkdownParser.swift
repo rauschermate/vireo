@@ -166,19 +166,29 @@ private struct Accumulator {
         switch node {
         case let heading as Heading:
             guard let r = map.nsRange(heading.range) else { return }
-            // A bare `- ` under a text line parses as a setext-heading
-            // underline, not an empty bullet — so the instant Tab creates one,
-            // the text above would blow up into a heading. Treat it as the
-            // paragraph + empty item it is about to become instead.
-            if heading.level == 2, synthesizeDanglingItem(endingAt: r, listDepth: listDepth) {
-                let markerLine = ns.lineRange(for: NSRange(location: r.upperBound - 1, length: 0))
-                if !inQuote, markerLine.location > r.location + 1 {
-                    let para = NSRange(location: r.location,
-                                       length: markerLine.location - 1 - r.location)
-                    result.blockRuns.append(BlockRun(range: para, kind: .paragraph))
+            // A `-` setext underline is really an (indented) empty list marker:
+            // `text\n- ` (Enter makes a fresh bullet), or `- one\n    - \n- two`
+            // (Tab indents a fresh bullet mid-list). cmark reads the `-` line as
+            // a setext-H2 underline and can inflate the heading's range past the
+            // following list siblings — so derive the underline from the text's
+            // own line, not `r.upperBound`, and if it's a marker-only line,
+            // render the text as a paragraph plus a drawn (nested) marker instead
+            // of flashing a heading. ATX headings (leading `#`) never apply.
+            let textLine = ns.lineRange(for: NSRange(location: r.location, length: 0))
+            if heading.level == 2, r.location < ns.length, ns.character(at: r.location) != 0x23,
+               textLine.upperBound < ns.length {
+                let underline = ns.lineRange(for: NSRange(location: textLine.upperBound, length: 0))
+                if synthesizeDanglingItem(endingAt: NSRange(location: r.location,
+                                                            length: underline.upperBound - r.location),
+                                          listDepth: listDepth) {
+                    if !inQuote, textLine.upperBound - 1 > r.location {
+                        let para = NSRange(location: r.location,
+                                           length: textLine.upperBound - 1 - r.location)
+                        result.blockRuns.append(BlockRun(range: para, kind: .paragraph))
+                    }
+                    for c in heading.children { visitInline(c, style: InlineStyle()) }
+                    return
                 }
-                for c in heading.children { visitInline(c, style: InlineStyle()) }
-                return
             }
             result.blockRuns.append(BlockRun(range: r, kind: .heading(level: heading.level)))
             addSubtractionMarkers(parent: r, children: heading.children)
