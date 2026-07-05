@@ -165,9 +165,16 @@ private struct Accumulator {
             }
             result.blockRuns.append(BlockRun(range: r, kind: .heading(level: heading.level)))
             addSubtractionMarkers(parent: r, children: heading.children)
-            result.toc.append(TOCEntry(level: heading.level,
-                                       title: plainText(heading).trimmingCharacters(in: .whitespaces),
-                                       location: r.location))
+            // Only document-level headings join the TOC (and so become
+            // foldable). A heading nested in a list item or block quote
+            // (`inQuote`) is styled but not an outline entry — its fold subtree
+            // is computed against document-order headings and would otherwise
+            // run past the container, hiding sibling/parent content.
+            if !inQuote {
+                result.toc.append(TOCEntry(level: heading.level,
+                                           title: plainText(heading).trimmingCharacters(in: .whitespaces),
+                                           location: r.location))
+            }
             for c in heading.children { visitInline(c, style: InlineStyle()) }
 
         case let para as Paragraph:
