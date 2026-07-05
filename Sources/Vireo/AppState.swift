@@ -23,8 +23,8 @@ final class AppState: ObservableObject {
     @Published var selectedID: UUID?
     @Published var rootFolder: FileNode?
 
-    /// A folder the user explicitly opened. When set, the sidebar is pinned to
-    /// it and stops following the active tab's containing folder.
+    /// The last folder the user explicitly opened — used as a fallback root
+    /// when the active tab is untitled (has no containing folder to follow).
     @Published var pinnedFolder: URL?
 
     @Published var showFileSidebar = false
@@ -254,23 +254,24 @@ final class AppState: ObservableObject {
         if showFileSidebar { refreshFileTree() }
     }
 
-    /// Rebuild the sidebar tree from the pinned folder (if the user opened one)
-    /// or else the active document's containing folder. Cleared to `nil` when
-    /// there's nothing to browse — the sidebar then shows its empty state.
+    /// Rebuild the sidebar tree so it follows the active tab: root at the active
+    /// document's containing folder, falling back to the last opened folder when
+    /// the tab is untitled. `nil` when there's nothing to browse (empty state).
     func refreshFileTree() {
-        if let folder = pinnedFolder ?? activeDocument?.url?.deletingLastPathComponent() {
+        if let folder = activeDocument?.url?.deletingLastPathComponent() ?? pinnedFolder {
             rootFolder = buildTree(folder)
         } else {
             rootFolder = nil
         }
     }
 
-    /// Open a folder in the sidebar: pin it as the root, reveal the panel, and
-    /// build its markdown-only tree.
+    /// Open a folder in the sidebar: reveal the panel and show its markdown-only
+    /// tree now. It's remembered as the fallback root; from here the sidebar
+    /// follows the active tab.
     func openFolder(_ url: URL) {
         pinnedFolder = url
         showFileSidebar = true
-        refreshFileTree()
+        rootFolder = buildTree(url)
     }
 
     func saveActiveAs() {
