@@ -1,6 +1,6 @@
 # Vireo — Landing Page Copy
 
-> Draft 2 — aggressive cut. Direct-response (Gary Halbert method).
+> Draft 3 — aggressive cut, agent-era hero. Direct-response (Gary Halbert method).
 > Voice: fast, cocky, picks a fight. Names the enemy. Every line earns the next.
 > macOS 15+, native, free direct download. Sections top-to-bottom as they'd appear.
 
@@ -10,20 +10,31 @@
 
 ### Headline
 
-**Your markdown editor thinks you can't handle a clean page.**
+**Your agent reads markdown fluently. You're stuck squinting at asterisks.**
 
 ### Subhead
 
-So it shows you the code. `**this**`. `## that`. Or it spins up a 300-megabyte browser to fake a heading. Vireo does neither. It hides the syntax while you edit and shows you the actual document — the instant you open the file.
+Every model you talk to — Claude, ChatGPT, Cursor — thinks and writes in markdown. Then it hands you a wall of `**this**` and `## that` and calls it a document. Vireo hides the syntax while you edit and shows you the actual page — the instant you open the file. Finally, an app that reads markdown as well as your agent writes it.
 
 ### CTA
 
 **[ Download for Mac — Free ]**
 Native. 4 MB. Opens before the others finish launching.
 
-*Alt headline A:* **Delete the app that shows you `##`.**
-*Alt headline B:* **Markdown, without the markup. Finally.**
+*Alt headline A:* **Your agent speaks fluent markdown. Your eyes shouldn't have to.**
+*Alt headline B:* **AI writes markdown all day. You're the one stuck reading the raw code.**
 *Alt headline C:* **Every markdown app shows you the code. This one shows you the words.**
+*Alt headline D:* **Delete the app that still shows you `##`.**
+
+---
+
+## THE AGENT ANGLE (the timely wedge)
+
+Markdown won. It's the native tongue of every LLM on earth — your agent emits it by the screenful, your notes are full of it, your whole workflow now runs on `.md`.
+
+So why are *you* the only one still reading the raw syntax?
+
+Your agent doesn't see `## Heading` — it understands a heading. You should too. Vireo is the reader that finally caught up to how much markdown you actually deal with now.
 
 ---
 
@@ -113,8 +124,9 @@ macOS 15+ · Apple Silicon · notarized direct download · your files stay yours
 - **Tagline (short):** Markdown, without the markup.
 - **Tagline (aggressive):** Delete the app that shows you `##`.
 - **Tagline (feeling):** Open before you notice it wasn't already.
-- **Meta description:** A fast, native macOS markdown editor that hides the syntax while you edit. Plain `.md` files, 4 MB, free. Everything Obsidian isn't.
+- **Meta description:** Your agent writes markdown all day. Vireo is the fast, native Mac app that finally lets you *read* it — syntax hidden, even while you edit. Plain `.md`, 4 MB, free.
 - **Social one-liner:** Every markdown app shows you the code. Vireo shows you the words.
+- **Agent line:** Claude writes it. Cursor writes it. ChatGPT writes it. Vireo is the app that lets you read it.
 - **Speed line:** 4 megabytes, not 400. Native, not a browser in a costume.
 - **Ownership line:** It's your `.md` file the whole time. We just stopped making you stare at the syntax.
 - **Shade line:** Obsidian uses 30× the memory to hold the same text file. You feel it. We fixed it.
