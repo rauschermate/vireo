@@ -57,10 +57,15 @@ public struct MarkdownSourceView: NSViewRepresentable {
             MainActor.assumeIsolated { controller?.imageLoader.image(forSource: src, baseURL: controller?.baseURL) }
         }
 
-        let scroll = NSScrollView()
+        let scroll = CenteredFindBarScrollView()
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = true
         scroll.documentView = textView
+        // Keep the find bar aligned with the centered reading column.
+        scroll.minSideInset = EditorController.minContentSideInset
+        scroll.columnMaxWidth = { [weak controller] in
+            MainActor.assumeIsolated { controller?.contentColumnMaxWidth ?? .greatestFiniteMagnitude }
+        }
 
         // Re-center the reading column on every live resize (SwiftUI's
         // updateNSView only fires on state changes, not window resizes).

@@ -67,6 +67,13 @@ public final class EditorController: ObservableObject {
         toolbar.hide()
     }
 
+    /// Max width of the centered reading column (the text container plus its
+    /// side inset). The find bar matches this so search aligns with the text.
+    public var contentColumnMaxWidth: CGFloat { theme.contentMaxWidth + 48 }
+
+    /// Minimum side gutter kept even on narrow windows.
+    static let minContentSideInset: CGFloat = 24
+
     /// Keep the reading column centered at its max width (PRD: centered
     /// content column, ~640–800pt). Driven by frame-change notifications so it
     /// tracks live window resizes, not just SwiftUI updates.
@@ -74,8 +81,8 @@ public final class EditorController: ObservableObject {
         guard let tv = textView, let scroll = tv.enclosingScrollView else { return }
         let available = scroll.contentSize.width
         guard available > 0 else { return }
-        let column = min(available, theme.contentMaxWidth + 48)
-        let side = max(24, (available - column) / 2)
+        let column = min(available, contentColumnMaxWidth)
+        let side = max(Self.minContentSideInset, (available - column) / 2)
         if abs(tv.textContainerInset.width - side) > 0.5 {
             tv.textContainerInset = NSSize(width: side, height: tv.textContainerInset.height)
             tv.needsDisplay = true
