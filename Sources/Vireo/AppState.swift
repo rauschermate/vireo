@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 import VireoCore
+import VireoUpdater
 
 /// A node in the opened-folder file tree (left sidebar).
 struct FileNode: Identifiable, Hashable {
@@ -22,6 +23,10 @@ final class AppState: ObservableObject {
     /// Width of the file panel — shared so the tab strip can inset itself past
     /// the full-height sidebar.
     static let sidebarWidth: CGFloat = 260
+
+    /// Auto-updater (Sparkle-backed). Drives the update pill; dormant on
+    /// unconfigured dev builds. Started once from the app delegate.
+    let updater = UpdateController()
 
     @Published private(set) var documents: [DocumentModel] = []
     @Published var selectedID: UUID?

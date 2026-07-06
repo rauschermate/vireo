@@ -195,6 +195,7 @@ Packages have unit tests and no AppKit UI dependency except `MarkdownEditor` (wh
 
 - **Notarized direct download**, self-hosted `.dmg` (PRD decision). Developer ID signing + `notarytool` in a release script. Not sandboxed (keeps "open folder" simple), which is why persistent access relies on security-scoped bookmarks rather than sandbox entitlements.
 - Release automation is out of scope for the spike; a `scripts/release.sh` comes in Phase 5.
+- **Auto-update via Sparkle.** Non–App-Store direct downloads need an in-app updater. Vireo uses **Sparkle** (proven EdDSA-signed download / atomic self-replace / relaunch) but suppresses Sparkle's own UI and renders the whole update surface as a small **update pill** in the window's bottom-left (modeled on cmux). Scheduled background checks make it appear on its own; a click downloads + installs + relaunches; it's dismissable. See §14 for the as-built shape and the release/appcast flow.
 
 ---
 
@@ -269,3 +270,33 @@ Where the shipped implementation intentionally differs from the sections above:
 - **Liquid Glass (§8.0).** The floating toolbar uses `NSGlassEffectView` on
   macOS 26+ (material fallback on 15); sidebars use standard system materials.
 - **Quick Look thumbnail extension** (§9 stretch) not built.
+- **Auto-updater (§11) — Sparkle, with a custom pill.** Two SPM libs keep the
+  Sparkle plumbing out of the app: `VireoUpdater` owns the `SPUUpdater` and a
+  custom `SPUUserDriver` that maps Sparkle's lifecycle onto an observable
+  `UpdateModel` state machine (idle → checking → available → downloading →
+  extracting → installing → error), and `VireoUpdaterUI` is the bottom-left
+  pill. All of Sparkle's stock windows are suppressed; the driver auto-allows the
+  permission prompt and, once the user clicks, drives straight through to
+  install + relaunch (no second confirmation). The updater stays **dormant**
+  unless the bundle carries a non-empty `SUFeedURL` **and** `SUPublicEDKey`, so
+  ad-hoc dev builds (`build-app.sh`, empty key) never self-update — only the
+  signed release build does.
+  - *Feed & release flow.* `SUFeedURL` points at
+    `releases/latest/download/appcast.xml`, a GitHub "latest release" alias that
+    always resolves to the newest release's `appcast.xml` asset. `release.sh`
+    builds + notarizes the DMG, then `generate_appcast` (Sparkle) EdDSA-signs it
+    and writes the appcast; `--publish` uploads both to the GitHub release. The
+    EdDSA key is generated once by `updater-keys.sh` (private key in the login
+    keychain; public key baked into `App-Info.plist`).
+  - *Xcode wiring gotcha.* Sparkle's dynamic XCFramework is embedded via the
+    app target's direct package dependency (its XPC helpers + `Autoupdate` ride
+    along); `VireoUpdater` links it transitively, so **no** explicit embed phase
+    is added (that duplicates the copy and fails the build). Separately, an
+    explicit shared **scheme** named `Vireo` was added to `project.yml`: the app
+    target and the SPM package's `Vireo` executable target share a name, and
+    without a shared scheme `xcodebuild -scheme Vireo` builds the bare executable
+    instead of `Vireo.app` (a latent issue predating the updater).
+  - *Verifying the pill.* Live screen capture is blocked, so
+    `VireoUpdaterSnapshot` renders the pill in every phase to a PNG (same idea as
+    `VireoSnapshot` for the editor); `UpdateModel.preview(_:)` pins a visual
+    state for that and for SwiftUI previews.

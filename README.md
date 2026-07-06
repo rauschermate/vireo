@@ -29,9 +29,67 @@ open -a build/Vireo.app samples/welcome.md
 # Package a distributable .dmg
 ./scripts/make-dmg.sh build/Vireo.app build/Vireo.dmg
 
-# Notarized release (needs a Developer ID — see scripts/release.sh)
-VIREO_TEAM_ID=… VIREO_SIGN_IDENTITY=… VIREO_NOTARY_PROFILE=… ./scripts/release.sh
+# Notarized release + Sparkle appcast (needs a Developer ID — see scripts/release.sh)
+./scripts/updater-keys.sh          # once: generate the EdDSA signing key
+VIREO_TEAM_ID=… VIREO_SIGN_IDENTITY=… VIREO_NOTARY_PROFILE=… \
+  ./scripts/release.sh --publish   # builds, signs, generates appcast.xml, uploads
 ```
+
+### Auto-updates
+
+Vireo checks for new releases in the background (Sparkle) and shows a small blue
+**update pill** in the window's bottom-left corner when one is available. Click it
+to download, install, and relaunch; dismiss it to be reminded on the next check.
+The whole thing is driven from `VireoUpdater` (Sparkle wrapper + state machine)
+and `VireoUpdaterUI` (the pill) — Sparkle's own windows are suppressed. Preview
+the pill's states headlessly:
+
+```bash
+swift run VireoUpdaterSnapshot /tmp/pill.png          # light
+swift run VireoUpdaterSnapshot /tmp/pill.png --dark
+```
+
+Updates only activate once `scripts/updater-keys.sh` has filled `SUPublicEDKey`
+and a signed release + `appcast.xml` is published; unconfigured/dev builds keep
+the updater dormant.
+
+#### Turning on auto-updates / cutting a release
+
+One-time setup, then a repeatable release step:
+
+1. **Generate the signing key (once per machine that cuts releases).**
+   ```bash
+   ./scripts/updater-keys.sh
+   ```
+   Writes the EdDSA public key into `project/App-Info.plist` (`SUPublicEDKey`);
+   the private key stays in your login keychain. Commit the updated plist. Back
+   the private key up offline — losing it means users can't verify future
+   updates (they'd have to reinstall manually):
+   ```bash
+   .build/artifacts/sparkle/Sparkle/bin/generate_keys -x sparkle_private_key.pem
+   ```
+
+2. **Have a Developer ID + notary profile ready** (see the header of
+   `scripts/release.sh`): `VIREO_TEAM_ID`, `VIREO_SIGN_IDENTITY`, and a
+   `VIREO_NOTARY_PROFILE` created once via `xcrun notarytool store-credentials`.
+
+3. **Bump the version** in `project.yml` (`MARKETING_VERSION`, and
+   `CURRENT_PROJECT_VERSION` for each build) so the new release outranks the
+   installed one.
+
+4. **Build, sign, generate the appcast, and publish:**
+   ```bash
+   VIREO_TEAM_ID=… VIREO_SIGN_IDENTITY=… VIREO_NOTARY_PROFILE=… \
+     ./scripts/release.sh --publish
+   ```
+   This notarizes `Vireo.dmg`, EdDSA-signs it, generates `appcast.xml`, and
+   uploads both to a `v<version>` GitHub release. (Omit `--publish` to build the
+   artifacts locally and print the upload command instead.)
+
+Existing users' update pill then surfaces within `SUScheduledCheckInterval` (1h),
+or immediately via **Vireo ▸ Check for Updates…**. The feed URL
+(`releases/latest/download/appcast.xml`) is a GitHub alias that always resolves
+to the newest release's appcast, so nothing else needs updating between releases.
 
 `scripts/build-app.sh` still produces a quick SPM-only bundle (no Quick Look
 extension) for fast iteration on the app itself.
@@ -46,6 +104,8 @@ Local SPM packages (see `docs/eng-design.md` §10), consumed by the `Vireo` app:
 | `MarkdownRender` | Ranges → styled `NSAttributedString`; custom `NSLayoutManager` that hides syntax and draws bullets/checkboxes/images |
 | `MarkdownEditor` | `NSTextView` (TextKit 1) in a SwiftUI `NSViewRepresentable`; formatting, links, floating toolbar |
 | `VireoCore` | Atomic file I/O, file watcher, preferences |
+| `VireoUpdater` | Sparkle wrapper + custom `SPUUserDriver` → observable update state machine |
+| `VireoUpdaterUI` | The bottom-left update pill (SwiftUI), driven by `VireoUpdater` |
 | `Vireo` | SwiftUI app: tabs, sidebars, TOC, menus, zoom, auto-save |
 
 **Core invariant:** the markdown *source string* is always the single source of
@@ -70,6 +130,9 @@ just writing `textStorage.string` back to disk unchanged.
   exact parse → render → layout pipeline.
 - Xcode project generated from `project.yml` (XcodeGen) for the app + extension;
   `.dmg` packaging and a Developer-ID notarization script.
+- **Background auto-updates** (Sparkle): a dismissable blue update pill in the
+  bottom-left, one-click download + install + relaunch, driven entirely from a
+  custom UI (Sparkle's own dialogs suppressed).
 
 Behavior notes: GFM tables render as a drawn grid; placing the caret inside one
 reveals its raw source for editing. Task checkboxes toggle on click. Links open

@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import MarkdownEditor
 import VireoCore
+import VireoUpdaterUI
 
 /// The single document window: custom tab strip on top (hidden in focus
 /// mode), file sidebar / editor / TOC below.
@@ -43,6 +44,13 @@ struct DocumentWindowView: View {
                                        url: state.activeDocument?.url,
                                        edited: state.activeDocument?.isDirty ?? false,
                                        chromeHidden: state.focusMode))
+        // The auto-update pill floats in the bottom-left corner of the window.
+        .overlay(alignment: .bottomLeading) {
+            UpdatePill(model: state.updater.model)
+                .padding(.leading, 12)
+                .padding(.bottom, 10)
+                .allowsHitTesting(true)
+        }
     }
 }
 
