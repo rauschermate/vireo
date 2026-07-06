@@ -14,10 +14,8 @@ struct DocumentWindowView: View {
                 FileSidebar()
                     .frame(width: AppState.sidebarWidth)
                     // A rounded glass card floating in the window (Finder-style),
-                    // inset from the edges with the traffic lights above it.
-                    .padding(.leading, 10)
-                    .padding(.trailing, 8)
-                    .padding(.vertical, 10)
+                    // inset 8pt from the edges with the traffic lights above it.
+                    .padding(8)
                     .transition(.move(edge: .leading))
             }
             if let doc = state.activeDocument {

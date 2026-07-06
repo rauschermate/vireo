@@ -82,7 +82,8 @@ private struct FileRow: View {
 /// luminous glass Finder uses on Tahoe), falling back to the legacy
 /// `.behindWindow` sidebar vibrancy on macOS 15.
 private struct SidebarBackground: ViewModifier {
-    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 12, style: .continuous) }
+    // Concentric with the window's ~18pt corner: inner = outer − 8pt inset.
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 10, style: .continuous) }
 
     func body(content: Content) -> some View {
         if #available(macOS 26.0, *) {
