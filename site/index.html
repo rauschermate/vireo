@@ -68,7 +68,7 @@
     }
 
     .subhead {
-      margin: 26px auto 0;
+      margin: 24px auto 0;
       max-width: 34ch;
       font-size: 19px;
       color: var(--text-dim);
@@ -78,8 +78,10 @@
     .cta { margin-top: 40px; }
 
     .btn {
-      display: inline-block;
-      padding: 15px 34px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 16px 32px;
       border: none;
       border-radius: 14px;
       font-size: 17px;
@@ -115,6 +117,14 @@
         inset -4px -4px 10px var(--nm-light);
     }
 
+    .btn svg {
+      width: 17px;
+      height: 17px;
+      /* nudge Apple logo optically onto the baseline */
+      margin-top: -2px;
+      flex: none;
+    }
+
     .cta-meta {
       margin-top: 16px;
       font-size: 14px;
@@ -124,7 +134,7 @@
     /* ---------- SCREENSHOT ---------- */
     .shot {
       margin: 24px auto 0;
-      padding: 14px;
+      padding: 16px;
       border-radius: 20px;
       background: var(--bg-raised);
       box-shadow:
@@ -139,7 +149,7 @@
     }
 
     /* ---------- PLAIN TEXT SECTIONS ---------- */
-    section { padding: 30px 0; }
+    section { padding: 32px 0; }
 
     .letter p { margin: 0 0 20px; color: var(--text-hi); }
     .letter .lead { font-weight: 500; }
@@ -149,35 +159,8 @@
       font-size: 0.86em;
       color: var(--text-hi);
       background: rgba(255,255,255,0.05);
-      padding: 1px 5px;
+      padding: 2px 4px;
       border-radius: 5px;
-    }
-
-    h2.kicker {
-      font-size: 13px;
-      font-weight: 600;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--text-dim);
-      margin: 0 0 22px;
-    }
-
-    ul.plain {
-      list-style: none;
-      margin: 0;
-      padding: 0;
-    }
-    ul.plain li {
-      padding: 14px 0;
-      border-top: 1px solid var(--hairline);
-    }
-    ul.plain li:last-child { border-bottom: 1px solid var(--hairline); }
-    ul.plain strong { color: var(--text-hi); font-weight: 600; }
-
-    .divider {
-      border: none;
-      border-top: 1px solid var(--hairline);
-      margin: 20px 0;
     }
 
     /* ---------- CLOSE ---------- */
@@ -206,7 +189,7 @@
       <h1>Your agent writes markdown. <span class="accent">Vireo lets you read it.</span></h1>
       <p class="subhead">A simple, fast markdown editor for macOS. No vaults, no plugins, no subscription.</p>
       <div class="cta">
-        <a class="btn" href="#download">Download for Mac — Free</a>
+        <a class="btn" href="#download"><svg viewBox="0 0 384 512" fill="currentColor" aria-hidden="true"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>Download for Mac — Free</a>
         <p class="cta-meta">Native · 4&nbsp;MB · macOS&nbsp;15+ · Apple&nbsp;Silicon</p>
       </div>
     </header>
@@ -230,22 +213,10 @@
       <p class="sig">— Mate Rauscher</p>
     </section>
 
-    <!-- WHAT IT DOES -->
-    <section>
-      <h2 class="kicker">What it does</h2>
-      <ul class="plain">
-        <li><strong>Hides the syntax — even while editing.</strong> No <code>##</code>, no <code>**</code>, no preview pane. Bold looks bold; headings look like headings.</li>
-        <li><strong>Native and fast.</strong> Swift on Apple Silicon, about 4&nbsp;MB. It opens before other editors finish launching.</li>
-        <li><strong>Your files stay <code>.md</code>.</strong> Plain GitHub-Flavored Markdown on disk, byte-for-byte. No database, no lock-in, no export button to remember.</li>
-        <li><strong>The basics, done well.</strong> Auto-save, tabs, folder sidebar, table of contents, focus mode, and find. Nothing to configure.</li>
-        <li><strong>Set it as your default.</strong> Every <code>.md</code> in Finder opens clean — and Quick Look renders in Vireo's style without even launching the app.</li>
-      </ul>
-    </section>
-
     <!-- CLOSE -->
     <section class="close" id="download">
       <p>Open a <code style="font-family:'SF Mono',ui-monospace,monospace;font-size:0.9em;color:var(--text-hi);">.md</code> file in Vireo and you'll see what your writing was supposed to look like the whole time. No syntax, no spinner, no monthly fee, no catch.</p>
-      <a class="btn" href="#">Download Vireo for Mac — Free</a>
+      <a class="btn" href="#"><svg viewBox="0 0 384 512" fill="currentColor" aria-hidden="true"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>Download Vireo for Mac — Free</a>
       <p class="cta-meta" style="margin-top:16px;">macOS&nbsp;15+ · Apple&nbsp;Silicon · notarized direct download · your files stay yours</p>
     </section>
 
