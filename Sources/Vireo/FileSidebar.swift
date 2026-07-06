@@ -32,8 +32,6 @@ struct FileSidebar: View {
                 emptyState
             }
         }
-        // Clear the floating traffic lights at the top of the full-height panel.
-        .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: 30) }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .modifier(SidebarBackground())
     }
@@ -84,13 +82,17 @@ private struct FileRow: View {
 /// luminous glass Finder uses on Tahoe), falling back to the legacy
 /// `.behindWindow` sidebar vibrancy on macOS 15.
 private struct SidebarBackground: ViewModifier {
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 12, style: .continuous) }
+
     func body(content: Content) -> some View {
         if #available(macOS 26.0, *) {
-            content.background {
-                Color.clear.glassEffect(.regular, in: Rectangle())
-            }
+            content
+                .clipShape(shape)
+                .background { Color.clear.glassEffect(.regular, in: shape) }
         } else {
-            content.background(SidebarVibrancy())
+            content
+                .background(SidebarVibrancy())
+                .clipShape(shape)
         }
     }
 }

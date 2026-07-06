@@ -13,9 +13,11 @@ struct DocumentWindowView: View {
             if state.showFileSidebar && !state.focusMode {
                 FileSidebar()
                     .frame(width: AppState.sidebarWidth)
-                    // Run the panel the full height of the window, up behind the
-                    // transparent titlebar so the traffic lights float on it.
-                    .ignoresSafeArea(.container, edges: .top)
+                    // A rounded glass card floating in the window (Finder-style),
+                    // inset from the edges with the traffic lights above it.
+                    .padding(.leading, 10)
+                    .padding(.trailing, 8)
+                    .padding(.vertical, 10)
                     .transition(.move(edge: .leading))
             }
             if let doc = state.activeDocument {
