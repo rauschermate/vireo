@@ -19,6 +19,10 @@ struct FileNode: Identifiable, Hashable {
 final class AppState: ObservableObject {
     static let shared = AppState()
 
+    /// Width of the file panel — shared so the tab strip can inset itself past
+    /// the full-height sidebar.
+    static let sidebarWidth: CGFloat = 260
+
     @Published private(set) var documents: [DocumentModel] = []
     @Published var selectedID: UUID?
     @Published var rootFolder: FileNode?

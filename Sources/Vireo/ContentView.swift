@@ -11,11 +11,12 @@ struct DocumentWindowView: View {
     var body: some View {
         HStack(spacing: 0) {
             if state.showFileSidebar && !state.focusMode {
-                HStack(spacing: 0) {
-                    FileSidebar().frame(width: 260)
-                    Divider()
-                }
-                .transition(.move(edge: .leading))
+                FileSidebar()
+                    .frame(width: AppState.sidebarWidth)
+                    // Run the panel the full height of the window, up behind the
+                    // transparent titlebar so the traffic lights float on it.
+                    .ignoresSafeArea(.container, edges: .top)
+                    .transition(.move(edge: .leading))
             }
             if let doc = state.activeDocument {
                 EditorPane(doc: doc)
@@ -98,6 +99,12 @@ struct WindowConfigurator: NSViewRepresentable {
         window.title = title // still used by Mission Control / the Window menu
         window.representedURL = url
         window.isDocumentEdited = edited
+        // Finder-style chrome: the content fills the whole window (behind a
+        // transparent titlebar) so the file panel runs full height with the
+        // traffic lights floating over its glass.
+        window.styleMask.insert(.fullSizeContentView)
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = false
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }

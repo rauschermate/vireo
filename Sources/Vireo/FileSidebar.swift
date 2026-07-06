@@ -32,6 +32,8 @@ struct FileSidebar: View {
                 emptyState
             }
         }
+        // Clear the floating traffic lights at the top of the full-height panel.
+        .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: 30) }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .modifier(SidebarBackground())
     }

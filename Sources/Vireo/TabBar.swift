@@ -6,6 +6,13 @@ import AppKit
 struct ChromeRow: View {
     @EnvironmentObject private var state: AppState
 
+    /// How far to slide the tab strip right so it clears the full-height
+    /// sidebar (the toggle stays pinned at the sidebar's top-left, by the
+    /// traffic lights). Measured from the toggle to the panel's right edge.
+    static let tabInset: CGFloat = 150
+
+    private var sidebarOpen: Bool { state.showFileSidebar && !state.focusMode }
+
     var body: some View {
         HStack(spacing: 6) {
             Button {
@@ -19,6 +26,10 @@ struct ChromeRow: View {
             }
             .buttonStyle(.plain)
             .help(state.showFileSidebar ? "Hide file sidebar" : "Show file sidebar")
+
+            if sidebarOpen {
+                Color.clear.frame(width: Self.tabInset)
+            }
 
             TabStrip()
 
@@ -52,8 +63,9 @@ struct TabStrip: View {
     private static let dividerWidth: CGFloat = 1
 
     var body: some View {
+        let sidebarInset = (state.showFileSidebar && !state.focusMode) ? ChromeRow.tabInset : 0
         let stripWidth = max(Self.minTabWidth + Self.plusButtonWidth,
-                             state.contentWidth - Self.reservedChrome)
+                             state.contentWidth - Self.reservedChrome - sidebarInset)
         let widths = tabWidths(stripWidth: stripWidth)
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
