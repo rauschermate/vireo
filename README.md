@@ -53,6 +53,44 @@ Updates only activate once `scripts/updater-keys.sh` has filled `SUPublicEDKey`
 and a signed release + `appcast.xml` is published; unconfigured/dev builds keep
 the updater dormant.
 
+#### Turning on auto-updates / cutting a release
+
+One-time setup, then a repeatable release step:
+
+1. **Generate the signing key (once per machine that cuts releases).**
+   ```bash
+   ./scripts/updater-keys.sh
+   ```
+   Writes the EdDSA public key into `project/App-Info.plist` (`SUPublicEDKey`);
+   the private key stays in your login keychain. Commit the updated plist. Back
+   the private key up offline — losing it means users can't verify future
+   updates (they'd have to reinstall manually):
+   ```bash
+   .build/artifacts/sparkle/Sparkle/bin/generate_keys -x sparkle_private_key.pem
+   ```
+
+2. **Have a Developer ID + notary profile ready** (see the header of
+   `scripts/release.sh`): `VIREO_TEAM_ID`, `VIREO_SIGN_IDENTITY`, and a
+   `VIREO_NOTARY_PROFILE` created once via `xcrun notarytool store-credentials`.
+
+3. **Bump the version** in `project.yml` (`MARKETING_VERSION`, and
+   `CURRENT_PROJECT_VERSION` for each build) so the new release outranks the
+   installed one.
+
+4. **Build, sign, generate the appcast, and publish:**
+   ```bash
+   VIREO_TEAM_ID=… VIREO_SIGN_IDENTITY=… VIREO_NOTARY_PROFILE=… \
+     ./scripts/release.sh --publish
+   ```
+   This notarizes `Vireo.dmg`, EdDSA-signs it, generates `appcast.xml`, and
+   uploads both to a `v<version>` GitHub release. (Omit `--publish` to build the
+   artifacts locally and print the upload command instead.)
+
+Existing users' update pill then surfaces within `SUScheduledCheckInterval` (1h),
+or immediately via **Vireo ▸ Check for Updates…**. The feed URL
+(`releases/latest/download/appcast.xml`) is a GitHub alias that always resolves
+to the newest release's appcast, so nothing else needs updating between releases.
+
 `scripts/build-app.sh` still produces a quick SPM-only bundle (no Quick Look
 extension) for fast iteration on the app itself.
 
