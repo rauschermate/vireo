@@ -34,8 +34,6 @@ struct VireoApp: App {
             Button("New File") { state.createNewFile() }.keyboardShortcut("n")
             Button("New Tab") { state.newDocument() }.keyboardShortcut("t")
             Button("Open…") { state.openFilePanel() }.keyboardShortcut("o")
-            Button("Open Folder…") { state.openFolderPanel() }
-                .keyboardShortcut("o", modifiers: [.command, .shift])
             RecentMenu()
         }
         CommandGroup(replacing: .saveItem) {
@@ -85,7 +83,7 @@ struct VireoApp: App {
         }
         CommandGroup(after: .toolbar) {
             Button(state.showFileSidebar ? "Hide File Sidebar" : "Show File Sidebar") {
-                state.showFileSidebar.toggle()
+                state.toggleFileSidebar()
             }.keyboardShortcut("\\", modifiers: [.command])
             TOCToggleCommand()
             Button(state.focusMode ? "Exit Focus Mode" : "Focus Mode") {

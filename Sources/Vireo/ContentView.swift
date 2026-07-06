@@ -11,9 +11,13 @@ struct DocumentWindowView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            if state.showFileSidebar && !state.focusMode, state.rootFolder != nil {
-                FileSidebar().frame(width: 240)
-                Divider()
+            if state.showFileSidebar && !state.focusMode {
+                FileSidebar()
+                    .frame(width: AppState.sidebarWidth)
+                    // A rounded glass card floating in the window (Finder-style),
+                    // inset 8pt from the edges with the traffic lights above it.
+                    .padding(8)
+                    .transition(.move(edge: .leading))
             }
             if let doc = state.activeDocument {
                 EditorPane(doc: doc)
@@ -22,8 +26,13 @@ struct DocumentWindowView: View {
                 Color(nsColor: .textBackgroundColor)
             }
         }
-        .animation(.easeInOut(duration: 0.18), value: state.showFileSidebar)
+        .animation(.easeInOut(duration: 0.2), value: state.showFileSidebar)
         .animation(.easeInOut(duration: 0.18), value: state.focusMode)
+        // The panel always mirrors the active tab's containing folder: switch
+        // tabs and the tree re-roots to the new document's folder.
+        .onChange(of: state.selectedID) { _, _ in
+            if state.showFileSidebar { state.refreshFileTree() }
+        }
         // The tab strip lives in a titlebar *accessory* — inside the titlebar
         // hierarchy next to the traffic lights (like Xcode's tabs): native
         // glass and dragging, and none of NSToolbar's » item-overflow, which
@@ -98,6 +107,12 @@ struct WindowConfigurator: NSViewRepresentable {
         window.title = title // still used by Mission Control / the Window menu
         window.representedURL = url
         window.isDocumentEdited = edited
+        // Finder-style chrome: the content fills the whole window (behind a
+        // transparent titlebar) so the file panel runs full height with the
+        // traffic lights floating over its glass.
+        window.styleMask.insert(.fullSizeContentView)
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = false
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }

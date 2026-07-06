@@ -20,6 +20,10 @@ struct FileNode: Identifiable, Hashable {
 final class AppState: ObservableObject {
     static let shared = AppState()
 
+    /// Width of the file panel — shared so the tab strip can inset itself past
+    /// the full-height sidebar.
+    static let sidebarWidth: CGFloat = 260
+
     /// Auto-updater (Sparkle-backed). Drives the update pill; dormant on
     /// unconfigured dev builds. Started once from the app delegate.
     let updater = UpdateController()
@@ -28,7 +32,11 @@ final class AppState: ObservableObject {
     @Published var selectedID: UUID?
     @Published var rootFolder: FileNode?
 
-    @Published var showFileSidebar = true
+    /// The last folder the user explicitly opened — used as a fallback root
+    /// when the active tab is untitled (has no containing folder to follow).
+    @Published var pinnedFolder: URL?
+
+    @Published var showFileSidebar = false
     @Published var focusMode = false
     @Published var zoom: CGFloat = 1.0 { didSet { applyZoom() } }
     /// Window content width — drives how many tabs fit before overflow.
@@ -156,7 +164,7 @@ final class AppState: ObservableObject {
             alert.runModal()
             return
         }
-        if let root = rootFolder { openFolder(root.url) } // refresh sidebar
+        if showFileSidebar { refreshFileTree() } // refresh sidebar
     }
 
     // MARK: Opening
@@ -191,7 +199,7 @@ final class AppState: ObservableObject {
     /// ⌘N: create a real `.md` on disk — in the active document's folder, else
     /// the opened sidebar folder, else wherever the user picks — and open it.
     func createNewFile() {
-        let folder = activeDocument?.url?.deletingLastPathComponent() ?? rootFolder?.url
+        let folder = activeDocument?.url?.deletingLastPathComponent() ?? pinnedFolder
         if let folder {
             let url = availableUntitledURL(in: folder)
             do {
@@ -203,7 +211,7 @@ final class AppState: ObservableObject {
                 alert.runModal()
                 return
             }
-            if let root = rootFolder { openFolder(root.url) } // refresh sidebar
+            if showFileSidebar { refreshFileTree() } // refresh sidebar
             Preferences.shared.addRecent(url)
             requestOpen(url)
         } else {
@@ -227,25 +235,52 @@ final class AppState: ObservableObject {
         return candidate
     }
 
+    /// ⌘O: open markdown files as tabs, or a folder to browse in the sidebar.
     func openFilePanel() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = markdownTypes()
         panel.allowsMultipleSelection = true
-        if panel.runModal() == .OK {
-            for url in panel.urls { requestOpen(url) }
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.prompt = "Open"
+        panel.message = "Open markdown files, or choose a folder to browse."
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls {
+            if isDirectory(url) { openFolder(url) } else { requestOpen(url) }
         }
     }
 
-    func openFolderPanel() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        if panel.runModal() == .OK, let url = panel.url { openFolder(url) }
+    private func isDirectory(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? url.hasDirectoryPath
     }
 
+    // MARK: File sidebar
+
+    /// Toggle the left file panel. When opening, (re)build the tree from the
+    /// active document's containing folder.
+    func toggleFileSidebar() {
+        showFileSidebar.toggle()
+        if showFileSidebar { refreshFileTree() }
+    }
+
+    /// Rebuild the sidebar tree so it follows the active tab: root at the active
+    /// document's containing folder, falling back to the last opened folder when
+    /// the tab is untitled. `nil` when there's nothing to browse (empty state).
+    func refreshFileTree() {
+        if let folder = activeDocument?.url?.deletingLastPathComponent() ?? pinnedFolder {
+            rootFolder = buildTree(folder)
+        } else {
+            rootFolder = nil
+        }
+    }
+
+    /// Open a folder in the sidebar: reveal the panel and show its markdown-only
+    /// tree now. It's remembered as the fallback root; from here the sidebar
+    /// follows the active tab.
     func openFolder(_ url: URL) {
-        rootFolder = buildTree(url)
+        pinnedFolder = url
         showFileSidebar = true
+        rootFolder = buildTree(url)
     }
 
     func saveActiveAs() {
