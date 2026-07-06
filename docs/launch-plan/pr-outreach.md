@@ -79,6 +79,34 @@ story right now. Reframe the pitch around the agent workflow.
 
 ---
 
+## Contacts
+
+**⚠️ Verify every address on the outlet's live site before sending — I did not
+send anything, and I refuse to invent addresses. Legend:** ✅ published/known ·
+⚠️ found via research, confirm first · 🔎 no public tip email — use the listed
+form/DM/mention.
+
+| Outlet / person | How to reach | Conf. |
+|---|---|---|
+| **9to5Mac — Indie App Spotlight** (Michael Burkhardt) | `michaelb@9to5mac.com` | ⚠️ |
+| **Indie Dev Monday** | `newsletter@indiedevmonday.com` | ⚠️ |
+| **Six Colors** (Jason Snell) | `jsnell@sixcolors.com` | ⚠️ |
+| **MacStories / Club** (Federico Viticci) | `federico@macstories.net` | ⚠️ |
+| **The Verge — Installer** (David Pierce) | Reply straight to the Installer email (it invites suggestions); fallback `david@theverge.com` | ⚠️ |
+| **iOS Dev Weekly** (Dave Verwer) | `dave@iosdevweekly.com` + "Suggest a link" form at iosdevweekly.com | ✅ |
+| **SwiftLee Weekly** (Antoine van der Lee) | Contact form at avanderlee.com | 🔎 |
+| **Daring Fireball** (John Gruber) | **No tip email.** Mastodon mention [@gruber@mastodon.social](https://mastodon.social/@gruber) (he reads all mentions) or Signal `gruber.44`. Best play: publish the manifesto, then a polite mention. | 🔎 |
+| **Recomendo** (Kelly / Frauenfelder / Dawson) | Contact form: archive.recomendo.com/contact | 🔎 |
+| **Keep Productive** (Francesco D'Alessio) | Contact form on keepproductive.com / DM @keepproductive | 🔎 |
+| **Under the Radar** (Marco Arment, David Smith) | relay.fm/radar feedback; DM @marcoarment / @_DavidSmith | 🔎 |
+| **Mac Power Users** | relay.fm/mpu/feedback | 🔎 |
+| **Core Intuition** | coreint.org / DM @coreint | 🔎 |
+| **Ben's Bites / TLDR AI** | Submission forms on their sites | 🔎 |
+
+Where it says "form/DM," that's not laziness — those outlets genuinely route tips
+that way and a cold email would be ignored. Confirm the ✅/⚠️ emails on the live
+site the day you send; addresses rot.
+
 ## Outreach hygiene
 - One personal email/DM at a time. Never a blast. Reference their actual work.
 - Send the before/after GIF inline — the visual *is* the pitch.
