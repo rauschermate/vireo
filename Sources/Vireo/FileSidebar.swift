@@ -11,6 +11,7 @@ import AppKit
 struct FileSidebar: View {
     @EnvironmentObject private var state: AppState
     @State private var selection: URL?
+    @State private var expanded: Set<URL> = []
 
     var body: some View {
         Group {
@@ -18,8 +19,8 @@ struct FileSidebar: View {
                 VStack(alignment: .leading, spacing: 0) {
                     header(root)
                     List(selection: $selection) {
-                        OutlineGroup(root.children ?? [], children: \.children) { node in
-                            FileRow(node: node).tag(node.url)
+                        ForEach(root.children ?? []) { node in
+                            FileTree(node: node, expanded: $expanded)
                         }
                     }
                     .listStyle(.sidebar)
@@ -57,16 +58,15 @@ struct FileSidebar: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// A file selection opens it; a folder selection just expands/highlights —
-    /// snap the pill back to the active file so it never looks "lost".
+    /// Only files are selectable (folders toggle their own disclosure), so a
+    /// selection always means "open this file". If a stray tap clears it, keep
+    /// the pill on the active file.
     private func openIfFile(_ url: URL?) {
-        guard let url else { return }
-        let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? url.hasDirectoryPath
-        if isDir {
-            if selection != state.activeDocument?.url { selection = state.activeDocument?.url }
-        } else if url != state.activeDocument?.url {
-            state.requestOpen(url)
+        guard let url else {
+            selection = state.activeDocument?.url
+            return
         }
+        if url != state.activeDocument?.url { state.requestOpen(url) }
     }
 
     /// Shown when the active document is untitled (has no folder to browse).
@@ -85,6 +85,46 @@ struct FileSidebar: View {
         }
         .padding(.horizontal, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// Recursive tree row. Files are selectable (tagged) so selecting one opens it;
+/// folders aren't selectable — the whole folder row toggles its own disclosure,
+/// so a click expands/collapses it just like clicking the chevron.
+private struct FileTree: View {
+    let node: FileNode
+    @Binding var expanded: Set<URL>
+
+    var body: some View {
+        if node.isDirectory {
+            DisclosureGroup(isExpanded: isExpanded) {
+                ForEach(node.children ?? []) { child in
+                    FileTree(node: child, expanded: $expanded)
+                }
+            } label: {
+                // A Button (not onTapGesture) so the whole folder row reliably
+                // toggles its disclosure — clicking the row, not just the caret.
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { isExpanded.wrappedValue.toggle() }
+                } label: {
+                    FileRow(node: node)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        } else {
+            FileRow(node: node).tag(node.url)
+        }
+    }
+
+    private var isExpanded: Binding<Bool> {
+        Binding(
+            get: { expanded.contains(node.url) },
+            set: { open in
+                if open { expanded.insert(node.url) } else { expanded.remove(node.url) }
+            }
+        )
     }
 }
 
