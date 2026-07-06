@@ -7,6 +7,10 @@ Everything for the Vireo launch: the strategy, and ready-to-post drafts per chan
 - **[launch-plan.md](launch-plan.md)** — the master plan: positioning, pre-launch
   asset checklist, channel strategy (what to post where and why), paid-marketing
   verdict, the launch-day sequence, and the launch-video spec/script.
+- **[pr-outreach.md](pr-outreach.md)** — earned-media plays beyond 9to5Mac: taste
+  press (Daring Fireball, The Verge Installer), indie-dev podcasts, YouTube
+  roundups (Keep Productive), AI newsletters, mass-audience curators (Recomendo),
+  and owned-media plays (the manifesto + the engineering writeup).
 - **posts/** — platform-tailored drafts (each written in that channel's voice; do
   **not** cross-post identical copy):
   - [hacker-news.md](posts/hacker-news.md) — Show HN title + maker's first comment
