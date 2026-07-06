@@ -15,25 +15,46 @@ struct FileSidebar: View {
     var body: some View {
         Group {
             if let root = state.rootFolder {
-                List(selection: $selection) {
-                    Section(root.name) {
+                VStack(alignment: .leading, spacing: 0) {
+                    header(root)
+                    List(selection: $selection) {
                         OutlineGroup(root.children ?? [], children: \.children) { node in
                             FileRow(node: node).tag(node.url)
                         }
                     }
+                    .listStyle(.sidebar)
+                    .scrollContentBackground(.hidden) // let the vibrancy show through
+                    .environment(\.defaultMinListRowHeight, 30)
+                    .onChange(of: selection) { _, url in openIfFile(url) }
+                    .onChange(of: state.activeDocument?.url) { _, url in selection = url }
+                    .onAppear { selection = state.activeDocument?.url }
                 }
-                .listStyle(.sidebar)
-                .scrollContentBackground(.hidden) // let the vibrancy show through
-                .environment(\.defaultMinListRowHeight, 30)
-                .onChange(of: selection) { _, url in openIfFile(url) }
-                .onChange(of: state.activeDocument?.url) { _, url in selection = url }
-                .onAppear { selection = state.activeDocument?.url }
             } else {
                 emptyState
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .modifier(SidebarBackground())
+    }
+
+    /// App name over the root folder name, with a little breathing room before
+    /// the file tree.
+    private func header(_ root: FileNode) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text("Vireo")
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(.primary)
+            Text(root.name)
+                .font(.system(size: 15))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 12)
+        .padding(.top, 16)
+        .padding(.bottom, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// A file selection opens it; a folder selection just expands/highlights —
