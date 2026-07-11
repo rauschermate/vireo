@@ -79,5 +79,9 @@ let package = Package(
             name: "VireoCoreTests",
             dependencies: ["VireoCore"]
         ),
+        .testTarget(
+            name: "VireoTests",
+            dependencies: ["Vireo"]
+        ),
     ]
 )
