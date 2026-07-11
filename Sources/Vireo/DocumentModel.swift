@@ -310,15 +310,18 @@ final class DocumentModel: ObservableObject, Identifiable {
         inFlightSource = snapshot
         saveState = .saving
         writer.write(source: snapshot, to: target, expected: diskRevision) { [weak self] result in
-            Task { @MainActor in self?.finishWrite(result, generation: generation, writeID: writeID) }
+            Task { @MainActor in
+                self?.finishWrite(result, generation: generation, writeID: writeID, target: target)
+            }
         }
     }
 
-    private func finishWrite(_ result: DocumentWriteResult, generation: Int, writeID: Int) {
+    private func finishWrite(_ result: DocumentWriteResult, generation: Int,
+                             writeID: Int, target: URL) {
         guard writeID == activeWriteID else { return }
         writeInFlight = false
         inFlightSource = nil
-        apply(result, generation: generation, notifyFailure: true)
+        apply(result, generation: generation, notifyFailure: true, conflictURL: target)
 
         let succeeded: Bool
         if case .success = result { succeeded = true } else { succeeded = false }
@@ -353,11 +356,12 @@ final class DocumentModel: ObservableObject, Identifiable {
         }
         writeInFlight = false
         inFlightSource = nil
-        apply(result, generation: generation, notifyFailure: notifyFailure)
+        apply(result, generation: generation, notifyFailure: notifyFailure, conflictURL: url)
         return result
     }
 
-    private func apply(_ result: DocumentWriteResult, generation: Int, notifyFailure: Bool) {
+    private func apply(_ result: DocumentWriteResult, generation: Int, notifyFailure: Bool,
+                       conflictURL: URL? = nil) {
         switch result {
         case .success(let revision):
             diskRevision = revision
@@ -374,7 +378,14 @@ final class DocumentModel: ObservableObject, Identifiable {
             saveState = .failed(message)
             if notifyFailure { onSaveFailure?(message) }
         case .conflict(let disk):
-            let conflict = DocumentConflict(url: url ?? URL(fileURLWithPath: ""), disk: disk)
+            guard let conflictURL = conflictURL ?? url else {
+                let message = "The destination changed before Vireo could finish saving."
+                isDirty = true
+                saveState = .failed(message)
+                if notifyFailure { onSaveFailure?(message) }
+                return
+            }
+            let conflict = DocumentConflict(url: conflictURL, disk: disk)
             pendingConflict = conflict
             isDirty = true
             saveState = .failed("The file changed on disk before Vireo could save.")
@@ -393,7 +404,7 @@ final class DocumentModel: ObservableObject, Identifiable {
         activeWriteID += 1
         let result = writer.writeSynchronously(source: source, to: newURL, expected: nil)
         guard case .success(let revision) = result else {
-            apply(result, generation: editGeneration, notifyFailure: true)
+            apply(result, generation: editGeneration, notifyFailure: true, conflictURL: newURL)
             return false
         }
         url = newURL

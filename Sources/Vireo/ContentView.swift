@@ -196,9 +196,7 @@ final class WindowDelegateProxy: NSObject, NSWindowDelegate {
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         for doc in AppState.shared.documents {
-            guard AppState.shared.confirmDiscardIfNeeded(doc) else { return false }
-            doc.flushPendingSave()
-            if doc.isDirty, doc.url != nil { doc.saveNow() }
+            guard AppState.shared.prepareToClose(doc) else { return false }
         }
         if let original,
            original.responds(to: #selector(NSWindowDelegate.windowShouldClose(_:))) {
