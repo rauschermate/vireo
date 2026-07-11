@@ -573,7 +573,15 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
                                              range: fullContent)
                     }
                 }
-                let drawRect = cellRect.insetBy(dx: pad, dy: 0)
+                let measured = content.boundingRect(
+                    with: NSSize(width: max(1, cellRect.width - pad * 2), height: rh),
+                    options: [.usesLineFragmentOrigin]
+                )
+                let contentHeight = min(rh, max(1, ceil(measured.height)))
+                let drawRect = NSRect(x: cellRect.minX + pad,
+                                      y: cellRect.midY - contentHeight / 2,
+                                      width: max(1, cellRect.width - pad * 2),
+                                      height: contentHeight)
                 content.draw(with: drawRect,
                              options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
                              context: nil)

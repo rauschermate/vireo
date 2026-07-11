@@ -12,8 +12,8 @@ public final class MarkdownTextView: NSTextView {
     }
 
     public override func draw(_ dirtyRect: NSRect) {
-        (layoutManager as? MarkdownLayoutManager)?.beginTableGeometryPass()
         super.draw(dirtyRect)
+        controller?.tableGeometryDidChange()
     }
 
     public override func mouseDown(with event: NSEvent) {
@@ -26,6 +26,16 @@ public final class MarkdownTextView: NSTextView {
         if event.clickCount == 1, let anchor = checkboxAnchor(at: event) {
             controller?.toggleTask(atAnchor: anchor)
             return
+        }
+        // Tables remain rendered during editing. A click enters the drawn cell
+        // through one lightweight native overlay instead of exposing raw pipes.
+        if event.clickCount <= 2,
+           let layout = layoutManager as? MarkdownLayoutManager {
+            let point = convert(event.locationInWindow, from: nil)
+            if let cell = layout.tableCell(at: point) {
+                controller?.beginTableCellEditing(cell, selectAll: event.clickCount == 1)
+                return
+            }
         }
         // ⌘-click follows links (editor convention); a plain click must still
         // place the caret so link text stays editable.
@@ -247,6 +257,7 @@ public final class MarkdownTextView: NSTextView {
     public override func moveRight(_ sender: Any?) {
         super.moveRight(sender)
         snapCaretAfterListMarker()
+        activateTableCellAtCaret()
     }
 
     public override func moveLeft(_ sender: Any?) {
@@ -255,6 +266,42 @@ public final class MarkdownTextView: NSTextView {
         if let marker = controller.listMarkerRange(containing: selectedRange().location) {
             setSelectedRange(NSRange(location: max(0, marker.location - 1), length: 0))
         }
+        activateTableCellAtCaret()
+    }
+
+    public override func moveUp(_ sender: Any?) {
+        super.moveUp(sender)
+        activateTableCellAtCaret()
+    }
+
+    public override func moveDown(_ sender: Any?) {
+        super.moveDown(sender)
+        activateTableCellAtCaret()
+    }
+
+    public override func moveWordForward(_ sender: Any?) {
+        super.moveWordForward(sender)
+        activateTableCellAtCaret()
+    }
+
+    public override func moveWordBackward(_ sender: Any?) {
+        super.moveWordBackward(sender)
+        activateTableCellAtCaret()
+    }
+
+    public override func moveToBeginningOfLine(_ sender: Any?) {
+        super.moveToBeginningOfLine(sender)
+        activateTableCellAtCaret()
+    }
+
+    public override func moveToEndOfLine(_ sender: Any?) {
+        super.moveToEndOfLine(sender)
+        activateTableCellAtCaret()
+    }
+
+    private func activateTableCellAtCaret() {
+        guard selectedRange().length == 0 else { return }
+        controller?.beginTableCellEditing(atSourceLocation: selectedRange().location)
     }
 
     // NB: moveUp/moveDown deliberately do NOT snap out of hidden markers.
@@ -265,6 +312,13 @@ public final class MarkdownTextView: NSTextView {
     // click, or keystroke snaps it out (below / moveLeft / moveRight / mouseDown).
 
     public override func insertText(_ string: Any, replacementRange: NSRange) {
+        if replacementRange.location == NSNotFound, !hasMarkedText(),
+           controller?.beginTableCellEditing(atSourceLocation: selectedRange().location,
+                                             selectAll: selectedRange().length > 0) == true {
+            let plain = (string as? NSAttributedString)?.string ?? (string as? String) ?? ""
+            controller?.insertTextIntoActiveTableCell(plain)
+            return
+        }
         // A vertical arrow may have left the caret inside a hidden marker; snap
         // out first so typed text lands in the item's content, not its syntax.
         if replacementRange.location == NSNotFound, !hasMarkedText() {

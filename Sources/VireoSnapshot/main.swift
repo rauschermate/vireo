@@ -88,12 +88,7 @@ struct Snapshot {
         var renderer = MarkdownRenderer(theme: Theme(zoom: 1.0),
                                         baseURL: URL(fileURLWithPath: inputPath).deletingLastPathComponent(),
                                         imageLoader: loader, isDark: dark)
-        // --reveal-table <n>: render table n as raw source (caret-inside state)
         let args = CommandLine.arguments
-        if let i = args.firstIndex(of: "--reveal-table"), i + 1 < args.count,
-           let n = Int(args[i + 1]), parsed.tables.indices.contains(n) {
-            renderer.revealTableAnchor = parsed.tables[n].anchor
-        }
         // --collapse-first: collapse the first collapsible list item
         var collapsed: Set<Int> = []
         if args.contains("--collapse-first"),

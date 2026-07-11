@@ -255,9 +255,12 @@ Where the shipped implementation intentionally differs from the sections above:
   itself — but **cannot** load sibling local images (only remote, via the
   network-client entitlement). Bookmarks return to scope only if we ever sandbox.
 - **Tables (§6 addendum).** GFM tables render as a drawn grid over transparent
-  source text (null-hiding would collapse line heights). When the caret enters a
-  table, its raw source is revealed for editing and the grid returns on exit —
-  option-B behavior scoped to tables only.
+  source text (null-hiding the whole table would collapse line heights). The grid
+  now remains in place during editing: clicking or navigating into a cell mounts
+  one native field over that cell, Tab/Shift-Tab/Return navigate the grid, and a
+  compact cell menu adds/deletes rows or columns and changes alignment. Inline
+  formatting and link destinations survive visible-text edits. Raw pipes and the
+  separator row are never revealed.
 - **Incremental re-parse (§5) — implemented.** `IncrementalParser` diffs each
   edit against the previous source, expands to blank-line/block boundaries
   (blocks may span blank lines: fences, HTML), re-parses only that slice with

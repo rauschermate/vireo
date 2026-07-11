@@ -49,5 +49,17 @@ final class EditableMarkdownTableTests: XCTestCase {
         var value = table()
         value.replaceVisibleText("A | B\\C\nD", row: 1, column: 0)
         XCTAssertEqual(value.rawText(row: 1, column: 0), "A \\| B\\\\C D")
+        XCTAssertEqual(EditableMarkdownTable.visibleText(fromMarkdown: "A \\| B"), "A | B")
+    }
+
+    func testVisibleEditsPreserveInlineFormattingAndLinkDestinations() {
+        XCTAssertEqual(EditableMarkdownTable.updating(markdown: "**Name**",
+                                                       toVisibleText: "Names"),
+                       "**Names**")
+        XCTAssertEqual(EditableMarkdownTable.updating(
+            markdown: "[Site](https://example.com)", toVisibleText: "Home"
+        ), "[Home](https://example.com)")
+        XCTAssertEqual(EditableMarkdownTable.updating(markdown: "**Name**",
+                                                       toVisibleText: ""), "")
     }
 }
