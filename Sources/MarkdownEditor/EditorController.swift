@@ -21,6 +21,17 @@ public final class EditorController: ObservableObject {
 
     private let incremental = IncrementalParser()
     public private(set) var parsed = ParsedMarkdown()
+    /// Shared source/visual boundary map. Every editor interaction uses this
+    /// index rather than rediscovering marker ranges from text attributes.
+    public private(set) var markerIndex = MarkerIndex.empty
+    /// Semantic markers plus any delimiters retained while a formerly-valid
+    /// construct is transiently incomplete in the active paragraph.
+    private var presentationMarkerRanges: [NSRange] = []
+    private var provisionalMarkerRanges: [NSRange]?
+    private var expectedEditedSourceLength: Int?
+    private var expectedEditedAnchor: Int?
+    private var transientMarkerRanges: [NSRange] = []
+    private var transientParagraphRange: NSRange?
     private lazy var toolbar = FloatingToolbar(controller: self)
     /// Table whose source is revealed because the caret is inside it
     /// (identified by absolute anchor — stable across incremental edits).
@@ -38,6 +49,15 @@ public final class EditorController: ObservableObject {
     public func selectionChanged() {
         guard let tv = textView else { return }
         let sel = tv.selectedRange()
+
+        // Incomplete syntax is retained only for the paragraph being actively
+        // repaired. Moving away commits it as literal text rather than hiding
+        // arbitrary punctuation indefinitely.
+        if !transientMarkerRanges.isEmpty,
+           let paragraph = transientParagraphRange,
+           (sel.location < paragraph.location || sel.location >= paragraph.upperBound) {
+            clearTransientMarkerPresentation(dirty: paragraph)
+        }
 
         // Reveal the raw source of the table the caret sits in (if any) —
         // restyling only the affected table ranges, not the whole document.
@@ -132,12 +152,30 @@ public final class EditorController: ObservableObject {
         restyleAfterEdit()
     }
 
+    /// Capture marker presentation before an edit mutates the source. Existing
+    /// delimiters that survive an edit can remain hidden even if the parser
+    /// temporarily stops recognizing their now-incomplete construct.
+    public func prepareForEdit(in range: NSRange, replacementString: String) {
+        guard let storage = textView?.textStorage else { return }
+        let sourceLength = storage.length
+        let lower = min(max(0, range.location), sourceLength)
+        let upper = min(max(lower, range.upperBound), sourceLength)
+        let edit = NSRange(location: lower, length: upper - lower)
+        let replacementLength = (replacementString as NSString).length
+        let base = provisionalMarkerRanges ?? presentationMarkerRanges
+        provisionalMarkerRanges = transformMarkerRanges(base, through: edit,
+                                                         replacementLength: replacementLength)
+        expectedEditedSourceLength = sourceLength - edit.length + replacementLength
+        expectedEditedAnchor = edit.location + replacementLength
+    }
+
     /// Edit path: incremental parse; re-apply attributes only over the dirty
     /// region (the whole document when the parser had to fall back).
     private func restyleAfterEdit() {
         guard let tv = textView, let storage = tv.textStorage else { return }
         let update = incremental.update(storage.string)
         parsed = update.parsed
+        updateMarkerPresentation(after: update, storage: storage)
         onParsed?(parsed)
         remapCollapsedAnchors(dirty: update.dirtyRange,
                               delta: storage.length - lastSourceLength)
@@ -193,14 +231,24 @@ public final class EditorController: ObservableObject {
         subtree(forAnchor: anchor) != nil
     }
 
-    /// The hidden leading marker (`- `, `1. `, `- [ ] `) that `location` sits
-    /// strictly inside, if any — every position in it renders at the same
-    /// zero-width spot, so the caret should snap across it, not step through.
-    public func listMarkerRange(containing location: Int) -> NSRange? {
-        let anchors = Set(parsed.tasks.map(\.anchor) + parsed.listMarkers.map(\.anchor))
-        return parsed.markerRanges.first {
-            NSLocationInRange(location, $0) && anchors.contains($0.upperBound)
+    /// Normalize an AppKit selection against every hidden Markdown marker.
+    /// Direction determines which side owns a collapsed caret boundary.
+    public func normalizedSelection(_ proposed: NSRange,
+                                    previous: NSRange? = nil,
+                                    affinity explicitAffinity: MarkerAffinity? = nil) -> NSRange {
+        if proposed.length > 0 { return markerIndex.atomicSelection(proposed) }
+        let affinity: MarkerAffinity
+        if let explicitAffinity {
+            affinity = explicitAffinity
+        } else if let previous, proposed.location < previous.location {
+            affinity = .upstream
+        } else if let previous, proposed.location > previous.upperBound {
+            affinity = .downstream
+        } else {
+            affinity = .nearest
         }
+        return NSRange(location: markerIndex.caretPosition(proposed.location, affinity: affinity),
+                       length: 0)
     }
 
     /// Hover target for the collapse chevron (set from mouse tracking).
@@ -216,6 +264,11 @@ public final class EditorController: ObservableObject {
         guard let tv = textView, let storage = tv.textStorage else { return }
         let update = incremental.update(storage.string)
         parsed = update.parsed
+        // A theme/image restyle does not end an active repair transaction.
+        if presentationMarkerRanges.isEmpty {
+            presentationMarkerRanges = parsed.markerRanges
+        }
+        markerIndex = MarkerIndex(ranges: presentationMarkerRanges, sourceLength: storage.length)
         onParsed?(parsed)
         applyStyles(dirty: nil)
     }
@@ -236,7 +289,9 @@ public final class EditorController: ObservableObject {
             renderer.collapsedAnchors = collapsedAnchors
             renderer.originOffset = window.location
             let sliceSource = (storage.string as NSString).substring(with: window)
-            let sliceParsed = window == full ? parsed : parsed.slice(window)
+            var presented = parsed
+            presented.markerRanges = presentationMarkerRanges
+            let sliceParsed = window == full ? presented : presented.slice(window)
             let rendered = renderer.render(source: sliceSource, parsed: sliceParsed)
 
             storage.beginEditing()
@@ -330,9 +385,92 @@ public final class EditorController: ObservableObject {
         let sel = tv.selectedRange()
         storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: s)
         incremental.reset() // wholesale replacement — diffing history is useless
+        presentationMarkerRanges = []
+        provisionalMarkerRanges = nil
+        expectedEditedSourceLength = nil
+        expectedEditedAnchor = nil
+        transientMarkerRanges = []
+        transientParagraphRange = nil
         restyle()
         let caret = min(sel.location, (s as NSString).length)
         tv.setSelectedRange(NSRange(location: caret, length: 0))
+    }
+
+    private func updateMarkerPresentation(after update: IncrementalUpdate,
+                                          storage: NSTextStorage) {
+        defer {
+            provisionalMarkerRanges = nil
+            expectedEditedSourceLength = nil
+            expectedEditedAnchor = nil
+        }
+
+        guard let candidates = provisionalMarkerRanges,
+              expectedEditedSourceLength == storage.length else {
+            transientMarkerRanges = []
+            transientParagraphRange = nil
+            presentationMarkerRanges = parsed.markerRanges
+            markerIndex = MarkerIndex(ranges: presentationMarkerRanges,
+                                      sourceLength: storage.length)
+            return
+        }
+
+        let ns = storage.string as NSString
+        let anchor = min(expectedEditedAnchor ?? update.dirtyRange?.location ?? 0, storage.length)
+        let paragraph = ns.paragraphRange(for: NSRange(location: anchor, length: 0))
+        let semantic = MarkerIndex(ranges: parsed.markerRanges, sourceLength: storage.length)
+        transientMarkerRanges = candidates.filter { candidate in
+            guard NSIntersectionRange(candidate, paragraph).length > 0 else { return false }
+            return !semantic.ranges.contains { semanticRange in
+                semanticRange.location <= candidate.location
+                    && semanticRange.upperBound >= candidate.upperBound
+            }
+        }
+        transientParagraphRange = transientMarkerRanges.isEmpty ? nil : paragraph
+        presentationMarkerRanges = MarkerIndex(
+            ranges: parsed.markerRanges + transientMarkerRanges,
+            sourceLength: storage.length
+        ).ranges
+        markerIndex = MarkerIndex(ranges: presentationMarkerRanges,
+                                  sourceLength: storage.length)
+    }
+
+    private func clearTransientMarkerPresentation(dirty: NSRange) {
+        transientMarkerRanges = []
+        transientParagraphRange = nil
+        presentationMarkerRanges = parsed.markerRanges
+        if let storage = textView?.textStorage {
+            markerIndex = MarkerIndex(ranges: presentationMarkerRanges,
+                                      sourceLength: storage.length)
+        }
+        applyStyles(dirty: dirty)
+    }
+
+    private func transformMarkerRanges(_ ranges: [NSRange], through edit: NSRange,
+                                       replacementLength: Int) -> [NSRange] {
+        let delta = replacementLength - edit.length
+        var result: [NSRange] = []
+        result.reserveCapacity(ranges.count + 2)
+        for marker in ranges {
+            if marker.upperBound <= edit.location {
+                result.append(marker)
+            } else if marker.location >= edit.upperBound {
+                result.append(NSRange(location: marker.location + delta, length: marker.length))
+            } else {
+                let leftEnd = min(marker.upperBound, edit.location)
+                if leftEnd > marker.location {
+                    result.append(NSRange(location: marker.location,
+                                          length: leftEnd - marker.location))
+                }
+                let rightStart = max(marker.location, edit.upperBound)
+                if marker.upperBound > rightStart {
+                    let shiftedStart = rightStart + delta
+                    result.append(NSRange(location: shiftedStart,
+                                          length: marker.upperBound - rightStart))
+                }
+            }
+        }
+        let newLength = max(0, (textView?.textStorage?.length ?? 0) + delta)
+        return MarkerIndex(ranges: result, sourceLength: newLength).ranges
     }
 
     // MARK: Navigation

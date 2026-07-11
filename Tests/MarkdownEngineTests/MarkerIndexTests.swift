@@ -58,6 +58,10 @@ final class MarkerIndexTests: XCTestCase {
             let sourceOffset = index.sourceOffset(forVisibleOffset: visible, affinity: .downstream)
             XCTAssertEqual(index.visibleOffset(forSourceOffset: sourceOffset), visible)
         }
+
+        XCTAssertEqual(index.sourceRange(forVisibleRange: NSRange(location: 2, length: 4)),
+                       NSRange(location: 4, length: 4),
+                       "mapping visible bold text back to source must preserve its delimiters")
     }
 
     func testVisibleStringOmitsAllSyntax() {

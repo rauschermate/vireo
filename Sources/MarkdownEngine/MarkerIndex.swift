@@ -217,9 +217,11 @@ public struct MarkerIndex: Sendable, Equatable {
         return NSRange(location: lower, length: max(0, upper - lower))
     }
 
-    public func sourceRange(forVisibleRange range: NSRange) -> NSRange {
-        let lower = sourceOffset(forVisibleOffset: range.location, affinity: .upstream)
-        let upper = sourceOffset(forVisibleOffset: range.upperBound, affinity: .downstream)
+    public func sourceRange(forVisibleRange range: NSRange,
+                            startAffinity: MarkerAffinity = .downstream,
+                            endAffinity: MarkerAffinity = .upstream) -> NSRange {
+        let lower = sourceOffset(forVisibleOffset: range.location, affinity: startAffinity)
+        let upper = sourceOffset(forVisibleOffset: range.upperBound, affinity: endAffinity)
         return NSRange(location: lower, length: max(0, upper - lower))
     }
 
