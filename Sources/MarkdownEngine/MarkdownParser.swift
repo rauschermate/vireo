@@ -473,6 +473,12 @@ private struct Accumulator {
             for (col, node) in cellNodes.enumerated() {
                 guard let r = map.nsRange(node.range) else { continue }
                 cells.append(TableCell(range: trim(r), column: col, alignment: alignment(col)))
+                // Table cells are still inline Markdown. Record emphasis,
+                // code, links and their delimiters just like paragraph text so
+                // the drawn grid can present rich content without raw syntax.
+                for child in node.children {
+                    visitInline(child, style: InlineStyle())
+                }
             }
             columnCount = max(columnCount, cells.count)
             rows.append(TableRow(isHeader: isHeader, cells: cells))

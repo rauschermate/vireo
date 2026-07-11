@@ -11,6 +11,11 @@ public final class MarkdownTextView: NSTextView {
         effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     }
 
+    public override func draw(_ dirtyRect: NSRect) {
+        (layoutManager as? MarkdownLayoutManager)?.beginTableGeometryPass()
+        super.draw(dirtyRect)
+    }
+
     public override func mouseDown(with event: NSEvent) {
         // Collapse chevron / `…` expander.
         if event.clickCount == 1, let anchor = collapseTarget(at: event) {

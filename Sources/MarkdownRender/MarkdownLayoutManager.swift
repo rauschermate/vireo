@@ -1,6 +1,33 @@
 import AppKit
 import MarkdownEngine
 
+public struct TableCellID: Hashable, Sendable {
+    public var tableAnchor: Int
+    public var row: Int
+    public var column: Int
+
+    public init(tableAnchor: Int, row: Int, column: Int) {
+        self.tableAnchor = tableAnchor
+        self.row = row
+        self.column = column
+    }
+}
+
+public struct TableCellGeometry: Sendable {
+    public var id: TableCellID
+    public var rect: NSRect
+    public var isHeader: Bool
+    public var alignment: TableAlignment
+
+    public init(id: TableCellID, rect: NSRect, isHeader: Bool,
+                alignment: TableAlignment) {
+        self.id = id
+        self.rect = rect
+        self.isHeader = isHeader
+        self.alignment = alignment
+    }
+}
+
 /// TextKit-1 layout manager that realises the hidden-syntax look:
 ///  • syntax-marker glyphs (`.vireoMarker`) are turned into null glyphs — present
 ///    in the backing store, zero-width and invisible on screen;
@@ -23,6 +50,23 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     public var tableRowHeight: CGFloat = 40
     public var tableFont: NSFont = .systemFont(ofSize: 15)
     public var tableHeaderFont: NSFont = .systemFont(ofSize: 15, weight: .semibold)
+    /// Cell frames from the current draw pass, in text-view coordinates. The
+    /// editor uses these for direct cell hit testing and its native overlay.
+    public private(set) var tableCellGeometries: [TableCellID: TableCellGeometry] = [:]
+    public private(set) var tableRects: [Int: NSRect] = [:]
+
+    public func beginTableGeometryPass() {
+        tableCellGeometries.removeAll(keepingCapacity: true)
+        tableRects.removeAll(keepingCapacity: true)
+    }
+
+    public func tableCell(at point: NSPoint) -> TableCellGeometry? {
+        tableCellGeometries.values.first { $0.rect.contains(point) }
+    }
+
+    public func geometry(for id: TableCellID) -> TableCellGeometry? {
+        tableCellGeometries[id]
+    }
 
     // List/heading collapse and hover state (set on each restyle / mouse move).
     public var listMarkers: [ListMarker] = []
@@ -422,7 +466,19 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
                 widths[cell.column] = max(widths[cell.column], w)
             }
         }
-        let colW = widths.map { $0 + pad * 2 }
+        var colW = widths.map { max(72, $0 + pad * 2) }
+        let available = max(72, lineRect.width)
+        let desired = colW.reduce(0, +)
+        if desired < available {
+            let extra = (available - desired) / CGFloat(cols)
+            colW = colW.map { $0 + extra }
+        } else if desired > available {
+            let minimumTotal = CGFloat(cols) * 72
+            if minimumTotal < available {
+                let scale = (available - minimumTotal) / max(1, desired - minimumTotal)
+                colW = colW.map { 72 + ($0 - 72) * scale }
+            }
+        }
         let totalW = colW.reduce(0, +)
         let rowCount = info.rows.count
         let tableH = CGFloat(rowCount) * rh
@@ -431,6 +487,7 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         var acc = left
         for w in colW { xs.append(acc); acc += w }
         let right = left + totalW
+        tableRects[info.anchor] = NSRect(x: left, y: top, width: totalW, height: tableH)
 
         // Header background.
         NSColor.secondaryLabelColor.withAlphaComponent(0.10)
@@ -457,19 +514,69 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         for (rIdx, row) in info.rows.enumerated() {
             let y = top + CGFloat(rIdx) * rh
             for cell in row.cells where cell.column < cols {
-                let s = cellText(cell) as NSString
-                let a = attrs(header: row.isHeader)
-                let size = s.size(withAttributes: a)
                 let cellX = xs[cell.column]
                 let cellWidth = colW[cell.column]
-                var tx = cellX + pad
-                switch cell.alignment {
-                case .center: tx = cellX + (cellWidth - size.width) / 2
-                case .right: tx = cellX + cellWidth - pad - size.width
-                default: break
+                let cellRect = NSRect(x: cellX, y: y, width: cellWidth, height: rh)
+                let id = TableCellID(tableAnchor: info.anchor, row: rIdx,
+                                     column: cell.column)
+                tableCellGeometries[id] = TableCellGeometry(
+                    id: id, rect: cellRect, isHeader: row.isHeader,
+                    alignment: cell.alignment
+                )
+
+                let sourceRange = NSIntersectionRange(
+                    cell.range, NSRange(location: 0, length: storage.length)
+                )
+                let content = NSMutableAttributedString(
+                    attributedString: sourceRange.length > 0
+                        ? storage.attributedSubstring(from: sourceRange)
+                        : NSAttributedString(string: "")
+                )
+                // Marker characters inside a cell (emphasis, links, code) are
+                // source plumbing, not content drawn into the grid.
+                if content.length > 0 {
+                    var hidden: [NSRange] = []
+                    content.enumerateAttribute(.vireoMarker,
+                                               in: NSRange(location: 0, length: content.length)) {
+                        value, range, _ in
+                        if value != nil { hidden.append(range) }
+                    }
+                    for range in hidden.reversed() { content.deleteCharacters(in: range) }
                 }
-                let ty = y + (rh - size.height) / 2
-                s.draw(at: NSPoint(x: tx, y: ty), withAttributes: a)
+
+                let fullContent = NSRange(location: 0, length: content.length)
+                if fullContent.length > 0 {
+                    content.addAttribute(.foregroundColor, value: NSColor.labelColor,
+                                         range: fullContent)
+                    content.enumerateAttribute(.vireoLink, in: fullContent) { value, range, _ in
+                        if value != nil {
+                            content.addAttribute(.foregroundColor, value: NSColor.linkColor,
+                                                 range: range)
+                        }
+                    }
+                }
+                if content.length == 0 {
+                    content.append(NSAttributedString(string: "", attributes: attrs(header: row.isHeader)))
+                }
+                let paragraph = NSMutableParagraphStyle()
+                paragraph.lineBreakMode = .byTruncatingTail
+                switch cell.alignment {
+                case .center: paragraph.alignment = .center
+                case .right: paragraph.alignment = .right
+                default: paragraph.alignment = .left
+                }
+                if fullContent.length > 0 {
+                    content.addAttribute(.paragraphStyle, value: paragraph, range: fullContent)
+                    if content.attribute(.font, at: 0, effectiveRange: nil) == nil {
+                        content.addAttribute(.font,
+                                             value: row.isHeader ? tableHeaderFont : tableFont,
+                                             range: fullContent)
+                    }
+                }
+                let drawRect = cellRect.insetBy(dx: pad, dy: 0)
+                content.draw(with: drawRect,
+                             options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                             context: nil)
             }
         }
     }
