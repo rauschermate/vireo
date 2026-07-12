@@ -50,6 +50,8 @@ struct RenderPlan {
                 add(range, styles.quoteAttributes)
             case .codeBlock:
                 add(range, styles.codeBlockAttributes)
+                addFencePadding(in: range, source: ns,
+                                paragraph: styles.codeFenceParagraph)
             case .listItem(let depth, _):
                 if let paragraph = styles.listParagraphs[depth] {
                     add(range, [.paragraphStyle: paragraph])
@@ -59,6 +61,12 @@ struct RenderPlan {
                                     : styles.tableBodyRowAttributes)
             case .thematicBreak:
                 add(range, styles.ruleAttributes)
+                let content = rangeWithoutTrailingNewline(range, in: ns)
+                if content.length > 0 {
+                    add(NSRange(location: content.location, length: 1),
+                        [.vireoThematicBreak: theme.ruleColor])
+                    add(content, [.vireoMarker: Self.trueValue])
+                }
             }
         }
 
@@ -267,6 +275,52 @@ struct RenderPlan {
                 ], removing: [.backgroundColor])
             }
         }
+    }
+
+    /// Fence glyphs stay hidden but keep a short line fragment that becomes
+    /// the code surface's vertical padding. Indented code blocks have no fence
+    /// lines and retain their normal block geometry.
+    mutating private func addFencePadding(in range: NSRange, source: NSString,
+                                          paragraph: NSParagraphStyle) {
+        let firstLine = NSIntersectionRange(
+            source.lineRange(for: NSRange(location: range.location, length: 0)),
+            range
+        )
+        guard isFenceLine(firstLine, in: source) else { return }
+
+        var lastCharacter = max(range.location, range.upperBound - 1)
+        while lastCharacter > range.location {
+            let character = source.character(at: lastCharacter)
+            guard character == 0x0A || character == 0x0D else { break }
+            lastCharacter -= 1
+        }
+        let lastLine = NSIntersectionRange(
+            source.lineRange(for: NSRange(location: lastCharacter, length: 0)),
+            range
+        )
+        add(firstLine, [.paragraphStyle: paragraph])
+        if lastLine.location != firstLine.location,
+           isFenceLine(lastLine, in: source) {
+            add(lastLine, [.paragraphStyle: paragraph])
+        }
+    }
+
+    private func isFenceLine(_ range: NSRange, in source: NSString) -> Bool {
+        guard range.length > 0 else { return false }
+        let line = source.substring(with: range)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return line.hasPrefix("```") || line.hasPrefix("~~~")
+    }
+
+    private func rangeWithoutTrailingNewline(_ range: NSRange,
+                                             in source: NSString) -> NSRange {
+        var result = range
+        while result.length > 0 {
+            let character = source.character(at: result.upperBound - 1)
+            guard character == 0x0A || character == 0x0D else { break }
+            result.length -= 1
+        }
+        return result
     }
 
     mutating private func add(_ range: NSRange,
