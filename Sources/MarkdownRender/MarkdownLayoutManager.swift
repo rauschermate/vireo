@@ -17,6 +17,7 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     public var markerColor: NSColor = .secondaryLabelColor
     public var bulletFont: NSFont = .systemFont(ofSize: 16)
     public var imageProvider: ((String) -> NSImage?)?
+    public var imageMaxWidth: CGFloat = 640
 
     // Table drawing config (set on each restyle).
     public var tables: [TableInfo] = []
@@ -35,6 +36,9 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     /// chevron toggles and collapsed-`…` expanders, keyed by item anchor.
     public private(set) var chevronRects: [Int: NSRect] = [:]
     public private(set) var dotsRects: [Int: NSRect] = [:]
+    /// Rendered image hit targets in text-view coordinates, keyed by source anchor.
+    /// `MarkdownTextView` uses these for the native edit/remove affordance.
+    public private(set) var imageRects: [Int: NSRect] = [:]
 
     public override init() {
         super.init()
@@ -137,9 +141,14 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
             drawHeadingAdornments(anchor: range.location, origin: origin, storage: storage)
         }
         storage.enumerateAttribute(.vireoImage, in: charRange) { value, range, _ in
-            guard let src = value as? String, let img = imageProvider?(src),
-                  !isCollapsedAway(range.location) else { return }
-            drawImage(img, atCharIndex: range.location, origin: origin)
+            guard let src = value as? String, !isCollapsedAway(range.location) else { return }
+            if let img = imageProvider?(src) {
+                drawImage(img, atCharIndex: range.location, origin: origin)
+            } else {
+                let alt = storage.attribute(.vireoImageAlt, at: range.location,
+                                            effectiveRange: nil) as? String ?? ""
+                drawImageFallback(alt: alt, atCharIndex: range.location, origin: origin)
+            }
         }
         storage.enumerateAttribute(.vireoTable, in: charRange) { value, range, _ in
             guard let n = value as? NSNumber,
@@ -552,14 +561,63 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let glyph = glyphIndexForCharacter(at: charIndex)
         guard glyph < numberOfGlyphs else { return }
         let lineRect = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
-        let maxW = container.size.width - container.lineFragmentPadding * 2
-        guard img.size.width > 0 else { return }
+        let available = max(1, container.size.width - container.lineFragmentPadding * 2 - 24)
+        let maxW = max(1, min(imageMaxWidth, available))
+        guard img.size.width > 0, img.size.height > 0 else { return }
         let scale = min(1, maxW / img.size.width)
         let w = img.size.width * scale
         let h = img.size.height * scale
         let rect = NSRect(x: origin.x + lineRect.minX + 12,
                           y: origin.y + lineRect.minY + 4,
                           width: w, height: h)
-        img.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
+        imageRects[charIndex] = rect
+        img.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1,
+                 respectFlipped: true, hints: nil)
+        imageOutlineColor.setStroke()
+        let outline = NSBezierPath(rect: rect.insetBy(dx: 0.5, dy: 0.5))
+        outline.lineWidth = 1
+        outline.stroke()
+    }
+
+    private func drawImageFallback(alt: String, atCharIndex charIndex: Int, origin: NSPoint) {
+        guard charIndex < numberOfGlyphs, let container = textContainers.first else { return }
+        let glyph = glyphIndexForCharacter(at: charIndex)
+        guard glyph < numberOfGlyphs else { return }
+        let lineRect = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let available = max(1, container.size.width - container.lineFragmentPadding * 2 - 24)
+        let width = max(1, min(imageMaxWidth, available))
+        let rect = NSRect(x: origin.x + lineRect.minX + 12,
+                          y: origin.y + lineRect.minY + 4,
+                          width: width, height: max(32, lineRect.height - 8))
+        imageRects[charIndex] = rect
+        NSColor.controlBackgroundColor.setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
+        imageOutlineColor.setStroke()
+        let outline = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5),
+                                   xRadius: 5.5, yRadius: 5.5)
+        outline.lineWidth = 1
+        outline.stroke()
+
+        let label = alt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = (label.isEmpty ? "Image" : label) as NSString
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 13),
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .paragraphStyle: paragraph,
+        ]
+        let size = text.size(withAttributes: attrs)
+        let labelRect = NSRect(x: rect.minX + 12, y: rect.midY - size.height / 2,
+                               width: max(0, rect.width - 24), height: size.height)
+        text.draw(in: labelRect, withAttributes: attrs)
+    }
+
+    private var imageOutlineColor: NSColor {
+        NSColor(name: nil) { appearance in
+            let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            return dark ? NSColor.white.withAlphaComponent(0.10)
+                        : NSColor.black.withAlphaComponent(0.10)
+        }
     }
 }

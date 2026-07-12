@@ -50,6 +50,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         layout.tableRowHeight = theme.tableRowHeight
         layout.tableFont = theme.tableFont
         layout.tableHeaderFont = theme.tableHeaderFont
+        layout.imageMaxWidth = theme.contentMaxWidth
         layout.imageProvider = { [weak self] src in
             self?.imageLoader.image(forSource: src, baseURL: baseURL)
         }

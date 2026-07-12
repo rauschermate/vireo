@@ -309,6 +309,7 @@ public final class EditorController: ObservableObject {
         layoutManager?.tableRowHeight = theme.tableRowHeight
         layoutManager?.tableFont = theme.tableFont
         layoutManager?.tableHeaderFont = theme.tableHeaderFont
+        layoutManager?.imageMaxWidth = theme.contentMaxWidth
         layoutManager?.listMarkers = parsed.listMarkers
         layoutManager?.taskMarks = parsed.tasks
         layoutManager?.headingMarks = parsed.headings
@@ -771,6 +772,79 @@ public final class EditorController: ObservableObject {
                 self.insertBlockSnippet("![\(url.deletingPathExtension().lastPathComponent)](\(path))")
             }
         }
+    }
+
+    /// Edit the rendered image without exposing its hidden Markdown expression.
+    /// The same surface is available by double-click and from the context menu.
+    public func editImage(atAnchor anchor: Int) {
+        guard let tv = textView, let window = tv.window,
+              let image = parsed.images.first(where: { $0.anchor == anchor }) else { return }
+
+        let altField = NSTextField(string: image.alt)
+        altField.placeholderString = "Describe the image"
+        altField.setAccessibilityLabel("Alt text")
+        let sourceField = NSTextField(string: image.source)
+        sourceField.placeholderString = "Path or URL"
+        sourceField.setAccessibilityLabel("Image source")
+
+        let grid = NSGridView(views: [
+            [NSTextField(labelWithString: "Alt text"), altField],
+            [NSTextField(labelWithString: "Source"), sourceField],
+        ])
+        grid.column(at: 0).xPlacement = .trailing
+        grid.column(at: 1).width = 320
+        grid.rowSpacing = 8
+        grid.columnSpacing = 10
+
+        let alert = NSAlert()
+        alert.messageText = "Edit Image"
+        alert.informativeText = "Update the description or image path."
+        alert.accessoryView = grid
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Remove Image")
+        alert.buttons.last?.hasDestructiveAction = true
+        alert.window.initialFirstResponder = altField
+
+        alert.beginSheetModal(for: window) { [weak self] response in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if response == .alertFirstButtonReturn {
+                    let source = sourceField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !source.isEmpty else {
+                        NSSound.beep()
+                        return
+                    }
+                    self.replaceImage(atAnchor: anchor, alt: altField.stringValue, source: source)
+                } else if response == .alertThirdButtonReturn {
+                    self.removeImage(atAnchor: anchor)
+                }
+            }
+        }
+    }
+
+    public func removeImage(atAnchor anchor: Int) {
+        replaceImageSource(atAnchor: anchor, replacement: "")
+    }
+
+    func replaceImage(atAnchor anchor: Int, alt: String, source: String) {
+        let escapedAlt = alt.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "]", with: "\\]")
+        let escapedSource = source.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "(", with: "\\(")
+            .replacingOccurrences(of: ")", with: "\\)")
+        replaceImageSource(atAnchor: anchor,
+                           replacement: "![\(escapedAlt)](\(escapedSource))")
+    }
+
+    private func replaceImageSource(atAnchor anchor: Int, replacement: String) {
+        guard let tv = textView, let storage = tv.textStorage,
+              let image = parsed.images.first(where: { $0.anchor == anchor }) else { return }
+        guard tv.shouldChangeText(in: image.range, replacementString: replacement) else { return }
+        storage.replaceCharacters(in: image.range, with: replacement)
+        tv.didChangeText()
+        let caret = min(image.range.location + (replacement as NSString).length, storage.length)
+        tv.setSelectedRange(NSRange(location: caret, length: 0))
     }
 
     private func relativePath(for url: URL) -> String {
