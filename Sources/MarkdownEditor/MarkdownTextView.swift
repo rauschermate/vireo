@@ -12,6 +12,10 @@ public final class MarkdownTextView: NSTextView {
     private var syntaxFreeFinderClient: VisibleTextFinderClient?
     private var representedImageAnchor: Int?
     private(set) var selectedImageAnchor: Int?
+    private var markdownAccessibilityElements: [String: MarkdownAccessibilityElement] = [:]
+    private var cachedAccessibilityIndex = MarkerIndex.empty
+    private var cachedAccessibilityBase = MarkerIndex.empty
+    private var cachedAccessibilityTableRanges: [NSRange] = []
 
     public override var undoManager: UndoManager? { persistentUndoManager }
 
@@ -185,29 +189,9 @@ public final class MarkdownTextView: NSTextView {
     /// If the click lands on a drawn checkbox (left of a task item's first
     /// character), return that item's anchor index.
     private func checkboxAnchor(at event: NSEvent) -> Int? {
-        guard let storage = textStorage, storage.length > 0,
-              let lm = layoutManager, let container = textContainer else { return nil }
+        guard let lm = layoutManager as? MarkdownLayoutManager else { return nil }
         let point = convert(event.locationInWindow, from: nil)
-        let inset = textContainerInset
-        let local = NSPoint(x: point.x - inset.width, y: point.y - inset.height)
-        let glyph = lm.glyphIndex(for: local, in: container)
-        let charIndex = lm.characterIndexForGlyph(at: glyph)
-        guard charIndex < storage.length else { return nil }
-
-        let line = (storage.string as NSString).lineRange(for: NSRange(location: charIndex, length: 0))
-        var anchor: Int?
-        storage.enumerateAttribute(.vireoCheckbox, in: line) { value, range, stop in
-            if value != nil { anchor = range.location; stop.pointee = true }
-        }
-        guard let anchor, anchor < lm.numberOfGlyphs else { return nil }
-
-        let aGlyph = lm.glyphIndexForCharacter(at: anchor)
-        let lineRect = lm.lineFragmentRect(forGlyphAt: aGlyph, effectiveRange: nil)
-        let ax = lineRect.minX + lm.location(forGlyphAt: aGlyph).x
-        // The box is drawn just left of the anchor glyph.
-        guard local.x < ax, local.x > ax - 30,
-              local.y >= lineRect.minY, local.y <= lineRect.maxY else { return nil }
-        return anchor
+        return nearestAnchor(at: point, in: lm.checkboxRects)
     }
 
     private func linkDestination(at event: NSEvent) -> String? {
@@ -459,9 +443,24 @@ public final class MarkdownTextView: NSTextView {
     private func collapseTarget(at event: NSEvent) -> Int? {
         guard let lm = layoutManager as? MarkdownLayoutManager else { return nil }
         let point = convert(event.locationInWindow, from: nil)
-        for (anchor, rect) in lm.chevronRects where rect.contains(point) { return anchor }
-        for (anchor, rect) in lm.dotsRects where rect.contains(point) { return anchor }
-        return nil
+        return [nearestCandidate(at: point, in: lm.chevronRects),
+                nearestCandidate(at: point, in: lm.dotsRects)]
+            .compactMap { $0 }
+            .min { $0.distance < $1.distance }?.anchor
+    }
+
+    private func nearestAnchor(at point: NSPoint,
+                               in rects: [Int: NSRect]) -> Int? {
+        nearestCandidate(at: point, in: rects)?.anchor
+    }
+
+    private func nearestCandidate(at point: NSPoint,
+                                  in rects: [Int: NSRect])
+        -> (anchor: Int, distance: CGFloat)? {
+        rects.compactMap { anchor, rect -> (Int, CGFloat)? in
+            guard rect.contains(point) else { return nil }
+            return (anchor, hypot(rect.midX - point.x, rect.midY - point.y))
+        }.min { $0.1 < $1.1 }
     }
 
     private func imageAnchor(at event: NSEvent) -> Int? {
@@ -470,7 +469,12 @@ public final class MarkdownTextView: NSTextView {
         let point = convert(event.locationInWindow, from: nil)
         let origin = textContainerOrigin
         let containerPoint = NSPoint(x: point.x - origin.x, y: point.y - origin.y)
-        for (anchor, rect) in lm.imageRects where rect.contains(containerPoint) {
+        for (anchor, rect) in lm.imageRects {
+            let hitRect = NSRect(x: rect.midX - max(44, rect.width) / 2,
+                                 y: rect.midY - max(44, rect.height) / 2,
+                                 width: max(44, rect.width),
+                                 height: max(44, rect.height))
+            guard hitRect.contains(containerPoint) else { continue }
             guard anchor < storage.length,
                   storage.attribute(.vireoImage, at: anchor, effectiveRange: nil) != nil else {
                 continue
@@ -914,72 +918,105 @@ public final class MarkdownTextView: NSTextView {
 
     // MARK: Accessibility's visual text model
 
+    /// Tables are rendered as semantic accessibility children below, so their
+    /// transparent pipes/separator rows must not also leak through the text
+    /// area's backing-source representation.
+    private func accessibilityTextIndex() -> MarkerIndex? {
+        guard let storage = textStorage, let controller else { return nil }
+        let tableRanges = controller.parsed.tables.map(\.range)
+        if cachedAccessibilityBase != controller.markerIndex
+            || cachedAccessibilityTableRanges != tableRanges {
+            cachedAccessibilityBase = controller.markerIndex
+            cachedAccessibilityTableRanges = tableRanges
+            cachedAccessibilityIndex = MarkerIndex(
+                ranges: controller.markerIndex.ranges + tableRanges,
+                sourceLength: storage.length
+            )
+        }
+        return cachedAccessibilityIndex
+    }
+
     /// NSTextView normally exposes its backing string to VoiceOver. For Vireo,
     /// that is an implementation detail: accessibility must describe the same
     /// syntax-free document sighted users read and edit.
     public override func accessibilityValue() -> String? {
-        guard let storage = textStorage, let controller else { return super.accessibilityValue() }
-        return controller.markerIndex.visibleString(in: storage.string as NSString)
+        guard let storage = textStorage, let index = accessibilityTextIndex() else {
+            return super.accessibilityValue()
+        }
+        return index.visibleString(in: storage.string as NSString)
     }
 
     public override func accessibilityNumberOfCharacters() -> Int {
-        controller?.markerIndex.visibleLength ?? super.accessibilityNumberOfCharacters()
+        accessibilityTextIndex()?.visibleLength ?? super.accessibilityNumberOfCharacters()
     }
 
     public override func accessibilitySelectedText() -> String? {
-        guard let storage = textStorage, let controller else { return super.accessibilitySelectedText() }
-        return controller.markerIndex.visibleString(in: selectedRange(), source: storage.string as NSString)
+        guard let storage = textStorage, let index = accessibilityTextIndex() else {
+            return super.accessibilitySelectedText()
+        }
+        return index.visibleString(in: selectedRange(), source: storage.string as NSString)
     }
 
     public override func accessibilitySelectedTextRange() -> NSRange {
-        guard let controller else { return super.accessibilitySelectedTextRange() }
-        return controller.markerIndex.visibleRange(forSourceRange: selectedRange())
+        guard let index = accessibilityTextIndex() else {
+            return super.accessibilitySelectedTextRange()
+        }
+        return index.visibleRange(forSourceRange: selectedRange())
     }
 
     public override func setAccessibilitySelectedTextRange(_ range: NSRange) {
-        guard let controller else { super.setAccessibilitySelectedTextRange(range); return }
-        setSelectedRange(controller.markerIndex.sourceRange(forVisibleRange: range))
+        guard let index = accessibilityTextIndex() else {
+            super.setAccessibilitySelectedTextRange(range)
+            return
+        }
+        setSelectedRange(index.sourceRange(forVisibleRange: range))
     }
 
     public override func accessibilitySelectedTextRanges() -> [NSValue]? {
-        guard let controller else { return super.accessibilitySelectedTextRanges() }
+        guard let index = accessibilityTextIndex() else {
+            return super.accessibilitySelectedTextRanges()
+        }
         return selectedRanges.map {
-            NSValue(range: controller.markerIndex.visibleRange(forSourceRange: $0.rangeValue))
+            NSValue(range: index.visibleRange(forSourceRange: $0.rangeValue))
         }
     }
 
     public override func setAccessibilitySelectedTextRanges(_ ranges: [NSValue]?) {
-        guard let controller, let ranges, !ranges.isEmpty else {
+        guard let index = accessibilityTextIndex(), let ranges, !ranges.isEmpty else {
             super.setAccessibilitySelectedTextRanges(ranges)
             return
         }
         setSelectedRanges(ranges.map {
-            NSValue(range: controller.markerIndex.sourceRange(forVisibleRange: $0.rangeValue))
+            NSValue(range: index.sourceRange(forVisibleRange: $0.rangeValue))
         }, affinity: .downstream, stillSelecting: false)
     }
 
     public override func accessibilityVisibleCharacterRange() -> NSRange {
-        guard let controller else { return super.accessibilityVisibleCharacterRange() }
-        return controller.markerIndex.visibleRange(
+        guard let index = accessibilityTextIndex() else {
+            return super.accessibilityVisibleCharacterRange()
+        }
+        return index.visibleRange(
             forSourceRange: super.accessibilityVisibleCharacterRange()
         )
     }
 
     public override func accessibilityString(for range: NSRange) -> String? {
-        guard let storage = textStorage, let controller else { return super.accessibilityString(for: range) }
-        let visible = controller.markerIndex.visibleString(in: storage.string as NSString) as NSString
+        guard let storage = textStorage, let index = accessibilityTextIndex() else {
+            return super.accessibilityString(for: range)
+        }
+        let visible = index.visibleString(in: storage.string as NSString) as NSString
         let lower = min(max(0, range.location), visible.length)
         let upper = min(max(lower, range.upperBound), visible.length)
         return visible.substring(with: NSRange(location: lower, length: upper - lower))
     }
 
     public override func accessibilityAttributedString(for range: NSRange) -> NSAttributedString? {
-        guard let storage = textStorage, let controller else {
+        guard let storage = textStorage, let index = accessibilityTextIndex() else {
             return super.accessibilityAttributedString(for: range)
         }
-        let sourceRange = controller.markerIndex.sourceRange(forVisibleRange: range)
+        let sourceRange = index.sourceRange(forVisibleRange: range)
         let result = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: sourceRange))
-        for marker in controller.markerIndex.ranges.reversed() {
+        for marker in index.ranges.reversed() {
             let intersection = NSIntersectionRange(marker, sourceRange)
             if intersection.length > 0 {
                 result.deleteCharacters(in: NSRange(location: intersection.location - sourceRange.location,
@@ -990,8 +1027,10 @@ public final class MarkdownTextView: NSTextView {
     }
 
     public override func accessibilityRange(for index: Int) -> NSRange {
-        guard let storage = textStorage, let controller else { return super.accessibilityRange(for: index) }
-        let visible = controller.markerIndex.visibleString(in: storage.string as NSString) as NSString
+        guard let storage = textStorage, let textIndex = accessibilityTextIndex() else {
+            return super.accessibilityRange(for: index)
+        }
+        let visible = textIndex.visibleString(in: storage.string as NSString) as NSString
         guard index >= 0, index < visible.length else {
             return NSRange(location: min(max(0, index), visible.length), length: 0)
         }
@@ -999,26 +1038,244 @@ public final class MarkdownTextView: NSTextView {
     }
 
     public override func accessibilityRange(for point: NSPoint) -> NSRange {
-        guard let controller else { return super.accessibilityRange(for: point) }
-        return controller.markerIndex.visibleRange(
+        guard let index = accessibilityTextIndex() else {
+            return super.accessibilityRange(for: point)
+        }
+        return index.visibleRange(
             forSourceRange: super.accessibilityRange(for: point)
         )
     }
 
     public override func accessibilityFrame(for range: NSRange) -> NSRect {
-        guard let controller else { return super.accessibilityFrame(for: range) }
+        guard let index = accessibilityTextIndex() else {
+            return super.accessibilityFrame(for: range)
+        }
         return super.accessibilityFrame(
-            for: controller.markerIndex.sourceRange(forVisibleRange: range)
+            for: index.sourceRange(forVisibleRange: range)
         )
     }
 
     public override func accessibilityStyleRange(for index: Int) -> NSRange {
-        guard let controller else { return super.accessibilityStyleRange(for: index) }
-        let sourceIndex = controller.markerIndex.sourceOffset(forVisibleOffset: index,
-                                                               affinity: .downstream)
-        return controller.markerIndex.visibleRange(
+        guard let textIndex = accessibilityTextIndex() else {
+            return super.accessibilityStyleRange(for: index)
+        }
+        let sourceIndex = textIndex.sourceOffset(forVisibleOffset: index,
+                                                 affinity: .downstream)
+        return textIndex.visibleRange(
             forSourceRange: super.accessibilityStyleRange(for: sourceIndex)
         )
     }
 
+    // MARK: Accessibility for custom-drawn controls
+
+    public override func accessibilityChildren() -> [Any]? {
+        var children = super.accessibilityChildren() ?? []
+        guard let controller, let storage = textStorage,
+              let layout = layoutManager as? MarkdownLayoutManager else {
+            return children
+        }
+        var usedIDs: Set<String> = []
+        var ordered: [(location: Int, element: MarkdownAccessibilityElement)] = []
+
+        func element(id: String, role: NSAccessibility.Role, label: String,
+                     frame: NSRect, parent: Any? = nil, value: Any? = nil,
+                     help: String? = nil,
+                     press: (() -> Bool)? = nil) -> MarkdownAccessibilityElement {
+            let item = markdownAccessibilityElements[id]
+                ?? MarkdownAccessibilityElement()
+            markdownAccessibilityElements[id] = item
+            usedIDs.insert(id)
+            item.setAccessibilityIdentifier(id)
+            item.setAccessibilityRole(role)
+            item.setAccessibilityLabel(label)
+            item.setAccessibilityFrame(frame)
+            item.setAccessibilityParent(parent ?? self)
+            item.setAccessibilityValue(value)
+            item.setAccessibilityHelp(help)
+            item.setAccessibilityEnabled(true)
+            item.setAccessibilityChildren(nil)
+            item.performPress = press
+            return item
+        }
+
+        let source = storage.string as NSString
+        let baseIndex = controller.markerIndex
+
+        for task in controller.parsed.tasks {
+            guard let rect = layout.checkboxRects[task.anchor] else { continue }
+            let label = accessibilityLineLabel(at: task.anchor, source: source,
+                                               index: baseIndex)
+            let item = element(
+                id: "markdown-task-\(task.anchor)", role: .checkBox,
+                label: label.isEmpty ? "Task" : label,
+                frame: accessibilityScreenFrame(for: rect),
+                value: NSNumber(value: task.checked),
+                help: task.checked ? "Checked. Press to uncheck."
+                                   : "Not checked. Press to check.",
+                press: { [weak controller] in
+                    controller?.toggleTask(atAnchor: task.anchor)
+                    return controller != nil
+                }
+            )
+            ordered.append((task.anchor, item))
+        }
+
+        let folds: [(anchor: Int, label: String)] =
+            controller.parsed.listMarkers.compactMap { marker in
+                marker.subtreeRange == nil ? nil
+                    : (marker.anchor, accessibilityLineLabel(
+                        at: marker.anchor, source: source, index: baseIndex))
+            }
+            + controller.parsed.tasks.compactMap { task in
+                task.subtreeRange == nil ? nil
+                    : (task.anchor, accessibilityLineLabel(
+                        at: task.anchor, source: source, index: baseIndex))
+            }
+            + controller.parsed.headings.compactMap { heading in
+                heading.subtreeRange == nil ? nil
+                    : (heading.anchor, accessibilityLineLabel(
+                        at: heading.anchor, source: source, index: baseIndex))
+            }
+        for fold in folds {
+            guard let rect = layout.chevronRects[fold.anchor] else { continue }
+            let collapsed = layout.collapsedAnchors.contains(fold.anchor)
+            let verb = collapsed ? "Expand" : "Collapse"
+            let item = element(
+                id: "markdown-fold-\(fold.anchor)", role: .disclosureTriangle,
+                label: fold.label.isEmpty ? "\(verb) section"
+                                          : "\(verb) \(fold.label)",
+                frame: accessibilityScreenFrame(for: rect),
+                value: NSNumber(value: !collapsed),
+                help: "Press to \(verb.lowercased()) this section.",
+                press: { [weak controller] in
+                    controller?.toggleCollapse(anchor: fold.anchor)
+                    return controller != nil
+                }
+            )
+            ordered.append((fold.anchor, item))
+        }
+
+        for image in controller.parsed.images {
+            guard let rect = layout.imageRects[image.anchor] else { continue }
+            let alt = image.alt.trimmingCharacters(in: .whitespacesAndNewlines)
+            let item = element(
+                id: "markdown-image-\(image.anchor)", role: .image,
+                label: alt.isEmpty ? "Image" : alt,
+                frame: accessibilityScreenFrame(for: rect),
+                help: "Image source: \(image.source). Press to edit.",
+                press: { [weak controller] in
+                    controller?.editImage(atAnchor: image.anchor)
+                    return controller != nil
+                }
+            )
+            ordered.append((image.anchor, item))
+        }
+
+        let visibleSource = super.accessibilityVisibleCharacterRange()
+        for link in controller.parsed.links where visibleSource.length == 0
+            || NSIntersectionRange(link.range, visibleSource).length > 0 {
+            let frame = super.accessibilityFrame(for: link.labelRange)
+            guard !frame.isEmpty else { continue }
+            let item = element(
+                id: "markdown-link-\(link.range.location)", role: .link,
+                label: link.label.isEmpty ? link.destination : link.label,
+                frame: frame, value: link.destination,
+                help: "Opens \(link.destination).",
+                press: { [weak controller] in
+                    guard let open = controller?.onOpenLink else { return false }
+                    open(link.destination)
+                    return true
+                }
+            )
+            ordered.append((link.range.location, item))
+        }
+
+        for table in controller.parsed.tables.sorted(by: { $0.anchor < $1.anchor }) {
+            guard let tableRect = layout.tableRects[table.anchor] else { continue }
+            let tableElement = element(
+                id: "markdown-table-\(table.anchor)", role: .table,
+                label: "Table, \(table.rows.count) rows, \(table.columnCount) columns",
+                frame: accessibilityScreenFrame(for: tableRect)
+            )
+            var rowElements: [MarkdownAccessibilityElement] = []
+            for rowIndex in table.rows.indices {
+                let geometries = layout.tableCellGeometries.values
+                    .filter { $0.id.tableAnchor == table.anchor && $0.id.row == rowIndex }
+                    .sorted { $0.id.column < $1.id.column }
+                guard !geometries.isEmpty else { continue }
+                let rowRect = geometries.dropFirst().reduce(geometries[0].rect) {
+                    NSUnionRect($0, $1.rect)
+                }
+                let rowElement = element(
+                    id: "markdown-table-\(table.anchor)-row-\(rowIndex)",
+                    role: .row,
+                    label: rowIndex == 0 ? "Header row" : "Row \(rowIndex)",
+                    frame: accessibilityScreenFrame(for: rowRect),
+                    parent: tableElement
+                )
+                var cells: [MarkdownAccessibilityElement] = []
+                for geometry in geometries {
+                    guard table.rows.indices.contains(geometry.id.row),
+                          let cell = table.rows[geometry.id.row].cells.first(where: {
+                              $0.column == geometry.id.column
+                          }) else { continue }
+                    let cellValue = baseIndex.visibleString(in: cell.range, source: source)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    let cellLabel = geometry.isHeader
+                        ? "Column \(geometry.id.column + 1) header"
+                        : "Row \(geometry.id.row), column \(geometry.id.column + 1)"
+                    let cellElement = element(
+                        id: "markdown-table-\(table.anchor)-cell-\(geometry.id.row)-\(geometry.id.column)",
+                        role: .cell, label: cellLabel,
+                        frame: accessibilityScreenFrame(for: geometry.rect),
+                        parent: rowElement, value: cellValue,
+                        help: "Press to edit this table cell.",
+                        press: { [weak controller] in
+                            controller?.beginTableCellEditing(geometry)
+                            return controller != nil
+                        }
+                    )
+                    cells.append(cellElement)
+                }
+                rowElement.setAccessibilityChildren(cells)
+                rowElements.append(rowElement)
+            }
+            tableElement.setAccessibilityChildren(rowElements)
+            ordered.append((table.anchor, tableElement))
+        }
+
+        markdownAccessibilityElements = markdownAccessibilityElements.filter {
+            usedIDs.contains($0.key)
+        }
+        children.append(contentsOf: ordered.sorted { lhs, rhs in
+            if lhs.location == rhs.location {
+                return (lhs.element.accessibilityIdentifier() ?? "")
+                    < (rhs.element.accessibilityIdentifier() ?? "")
+            }
+            return lhs.location < rhs.location
+        }.map(\.element))
+        return children
+    }
+
+    private func accessibilityLineLabel(at anchor: Int, source: NSString,
+                                        index: MarkerIndex) -> String {
+        guard anchor <= source.length else { return "" }
+        let location = min(anchor, max(0, source.length - 1))
+        let line = source.lineRange(for: NSRange(location: location, length: 0))
+        return index.visibleString(in: line, source: source)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func accessibilityScreenFrame(for viewRect: NSRect) -> NSRect {
+        guard let window else { return viewRect }
+        return window.convertToScreen(convert(viewRect, to: nil))
+    }
+
+    func notifyAccessibilityLayoutChanged() {
+        NSAccessibility.post(element: self, notification: .layoutChanged)
+    }
+
+    // NB: no didChangeText override — the Coordinator's textDidChange
+    // notification already triggers the (synchronous) restyle; overriding here
+    // too would restyle every keystroke twice.
 }

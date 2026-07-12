@@ -133,6 +133,10 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         tableCellGeometries.removeAll(keepingCapacity: true)
         tableRects.removeAll(keepingCapacity: true)
         tableScrollGeometries.removeAll(keepingCapacity: true)
+        chevronRects.removeAll(keepingCapacity: true)
+        dotsRects.removeAll(keepingCapacity: true)
+        checkboxRects.removeAll(keepingCapacity: true)
+        imageRects.removeAll(keepingCapacity: true)
     }
 
     public func tableCell(at point: NSPoint) -> TableCellGeometry? {
@@ -212,6 +216,7 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     /// chevron toggles and collapsed-`…` expanders, keyed by item anchor.
     public private(set) var chevronRects: [Int: NSRect] = [:]
     public private(set) var dotsRects: [Int: NSRect] = [:]
+    public private(set) var checkboxRects: [Int: NSRect] = [:]
     /// Rendered image hit targets in text-container coordinates, keyed by source
     /// anchor. Keeping these independent of a particular drawing pass matters:
     /// AppKit may translate `origin` while drawing a scrolled dirty region.
@@ -687,12 +692,14 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let hovered = hoveredAnchor == anchor
         chevronRects[anchor] = nil
         dotsRects[anchor] = nil
-        guard collapsed || hovered, subtree(forAnchor: anchor) != nil,
+        guard subtree(forAnchor: anchor) != nil,
               let geo = markerGeometry(anchor: anchor, markerText: markerText) else { return }
 
         // Chevron sits left of the drawn marker; points right when collapsed.
         let center = NSPoint(x: origin.x + geo.textX - geo.markerWidth - 5 - 12,
                              y: origin.y + geo.baseline - bulletFont.capHeight / 2)
+        chevronRects[anchor] = minimumHitRect(centeredAt: center)
+        guard collapsed || hovered else { return }
         let chevron = NSBezierPath()
         chevron.lineWidth = 1.8
         chevron.lineCapStyle = .round
@@ -708,8 +715,6 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         }
         (collapsed ? NSColor.controlAccentColor : NSColor.secondaryLabelColor).setStroke()
         chevron.stroke()
-        chevronRects[anchor] = NSRect(x: center.x - 8, y: center.y - 8, width: 16, height: 16)
-
         // `…` after the collapsed line's text; click to expand.
         if collapsed, anchor < numberOfGlyphs {
             let glyph = glyphIndexForCharacter(at: anchor)
@@ -721,7 +726,9 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
             let at = NSPoint(x: origin.x + used.maxX + 8,
                              y: origin.y + geo.baseline - bulletFont.ascender)
             dots.draw(at: at, withAttributes: attrs)
-            dotsRects[anchor] = NSRect(x: at.x - 4, y: at.y, width: size.width + 12, height: size.height)
+            let visual = NSRect(x: at.x - 4, y: at.y,
+                                width: size.width + 12, height: size.height)
+            dotsRects[anchor] = minimumHitRect(containing: visual)
         }
     }
 
@@ -732,7 +739,7 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let hovered = hoveredAnchor == anchor
         chevronRects[anchor] = nil
         dotsRects[anchor] = nil
-        guard collapsed || hovered, subtree(forAnchor: anchor) != nil,
+        guard subtree(forAnchor: anchor) != nil,
               anchor < numberOfGlyphs else { return }
         let glyph = glyphIndexForCharacter(at: anchor)
         guard glyph < numberOfGlyphs else { return }
@@ -745,6 +752,8 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         // Chevron in the left margin of the heading text; points right when
         // collapsed (matches the list chevron's geometry and colors).
         let center = NSPoint(x: textX - 14, y: baseline - font.capHeight / 2)
+        chevronRects[anchor] = minimumHitRect(centeredAt: center)
+        guard collapsed || hovered else { return }
         if collapsed {
             let d: CGFloat = 18
             NSColor.controlAccentColor.withAlphaComponent(0.15).setFill()
@@ -766,8 +775,6 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         }
         (collapsed ? NSColor.controlAccentColor : NSColor.secondaryLabelColor).setStroke()
         chevron.stroke()
-        chevronRects[anchor] = NSRect(x: center.x - 8, y: center.y - 8, width: 16, height: 16)
-
         // `…` after the collapsed heading's text; click to expand.
         if collapsed {
             let used = lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
@@ -777,7 +784,9 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
             let size = dots.size(withAttributes: attrs)
             let at = NSPoint(x: origin.x + used.maxX + 8, y: baseline - font.ascender)
             dots.draw(at: at, withAttributes: attrs)
-            dotsRects[anchor] = NSRect(x: at.x - 4, y: at.y, width: size.width + 12, height: size.height)
+            let visual = NSRect(x: at.x - 4, y: at.y,
+                                width: size.width + 12, height: size.height)
+            dotsRects[anchor] = minimumHitRect(containing: visual)
         }
     }
 
@@ -1143,6 +1152,7 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     /// checkmark when checked; bordered empty box when not — matching modern
     /// macOS checkbox appearance (and the user's accent color).
     private func drawCheckbox(checked: Bool, atCharIndex charIndex: Int, origin: NSPoint) {
+        checkboxRects[charIndex] = nil
         guard charIndex < numberOfGlyphs else { return }
         let glyph = glyphIndexForCharacter(at: charIndex)
         guard glyph < numberOfGlyphs else { return }
@@ -1156,6 +1166,7 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
             + markerBaselineOffset(glyph: glyph, charIndex: charIndex, lineRect: lineRect)
         let y = baseline - bulletFont.capHeight / 2 - size / 2
         let rect = NSRect(x: x, y: y, width: size, height: size)
+        checkboxRects[charIndex] = minimumHitRect(containing: rect)
         let box = NSBezierPath(roundedRect: rect, xRadius: size * 0.28, yRadius: size * 0.28)
 
         if checked {
@@ -1178,6 +1189,20 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
             box.lineWidth = 1
             box.stroke()
         }
+    }
+
+    private func minimumHitRect(centeredAt center: NSPoint,
+                                size: CGFloat = 40) -> NSRect {
+        NSRect(x: center.x - size / 2, y: center.y - size / 2,
+               width: size, height: size)
+    }
+
+    private func minimumHitRect(containing rect: NSRect,
+                                size: CGFloat = 40) -> NSRect {
+        NSRect(x: rect.midX - max(size, rect.width) / 2,
+               y: rect.midY - max(size, rect.height) / 2,
+               width: max(size, rect.width),
+               height: max(size, rect.height))
     }
 
     private func drawLeftMarker(_ s: String, atCharIndex charIndex: Int, origin: NSPoint, color: NSColor) {

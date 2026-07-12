@@ -102,6 +102,7 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
         menuButton.target = self
         menuButton.action = #selector(showActions(_:))
         menuButton.toolTip = "Table cell actions"
+        menuButton.setAccessibilityLabel("Table cell actions")
         addSubview(menuButton)
         updateAppearanceColors()
     }

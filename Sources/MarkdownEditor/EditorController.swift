@@ -374,6 +374,7 @@ public final class EditorController: ObservableObject {
         layoutManager?.collapsedAnchors = collapsedAnchors
         refreshTypingAttributes()
         tv.needsDisplay = true
+        tv.notifyAccessibilityLayoutChanged()
     }
 
     // MARK: Rich table editing
@@ -1013,6 +1014,13 @@ public final class EditorController: ObservableObject {
         var targetY = rect.minY + tv.textContainerInset.height - 28 // breathing room above
         let maxY = max(0, tv.frame.height - scroll.contentSize.height)
         targetY = max(0, min(targetY, maxY))
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            scroll.contentView.setBoundsOrigin(
+                NSPoint(x: scroll.contentView.bounds.origin.x, y: targetY)
+            )
+            scroll.reflectScrolledClipView(scroll.contentView)
+            return
+        }
 
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.35
