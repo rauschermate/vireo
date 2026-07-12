@@ -43,6 +43,9 @@ public final class EditorController: ObservableObject {
     /// Collapsed list items (absolute anchors) and the hover target.
     private var collapsedAnchors: Set<Int> = []
     private var lastSourceLength = 0
+    private var pendingEdit: SourceEdit?
+    private var pendingEditIsAmbiguous = false
+    public private(set) var lastIncrementalStrategy: IncrementalStrategy = .full
 
     public init() {
         imageLoader.onChange = { [weak self] urls in self?.imagesDidLoad(urls) }
@@ -144,11 +147,15 @@ public final class EditorController: ObservableObject {
     /// attributes mid-composition breaks marked text, so those restyles wait
     /// until the composition commits (the commit fires textDidChange again).
     public func scheduleRestyle() {
+        let pipeline = VireoPerformanceTrace.begin("Edit Pipeline")
+        defer { VireoPerformanceTrace.end("Edit Pipeline", pipeline) }
         guard let tv = textView, let storage = tv.textStorage else { return }
-        onSourceChange?(storage.string)
+        VireoPerformanceTrace.event("Source Notification")
+        let source = storage.string
+        onSourceChange?(source)
 
         if tv.hasMarkedText() { return }
-        restyleAfterEdit()
+        restyleAfterEdit(source: source)
     }
 
     /// Capture marker presentation before an edit mutates the source. Existing
@@ -170,9 +177,12 @@ public final class EditorController: ObservableObject {
 
     /// Edit path: incremental parse; re-apply attributes only over the dirty
     /// region (the whole document when the parser had to fall back).
-    private func restyleAfterEdit() {
+    private func restyleAfterEdit(source: String) {
         guard let tv = textView, let storage = tv.textStorage else { return }
-        let update = incremental.update(storage.string)
+        let parse = VireoPerformanceTrace.begin("Parse and Splice")
+        let update = incremental.update(source, edit: consumePendingEdit())
+        VireoPerformanceTrace.end("Parse and Splice", parse)
+        lastIncrementalStrategy = update.strategy
         parsed = update.parsed
         updateMarkerPresentation(after: update, storage: storage)
         onParsed?(parsed)
@@ -180,6 +190,35 @@ public final class EditorController: ObservableObject {
                               delta: storage.length - lastSourceLength)
         lastSourceLength = storage.length
         applyStyles(dirty: update.dirtyRange)
+    }
+
+    /// Called by `MarkdownTextView.shouldChangeText` before AppKit mutates the
+    /// backing storage. One approved replacement can flow straight into the
+    /// incremental parser; multiple replacements before one change
+    /// notification deliberately fall back to the safe source diff.
+    func recordPendingEdit(range: NSRange, replacement: String, oldSourceLength: Int) {
+        let edit = SourceEdit(oldRange: range, replacement: replacement,
+                              oldSourceLength: oldSourceLength)
+        if pendingEdit == edit { return }
+        if pendingEdit != nil || pendingEditIsAmbiguous {
+            pendingEdit = nil
+            pendingEditIsAmbiguous = true
+        } else {
+            pendingEdit = edit
+        }
+    }
+
+    private func consumePendingEdit() -> SourceEdit? {
+        defer {
+            pendingEdit = nil
+            pendingEditIsAmbiguous = false
+        }
+        return pendingEditIsAmbiguous ? nil : pendingEdit
+    }
+
+    private func discardPendingEdit() {
+        pendingEdit = nil
+        pendingEditIsAmbiguous = false
     }
 
     /// The fold subtree owned by `anchor` — list item, task or heading.
@@ -262,6 +301,7 @@ public final class EditorController: ObservableObject {
     public func restyle() {
         guard let tv = textView, let storage = tv.textStorage else { return }
         let update = incremental.update(storage.string)
+        lastIncrementalStrategy = update.strategy
         parsed = update.parsed
         // A theme/image restyle does not end an active repair transaction.
         if presentationMarkerRanges.isEmpty {
@@ -269,6 +309,7 @@ public final class EditorController: ObservableObject {
         }
         markerIndex = MarkerIndex(ranges: presentationMarkerRanges, sourceLength: storage.length)
         onParsed?(parsed)
+        lastSourceLength = storage.length
         applyStyles(dirty: nil)
     }
 
@@ -286,6 +327,8 @@ public final class EditorController: ObservableObject {
     }
 
     private func applyStyles(windows requestedWindows: [NSRange]?) {
+        let signpost = VireoPerformanceTrace.begin("Live Attribute Apply")
+        defer { VireoPerformanceTrace.end("Live Attribute Apply", signpost) }
         guard let tv = textView, let storage = tv.textStorage else { return }
         let full = NSRange(location: 0, length: storage.length)
         let rawWindows = requestedWindows ?? [full]
@@ -309,17 +352,8 @@ public final class EditorController: ObservableObject {
                 renderer.originOffset = window.location
                 let sliceSource = (storage.string as NSString).substring(with: window)
                 let sliceParsed = window == full ? presented : presented.slice(window)
-                let rendered = renderer.render(source: sliceSource, parsed: sliceParsed)
-
-                rendered.enumerateAttributes(
-                    in: NSRange(location: 0, length: rendered.length)
-                ) { attrs, range, _ in
-                    storage.setAttributes(
-                        attrs,
-                        range: NSRange(location: range.location + window.location,
-                                       length: range.length)
-                    )
-                }
+                renderer.apply(source: sliceSource, parsed: sliceParsed,
+                               to: storage, at: window.location)
             }
             storage.endEditing()
         }
@@ -864,6 +898,7 @@ public final class EditorController: ObservableObject {
         guard let tv = textView, let storage = tv.textStorage else { return }
         let sel = tv.selectedRange()
         storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: s)
+        discardPendingEdit()
         incremental.reset() // wholesale replacement — diffing history is useless
         presentationMarkerRanges = []
         provisionalMarkerRanges = nil

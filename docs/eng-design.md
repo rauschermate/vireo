@@ -269,15 +269,37 @@ Where the shipped implementation intentionally differs from the sections above:
   compact cell menu adds/deletes rows or columns and changes alignment. Inline
   formatting and link destinations survive visible-text edits. Raw pipes and the
   separator row are never revealed.
-- **Incremental re-parse (§5) — implemented.** `IncrementalParser` diffs each
-  edit against the previous source, expands to blank-line/block boundaries
+- **Incremental re-parse (§5) — implemented.** `MarkdownTextView` passes a
+  single AppKit-approved UTF-16 edit directly to `IncrementalParser`, avoiding
+  a full-source allocation and prefix/suffix scan for ordinary typing. IME,
+  undo, and multi-edit transactions retain the safe source-diff fallback. The
+  parser expands the edit to blank-line/block boundaries
   (blocks may span blank lines: fences, HTML), re-parses only that slice with
   cmark, and splices it into the previous parse; attributes are re-applied only
-  over the dirty range, bounding TextKit's layout invalidation. Non-local edits
+  over the dirty range, bounding TextKit's layout invalidation. Sorted,
+  non-overlapping run collections use binary-search slicing rather than a
+  document-wide filter. Non-local edits
   (unbalanced fences, link reference definitions) fall back to a full parse.
   Contract enforced by tests: incremental output must be *identical* to a full
   re-parse (scenario + fuzz coverage). Measured keystroke cost: ~4.5 s → ~16 ms
   on a 1.4 MB document, ~240 ms → ~1.5 ms at 162 KB (release).
+- **Full rendering performance (§4.5) — measured and budgeted.** Rendering now
+  builds a sorted mutation plan, resolves overlapping block/inline/custom
+  attributes in one boundary sweep, and applies the final runs directly to live
+  `NSTextStorage`; the editor no longer builds an intermediate attributed string
+  and enumerates it back into storage. Fonts, dynamic colors, dictionaries, and
+  paragraph styles are cached once per render. Fenced blocks above 256 KiB keep
+  their code font/surface but skip synchronous regex token coloring. Instruments
+  signposts cover source notification, parse/splice, style application, glyph
+  generation, and visible draw.
+  - Run the deterministic release suite with
+    `swift run -c release VireoSnapshot --benchmark-suite --samples 5`.
+  - Export the same large sources for manual app review with
+    `swift run -c release VireoSnapshot --write-benchmark-fixtures <directory>`.
+  - Add `--assert-budgets` to enforce attributed-render p95 ≤ 1 s and current
+    open-to-pixel p95 ≤ 4 s on the deliberately adversarial 1.68 MiB dense
+    fixture. The combined gate includes parsing, direct live application,
+    initial viewport layout, and visible drawing.
 - **Liquid Glass (§8.0).** The floating toolbar uses `NSGlassEffectView` on
   macOS 26+ (material fallback on 15); sidebars use standard system materials.
 - **Quick Look thumbnail extension** (§9 stretch) not built.

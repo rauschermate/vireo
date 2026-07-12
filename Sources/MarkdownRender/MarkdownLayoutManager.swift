@@ -250,6 +250,8 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
                               characterIndexes charIndexes: UnsafePointer<Int>,
                               font: NSFont,
                               forGlyphRange glyphRange: NSRange) -> Int {
+        let signpost = VireoPerformanceTrace.begin("Glyph Generation")
+        defer { VireoPerformanceTrace.end("Glyph Generation", signpost) }
         guard let storage = textStorage else { return 0 }
         let count = glyphRange.length
         var newProps = [NSLayoutManager.GlyphProperty](repeating: [], count: count)
@@ -303,6 +305,8 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     // MARK: Draw bullets / checkboxes / images
 
     public override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
+        let signpost = VireoPerformanceTrace.begin("Visible Draw")
+        defer { VireoPerformanceTrace.end("Visible Draw", signpost) }
         super.drawGlyphs(forGlyphRange: glyphsToShow, at: origin)
         guard let storage = textStorage else { return }
         let charRange = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)

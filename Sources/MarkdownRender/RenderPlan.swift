@@ -1,0 +1,310 @@
+import AppKit
+import MarkdownEngine
+
+/// Final attributed-string mutations expressed once, then resolved in a sorted
+/// boundary sweep. The old renderer repeatedly split and re-merged a large
+/// attributed string for every overlapping AST run; this plan resolves the
+/// winning attributes before touching AppKit storage.
+@MainActor
+struct RenderPlan {
+    private struct Mutation {
+        let range: NSRange
+        let additions: [NSAttributedString.Key: Any]
+        let removals: [NSAttributedString.Key]
+    }
+
+    private struct Event {
+        let position: Int
+        let mutation: Int
+        let starts: Bool
+    }
+
+    let length: Int
+    let baseAttributes: [NSAttributedString.Key: Any]
+    private var mutations: [Mutation] = []
+    private static let trueValue = NSNumber(value: true)
+
+    init(source: String, parsed: ParsedMarkdown, theme: Theme,
+         baseURL: URL?, imageLoader: ImageLoader?, isDark: Bool,
+         tableScrollerGutter: CGFloat, originOffset: Int,
+         collapsedAnchors: Set<Int>) {
+        let ns = source as NSString
+        length = ns.length
+        let styles = RenderStyleCache(theme: theme, parsed: parsed,
+                                      tableScrollerGutter: tableScrollerGutter)
+        baseAttributes = styles.bodyAttributes
+        guard length > 0 else { return }
+
+        // 1. Block styles.
+        for block in parsed.blockRuns {
+            let range = NSIntersectionRange(block.range, NSRange(location: 0, length: length))
+            guard range.length > 0 else { continue }
+            switch block.kind {
+            case .heading(let level):
+                if let attributes = styles.headingAttributes[level] {
+                    add(range, attributes)
+                }
+            case .paragraph:
+                break
+            case .blockQuote:
+                add(range, styles.quoteAttributes)
+            case .codeBlock:
+                add(range, styles.codeBlockAttributes)
+            case .listItem(let depth, _):
+                if let paragraph = styles.listParagraphs[depth] {
+                    add(range, [.paragraphStyle: paragraph])
+                }
+            case .tableRow(let isHeader):
+                add(range, isHeader ? styles.tableHeaderRowAttributes
+                                    : styles.tableBodyRowAttributes)
+            case .thematicBreak:
+                add(range, styles.ruleAttributes)
+            }
+        }
+
+        // 2. Inline styles.
+        for run in parsed.inlineRuns where run.range.upperBound <= length {
+            var attributes: [NSAttributedString.Key: Any]
+            if run.code {
+                attributes = styles.inlineCodeAttributes
+            } else {
+                attributes = [.font: styles.inlineFont(bold: run.bold, italic: run.italic)]
+            }
+            if run.strikethrough {
+                attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+            }
+            if let link = run.link {
+                attributes[.foregroundColor] = theme.linkColor
+                attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+                attributes[.vireoLink] = link as NSString
+                attributes[.toolTip] = "⌘-click to open \(link)" as NSString
+            }
+            add(run.range, attributes)
+        }
+
+        // 3. Code tokens, with an explicit large-block degradation.
+        let highlighter = CodeHighlighter()
+        for block in parsed.blockRuns {
+            guard case .codeBlock = block.kind else { continue }
+            let range = NSIntersectionRange(block.range, NSRange(location: 0, length: length))
+            guard range.length > 0,
+                  range.length <= MarkdownRenderer.syntaxHighlightingUTF16Limit else { continue }
+            let code = ns.substring(with: range)
+            for token in highlighter.tokens(in: code, offset: range.location, isDark: isDark)
+            where token.range.upperBound <= length {
+                add(token.range, [.foregroundColor: token.color])
+            }
+        }
+
+        // 4. Image line geometry and draw anchors.
+        for image in parsed.images where image.range.upperBound <= length {
+            let loaded = imageLoader?.image(forSource: image.source, baseURL: baseURL)
+            let paragraph = NSMutableParagraphStyle()
+            let height: CGFloat
+            if let loaded, loaded.size.width > 0 {
+                let scale = min(1, theme.contentMaxWidth / loaded.size.width)
+                height = max(24, loaded.size.height * scale) + 12
+            } else {
+                height = 44
+            }
+            paragraph.minimumLineHeight = height
+            paragraph.maximumLineHeight = height
+            add(image.range, [.paragraphStyle: paragraph])
+            add(NSRange(location: image.anchor, length: 1),
+                [.vireoImage: image.source as NSString,
+                 .vireoImageAlt: image.alt as NSString])
+        }
+
+        // 5. Tables.
+        for table in parsed.tables {
+            let range = NSIntersectionRange(table.range, NSRange(location: 0, length: length))
+            guard range.length > 0 else { continue }
+            add(range, [
+                .foregroundColor: NSColor.clear,
+                .paragraphStyle: styles.tableRowParagraph,
+            ])
+            if let separator = table.separatorRange, separator.upperBound <= length {
+                add(separator, [.paragraphStyle: styles.tableSeparatorParagraph])
+            }
+            if tableScrollerGutter > 0,
+               let lastCell = table.rows.last?.cells.first,
+               lastCell.range.location < length {
+                let lastLine = ns.lineRange(
+                    for: NSRange(location: lastCell.range.location, length: 0)
+                )
+                let visibleLastLine = NSIntersectionRange(lastLine, range)
+                if visibleLastLine.length > 0 {
+                    add(visibleLastLine,
+                        [.paragraphStyle: styles.tableLastRowParagraph])
+                }
+            }
+            if table.anchor < length {
+                add(NSRange(location: table.anchor, length: 1),
+                    [.vireoTable: NSNumber(value: originOffset + table.anchor)])
+            }
+        }
+
+        // 6–8. Drawn list/task/heading anchors.
+        for marker in parsed.listMarkers where marker.anchor < length {
+            add(NSRange(location: marker.anchor, length: 1),
+                [.vireoBullet: marker.text as NSString])
+        }
+        for task in parsed.tasks where task.anchor < length {
+            add(NSRange(location: task.anchor, length: 1),
+                [.vireoCheckbox: NSNumber(value: task.checked)])
+        }
+        for heading in parsed.headings
+        where heading.anchor < length && heading.subtreeRange != nil {
+            add(NSRange(location: heading.anchor, length: 1),
+                [.vireoHeading: NSNumber(value: heading.level)])
+        }
+
+        // 9. Coalesced hidden syntax ranges.
+        let markers = RangeSet(parsed.markerRanges)
+        for range in markers.ranges where range.upperBound <= length {
+            add(range, [.vireoMarker: Self.trueValue])
+        }
+
+        // 10. Typographic prose arrows, classified from source ranges rather
+        // than attributed-run lookups.
+        var excluded = markers.ranges
+        excluded.append(contentsOf: parsed.inlineRuns.compactMap { $0.code ? $0.range : nil })
+        excluded.append(contentsOf: parsed.blockRuns.compactMap {
+            if case .codeBlock = $0.kind { return $0.range }
+            return nil
+        })
+        excluded.append(contentsOf: parsed.tables.map(\.range))
+        excluded.append(contentsOf: parsed.images.map(\.range))
+        let arrowExclusions = RangeSet(excluded)
+        var search = NSRange(location: 0, length: length)
+        while search.length > 0 {
+            let arrow = ns.range(of: "->", options: [], range: search)
+            guard arrow.location != NSNotFound else { break }
+            search = NSRange(location: arrow.upperBound, length: length - arrow.upperBound)
+            guard !arrowExclusions.contains(arrow.location),
+                  !arrowExclusions.contains(arrow.location + 1) else { continue }
+            add(NSRange(location: arrow.location, length: 1),
+                [.vireoArrow: Self.trueValue])
+            add(NSRange(location: arrow.location + 1, length: 1),
+                [.vireoMarker: Self.trueValue])
+        }
+
+        // 11. Folded subtrees win last, including removal of code backgrounds.
+        if !collapsedAnchors.isEmpty {
+            let subtrees = parsed.listMarkers.map { ($0.anchor, $0.subtreeRange) }
+                + parsed.tasks.map { ($0.anchor, $0.subtreeRange) }
+                + parsed.headings.map { ($0.anchor, $0.subtreeRange) }
+            let hidden = RangeSet(subtrees.compactMap { anchor, subtree -> NSRange? in
+                guard collapsedAnchors.contains(originOffset + anchor),
+                      var subtree, subtree.upperBound <= length else { return nil }
+                if subtree.location > 0 {
+                    subtree = NSRange(location: subtree.location - 1,
+                                      length: subtree.length + 1)
+                }
+                return subtree
+            })
+            for range in hidden.ranges {
+                add(range, [
+                    .vireoCollapsed: Self.trueValue,
+                    .paragraphStyle: styles.collapsedParagraph,
+                ], removing: [.backgroundColor])
+            }
+        }
+    }
+
+    mutating private func add(_ range: NSRange,
+                              _ attributes: [NSAttributedString.Key: Any],
+                              removing: [NSAttributedString.Key] = []) {
+        let clipped = NSIntersectionRange(range, NSRange(location: 0, length: length))
+        guard clipped.length > 0 else { return }
+        mutations.append(Mutation(range: clipped, additions: attributes,
+                                  removals: removing))
+    }
+
+    func apply(to text: NSMutableAttributedString, at offset: Int) {
+        guard offset >= 0, offset + length <= text.length else { return }
+        text.beginEditing()
+        defer { text.endEditing() }
+        enumerateRuns { range, attributes in
+            text.setAttributes(attributes,
+                               range: NSRange(location: range.location + offset,
+                                              length: range.length))
+        }
+    }
+
+    func materialize(source: String) -> NSAttributedString {
+        guard length > 0 else { return NSAttributedString(string: source) }
+        let ns = source as NSString
+        let result = NSMutableAttributedString()
+        result.beginEditing()
+        enumerateRuns { range, attributes in
+            result.append(NSAttributedString(string: ns.substring(with: range),
+                                             attributes: attributes))
+        }
+        result.endEditing()
+        return result
+    }
+
+    private func enumerateRuns(_ body: (NSRange, [NSAttributedString.Key: Any]) -> Void) {
+        var events: [Event] = []
+        events.reserveCapacity(mutations.count * 2)
+        for (index, mutation) in mutations.enumerated() {
+            events.append(Event(position: mutation.range.location,
+                                mutation: index, starts: true))
+            events.append(Event(position: mutation.range.upperBound,
+                                mutation: index, starts: false))
+        }
+        events.sort {
+            if $0.position != $1.position { return $0.position < $1.position }
+            if $0.starts != $1.starts { return !$0.starts } // endings first
+            return $0.mutation < $1.mutation
+        }
+
+        var active: [Int] = [] // sorted by mutation/application order
+        var eventIndex = 0
+        var cursor = 0
+        while cursor < length {
+            while eventIndex < events.count, events[eventIndex].position == cursor {
+                let event = events[eventIndex]
+                if event.starts {
+                    let insertion = active.partitioningIndex { $0 >= event.mutation }
+                    active.insert(event.mutation, at: insertion)
+                } else if let removal = active.binaryIndex(of: event.mutation) {
+                    active.remove(at: removal)
+                }
+                eventIndex += 1
+            }
+            let next = min(length, eventIndex < events.count ? events[eventIndex].position : length)
+            guard next > cursor else {
+                cursor += 1
+                continue
+            }
+            var attributes = baseAttributes
+            for index in active {
+                let mutation = mutations[index]
+                for key in mutation.removals { attributes.removeValue(forKey: key) }
+                for (key, value) in mutation.additions { attributes[key] = value }
+            }
+            body(NSRange(location: cursor, length: next - cursor), attributes)
+            cursor = next
+        }
+    }
+}
+
+private extension Array where Element == Int {
+    func partitioningIndex(where predicate: (Int) -> Bool) -> Int {
+        var low = 0
+        var high = count
+        while low < high {
+            let middle = (low + high) / 2
+            if predicate(self[middle]) { high = middle }
+            else { low = middle + 1 }
+        }
+        return low
+    }
+
+    func binaryIndex(of value: Int) -> Int? {
+        let index = partitioningIndex { $0 >= value }
+        return index < count && self[index] == value ? index : nil
+    }
+}

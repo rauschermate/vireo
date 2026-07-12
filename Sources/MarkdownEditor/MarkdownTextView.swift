@@ -375,9 +375,13 @@ public final class MarkdownTextView: NSTextView {
         syntaxFreeFinder?.noteClientStringWillChange()
         let allowed = super.shouldChangeText(in: affectedCharRange,
                                              replacementString: replacementString)
-        if allowed, let replacementString {
+        if allowed, let storage = textStorage {
+            let replacement = replacementString ?? ""
             controller?.prepareForEdit(in: affectedCharRange,
-                                       replacementString: replacementString)
+                                       replacementString: replacement)
+            controller?.recordPendingEdit(range: affectedCharRange,
+                                          replacement: replacement,
+                                          oldSourceLength: storage.length)
         }
         return allowed
     }
