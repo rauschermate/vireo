@@ -216,6 +216,16 @@ public final class IncrementalParser {
             old.images.filter { keep($0.range) }
             + local.images.map { var x = $0; x.range = shift(x.range, newStart); x.anchor += newStart; return x }
             + old.images.filter { keepAfter($0.range) }.map { var x = $0; x.range = shift(x.range, delta); x.anchor += delta; return x }
+        func shiftLink(_ link: LinkRun, _ d: Int) -> LinkRun {
+            var x = link
+            x.range = shift(x.range, d)
+            x.labelRange = shift(x.labelRange, d)
+            return x
+        }
+        out.links =
+            old.links.filter { keep($0.range) }
+            + local.links.map { shiftLink($0, newStart) }
+            + old.links.filter { keepAfter($0.range) }.map { shiftLink($0, delta) }
         func shiftTask(_ t: TaskMark, _ d: Int) -> TaskMark {
             var x = t
             x.anchor += d

@@ -526,7 +526,26 @@ private struct Accumulator {
             for c in strike.children { visitInline(c, style: s) }
 
         case let link as Link:
-            addSubtractionMarkers(parent: map.nsRange(link.range), children: link.children)
+            let range = map.nsRange(link.range)
+            addSubtractionMarkers(parent: range, children: link.children)
+            if let range {
+                let children = link.children.compactMap { map.nsRange($0.range) }
+                    .filter { $0.length > 0 }
+                    .sorted { $0.location < $1.location }
+                let labelRange: NSRange
+                if let first = children.first, let last = children.last {
+                    labelRange = NSRange(location: first.location,
+                                         length: last.upperBound - first.location)
+                } else {
+                    // Empty-label links still need an insertion point between
+                    // their opening and closing brackets.
+                    labelRange = NSRange(location: min(range.upperBound, range.location + 1),
+                                         length: 0)
+                }
+                result.links.append(LinkRun(range: range, labelRange: labelRange,
+                                            label: plainText(link),
+                                            destination: link.destination ?? ""))
+            }
             var s = style; s.link = link.destination ?? ""
             for c in link.children { visitInline(c, style: s) }
 

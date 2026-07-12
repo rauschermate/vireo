@@ -56,6 +56,22 @@ public struct ImageRun: Sendable, Equatable {
     }
 }
 
+/// A parsed link expression. `range` covers the complete Markdown construct;
+/// `labelRange` covers the source used to render its visible label.
+public struct LinkRun: Sendable, Equatable {
+    public var range: NSRange
+    public var labelRange: NSRange
+    public var label: String
+    public var destination: String
+
+    public init(range: NSRange, labelRange: NSRange, label: String, destination: String) {
+        self.range = range
+        self.labelRange = labelRange
+        self.label = label
+        self.destination = destination
+    }
+}
+
 /// A GFM task-list checkbox. Drawn to the left of `anchor` (first content char);
 /// the raw `- [ ] ` syntax is hidden as a marker range.
 public struct TaskMark: Sendable, Equatable {
@@ -166,6 +182,7 @@ public struct ParsedMarkdown: Sendable, Equatable {
     public var inlineRuns: [InlineRun]
     public var blockRuns: [BlockRun]
     public var images: [ImageRun]
+    public var links: [LinkRun]
     public var tasks: [TaskMark]
     public var listMarkers: [ListMarker]
     public var tables: [TableInfo]
@@ -174,6 +191,7 @@ public struct ParsedMarkdown: Sendable, Equatable {
 
     public init(markerRanges: [NSRange] = [], inlineRuns: [InlineRun] = [],
                 blockRuns: [BlockRun] = [], images: [ImageRun] = [],
+                links: [LinkRun] = [],
                 tasks: [TaskMark] = [], listMarkers: [ListMarker] = [],
                 tables: [TableInfo] = [], toc: [TOCEntry] = [],
                 headings: [HeadingMark] = []) {
@@ -181,6 +199,7 @@ public struct ParsedMarkdown: Sendable, Equatable {
         self.inlineRuns = inlineRuns
         self.blockRuns = blockRuns
         self.images = images
+        self.links = links
         self.tasks = tasks
         self.listMarkers = listMarkers
         self.tables = tables
@@ -209,6 +228,8 @@ public extension ParsedMarkdown {
             .map { var x = $0; x.range = shift(x.range); return x }
         out.images = images.filter { hits($0.range) }
             .map { var x = $0; x.range = shift(x.range); x.anchor += d; return x }
+        out.links = links.filter { hits($0.range) }
+            .map { var x = $0; x.range = shift(x.range); x.labelRange = shift(x.labelRange); return x }
         out.tasks = tasks.filter { NSLocationInRange($0.anchor, window) }
             .map { var x = $0
                 x.anchor += d
