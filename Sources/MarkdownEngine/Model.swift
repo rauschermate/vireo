@@ -266,7 +266,7 @@ public extension ParsedMarkdown {
                 || (r.length == 0 && NSLocationInRange(r.location, window))
         }
         func shift(_ r: NSRange) -> NSRange { NSRange(location: r.location + d, length: r.length) }
-        /// Marker/inline/image/table ranges are source-ordered and do not
+        /// Marker/inline/image/table/source-treatment ranges are source-ordered and do not
         /// overlap peers in their collection. Binary-searching their first
         /// possible intersection avoids filtering hundreds of thousands of
         /// unrelated runs for a one-paragraph edit.
@@ -336,13 +336,15 @@ public extension ParsedMarkdown {
                 x.anchor += d
                 if let s = x.subtreeRange { x.subtreeRange = shift(s) }
                 return x }
-        out.sourceBlocks = sourceBlocks.filter { hits($0.range) }.map {
+        out.sourceBlocks = intersecting(sourceBlocks, range: { $0.range })
+            .filter { hits($0.range) }.map {
             var x = $0
             x.range = shift(x.range)
             x.anchor += d
             return x
         }
-        out.inlineHTML = inlineHTML.filter { hits($0.range) }.map {
+        out.inlineHTML = intersecting(inlineHTML, range: { $0.range })
+            .filter { hits($0.range) }.map {
             var x = $0
             x.range = shift(x.range)
             x.anchor += d

@@ -41,6 +41,8 @@ public struct MarkdownParser {
         acc.result.markerRanges = acc.result.markerRanges
             .filter { $0.length > 0 }
             .sorted { $0.location < $1.location }
+        acc.result.sourceBlocks.sort { $0.range.location < $1.range.location }
+        acc.result.inlineHTML.sort { $0.range.location < $1.range.location }
         acc.result.headings = Self.computeHeadingMarks(source: ns, toc: acc.result.toc)
         return acc.result
     }

@@ -19,6 +19,8 @@ struct RenderStyleCache {
     let tableRowParagraph: NSParagraphStyle
     let tableLastRowParagraph: NSParagraphStyle
     let tableSeparatorParagraph: NSParagraphStyle
+    let metadataHiddenParagraph: NSParagraphStyle
+    let metadataVisibleParagraph: NSParagraphStyle
     let collapsedParagraph: NSParagraphStyle
     let bodyFont: NSFont
     let boldFont: NSFont
@@ -117,6 +119,16 @@ struct RenderStyleCache {
         separator.minimumLineHeight = 0.01
         separator.maximumLineHeight = 0.01
         tableSeparatorParagraph = separator
+        let metadataHidden = NSMutableParagraphStyle()
+        metadataHidden.minimumLineHeight = 0.01
+        metadataHidden.maximumLineHeight = 0.01
+        metadataHidden.paragraphSpacing = 0
+        metadataHiddenParagraph = metadataHidden
+        let metadataVisible = NSMutableParagraphStyle()
+        metadataVisible.minimumLineHeight = 30
+        metadataVisible.maximumLineHeight = 30
+        metadataVisible.paragraphSpacing = theme.baseSize * 0.25
+        metadataVisibleParagraph = metadataVisible
         let collapsed = NSMutableParagraphStyle()
         collapsed.minimumLineHeight = 0.01
         collapsed.maximumLineHeight = 0.01

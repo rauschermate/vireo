@@ -73,6 +73,12 @@ struct RenderPlan {
             if run.strikethrough {
                 attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
             }
+            if run.underline {
+                attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+            }
+            if run.highlight {
+                attributes[.backgroundColor] = theme.highlightColor
+            }
             if let link = run.link {
                 attributes[.foregroundColor] = theme.linkColor
                 attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
@@ -159,13 +165,64 @@ struct RenderPlan {
                 [.vireoHeading: NSNumber(value: heading.level)])
         }
 
-        // 9. Coalesced hidden syntax ranges.
+        // 9. Metadata and HTML support-contract placeholders. Source-only
+        // blocks retain one transparent anchor glyph for the native pill and
+        // keep newlines as near-zero-height fragments. Inline HTML similarly
+        // keeps one anchor for its compact replacement.
+        for block in parsed.sourceBlocks where block.range.upperBound <= length {
+            let range = NSIntersectionRange(block.range,
+                                            NSRange(location: 0, length: length))
+            guard range.length > 0, block.anchor < length else { continue }
+            let label: String
+            switch block.kind {
+            case .metadata(let value), .unsupportedHTML(let value):
+                label = value
+            }
+            add(range, [
+                .foregroundColor: NSColor.clear,
+                .paragraphStyle: styles.metadataHiddenParagraph,
+                .vireoMetadata: Self.trueValue,
+            ], removing: [.backgroundColor])
+
+            let firstLine = NSIntersectionRange(
+                ns.lineRange(for: NSRange(location: block.anchor, length: 0)),
+                range
+            )
+            if firstLine.length > 0 {
+                add(firstLine, [.paragraphStyle: styles.metadataVisibleParagraph])
+            }
+            add(NSRange(location: block.anchor, length: 1),
+                [.vireoSourceBlock: label as NSString])
+        }
+        for html in parsed.inlineHTML where html.anchor < length {
+            let value: String
+            let tooltip: String
+            let kern: Double
+            switch html.kind {
+            case .lineBreak:
+                value = "line-break"
+                tooltip = "HTML line break"
+                kern = 2
+            case .unsupported(let tag):
+                value = "html:\(tag)"
+                tooltip = "HTML \(tag) element is not rendered"
+                kern = 12
+            }
+            add(NSRange(location: html.anchor, length: 1), [
+                .vireoInlineHTML: value as NSString,
+                .foregroundColor: NSColor.clear,
+                .toolTip: tooltip as NSString,
+                .kern: NSNumber(value: kern),
+            ])
+        }
+
+        // 10. Coalesced hidden syntax ranges.
         let markers = RangeSet(parsed.markerRanges)
         for range in markers.ranges where range.upperBound <= length {
             add(range, [.vireoMarker: Self.trueValue])
         }
 
-        // 10. Typographic prose arrows, classified from source ranges rather
+        // 11. Typographic prose arrows, classified from source ranges rather
         // than attributed-run lookups.
         var excluded = markers.ranges
         excluded.append(contentsOf: parsed.inlineRuns.compactMap { $0.code ? $0.range : nil })
@@ -189,7 +246,7 @@ struct RenderPlan {
                 [.vireoMarker: Self.trueValue])
         }
 
-        // 11. Folded subtrees win last, including removal of code backgrounds.
+        // 12. Folded subtrees win last, including removal of code backgrounds.
         if !collapsedAnchors.isEmpty {
             let subtrees = parsed.listMarkers.map { ($0.anchor, $0.subtreeRange) }
                 + parsed.tasks.map { ($0.anchor, $0.subtreeRange) }
