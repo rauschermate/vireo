@@ -8,6 +8,7 @@ import VireoUpdaterUI
 /// mode), file sidebar / editor / TOC below.
 struct DocumentWindowView: View {
     @EnvironmentObject private var state: AppState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 0) {
@@ -17,7 +18,7 @@ struct DocumentWindowView: View {
                     // A rounded glass card floating in the window (Finder-style),
                     // inset 8pt from the edges with the traffic lights above it.
                     .padding(8)
-                    .transition(.move(edge: .leading))
+                    .transition(reduceMotion ? .identity : .move(edge: .leading))
             }
             if let doc = state.activeDocument {
                 EditorPane(doc: doc)
@@ -26,8 +27,10 @@ struct DocumentWindowView: View {
                 Color(nsColor: .textBackgroundColor)
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: state.showFileSidebar)
-        .animation(.easeInOut(duration: 0.18), value: state.focusMode)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2),
+                   value: state.showFileSidebar)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18),
+                   value: state.focusMode)
         // The panel always mirrors the active tab's containing folder: switch
         // tabs and the tree re-roots to the new document's folder.
         .onChange(of: state.selectedID) { _, _ in
@@ -59,6 +62,7 @@ struct DocumentWindowView: View {
 private struct EditorPane: View {
     @ObservedObject var doc: DocumentModel
     @EnvironmentObject private var state: AppState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 0) {
@@ -69,7 +73,8 @@ private struct EditorPane: View {
                 TOCSidebar(document: doc).frame(width: 220)
             }
         }
-        .animation(.easeInOut(duration: 0.18), value: doc.showTOC)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18),
+                   value: doc.showTOC)
     }
 }
 

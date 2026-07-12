@@ -139,6 +139,7 @@ struct FileSidebar: View {
 private struct FileTree: View {
     let node: FileNode
     @Binding var expanded: Set<URL>
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         if node.isDirectory {
@@ -150,7 +151,13 @@ private struct FileTree: View {
                 // A Button (not onTapGesture) so the whole folder row reliably
                 // toggles its disclosure — clicking the row, not just the caret.
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { isExpanded.wrappedValue.toggle() }
+                    if reduceMotion {
+                        isExpanded.wrappedValue.toggle()
+                    } else {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            isExpanded.wrappedValue.toggle()
+                        }
+                    }
                 } label: {
                     FileRow(node: node)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -190,9 +197,14 @@ private struct FileRow: View {
 private struct SidebarBackground: ViewModifier {
     // Concentric with the window's ~18pt corner: inner = outer − 8pt inset.
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 10, style: .continuous) }
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     func body(content: Content) -> some View {
-        if #available(macOS 26.0, *) {
+        if reduceTransparency {
+            content
+                .background(Color(nsColor: .windowBackgroundColor))
+                .clipShape(shape)
+        } else if #available(macOS 26.0, *) {
             content
                 .clipShape(shape)
                 .background { Color.clear.glassEffect(.regular, in: shape) }

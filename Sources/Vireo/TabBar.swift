@@ -21,10 +21,12 @@ struct ChromeRow: View {
                 Image(systemName: "sidebar.left")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(state.showFileSidebar ? Color.accentColor : .secondary)
-                    .frame(width: 26, height: 26)
+                    .frame(width: 40, height: 40)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(state.showFileSidebar ? "Hide file sidebar"
+                                                      : "Show file sidebar")
             .help(state.showFileSidebar ? "Hide file sidebar" : "Show file sidebar")
 
             if sidebarOpen {
@@ -50,16 +52,17 @@ struct ChromeRow: View {
 /// tab after a short debounce.
 struct TabStrip: View {
     @EnvironmentObject private var state: AppState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private static let minTabWidth: CGFloat = 72
+    private static let minTabWidth: CGFloat = 96
     /// The active tab stays readable: it never shrinks below this even when
     /// the others are squeezed to `minTabWidth`.
-    private static let activeMinTabWidth: CGFloat = 96
-    private static let maxTabWidth: CGFloat = 200
+    private static let activeMinTabWidth: CGFloat = 112
+    private static let maxTabWidth: CGFloat = 220
     private static let spacing: CGFloat = 3
     /// Traffic lights + sidebar button + overflow chevron + margins.
-    private static let reservedChrome: CGFloat = 190
-    private static let plusButtonWidth: CGFloat = 30
+    private static let reservedChrome: CGFloat = 220
+    private static let plusButtonWidth: CGFloat = 40
     private static let dividerWidth: CGFloat = 1
 
     var body: some View {
@@ -89,10 +92,11 @@ struct TabStrip: View {
                         Image(systemName: "plus")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary)
-                            .frame(width: 24, height: 24)
+                            .frame(width: 40, height: 40)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("New tab")
                     .help("New tab (⌘T)")
                 }
                 // Room for the active tab's shadow — the scroll view clips
@@ -102,7 +106,11 @@ struct TabStrip: View {
             .frame(width: stripWidth, alignment: .leading)
             .onChange(of: state.selectedID) { _, id in
                 guard let id else { return }
-                withAnimation(.easeInOut(duration: 0.15)) { proxy.scrollTo(id) }
+                if reduceMotion {
+                    proxy.scrollTo(id)
+                } else {
+                    withAnimation(.easeInOut(duration: 0.15)) { proxy.scrollTo(id) }
+                }
             }
             .onAppear {
                 if let id = state.selectedID { proxy.scrollTo(id) }
@@ -150,10 +158,11 @@ struct TabOverflowMenu: View {
             Image(systemName: "chevron.down")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
-                .frame(width: 24, height: 24)
+                .frame(width: 40, height: 40)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Show all tabs")
         .help("Show all tabs")
         .popover(isPresented: $showing, arrowEdge: .bottom) {
             VStack(spacing: 0) {
@@ -245,6 +254,7 @@ private struct TabItem: View {
     @State private var renaming = false
     @State private var draftName = ""
     @FocusState private var renameFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 6) {
@@ -289,15 +299,16 @@ private struct TabItem: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 8.5, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 16, height: 16)
+                    .frame(width: 40, height: 40)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Close \(doc.displayTitle)")
             .opacity(isSelected || hovering ? 1 : 0)
         }
         .padding(.leading, 10)
         .padding(.trailing, 5)
-        .frame(height: 26)
+        .frame(height: 40)
         .frame(width: width, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 6)
@@ -336,7 +347,8 @@ private struct TabItem: View {
             }
             .disabled(state.documents.last?.id == doc.id)
         }
-        .animation(.easeInOut(duration: 0.12), value: hovering)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.12),
+                   value: hovering)
         .onDisappear {
             tooltipTask?.cancel()
             TabTooltipPanel.shared.hide()
@@ -467,6 +479,13 @@ final class TabTooltipPanel {
 
         let x = tabScreenRect.midX - content.frame.width / 2
         let y = tabScreenRect.minY - content.frame.height - 2
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            panel.setFrameOrigin(NSPoint(x: x, y: y))
+            panel.alphaValue = 1
+            panel.orderFront(nil)
+            self.panel = panel
+            return
+        }
         panel.setFrameOrigin(NSPoint(x: x, y: y + 4)) // start slightly high…
         panel.alphaValue = 0
         panel.orderFront(nil)

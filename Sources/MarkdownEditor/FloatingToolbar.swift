@@ -74,7 +74,7 @@ final class FloatingToolbar {
 
     private var buttons: [NSButton] = []
 
-    private let buttonSize: CGFloat = 30
+    private let buttonSize: CGFloat = 40
     private let symbolConfig = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
 
     /// Show above the given selection rect (screen coordinates), or hide if empty.
@@ -139,6 +139,7 @@ final class FloatingToolbar {
             button.bezelStyle = .accessoryBarAction
             button.isBordered = false
             button.toolTip = item.help
+            button.setAccessibilityLabel(item.help)
             button.setButtonType(.momentaryChange)
             button.target = self
             button.action = #selector(buttonTapped(_:))
@@ -163,7 +164,18 @@ final class FloatingToolbar {
 
         // Liquid Glass on macOS 26+ (eng-design §8.0); material fallback below.
         let effect: NSView
-        if #available(macOS 26.0, *) {
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency {
+            let solid = NSBox(frame: NSRect(origin: .zero, size: size))
+            solid.boxType = .custom
+            solid.fillColor = .windowBackgroundColor
+            solid.borderColor = .separatorColor
+            solid.borderWidth = 0.5
+            solid.cornerRadius = 9
+            stack.frame = solid.bounds
+            stack.autoresizingMask = [.width, .height]
+            solid.addSubview(stack)
+            effect = solid
+        } else if #available(macOS 26.0, *) {
             let glass = NSGlassEffectView(frame: NSRect(origin: .zero, size: size))
             glass.cornerRadius = 9
             stack.frame = glass.bounds
