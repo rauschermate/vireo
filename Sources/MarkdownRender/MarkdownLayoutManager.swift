@@ -47,6 +47,21 @@ public struct TableScrollGeometry: Sendable {
     }
 }
 
+private struct PreparedTableCell {
+    let id: TableCellID
+    let attributedText: NSAttributedString
+    let isHeader: Bool
+    let alignment: TableAlignment
+    let contentHeight: CGFloat
+}
+
+private struct CachedTableLayout {
+    let columnWidths: [CGFloat]
+    let columnOffsets: [CGFloat]
+    let cells: [PreparedTableCell]
+    let totalWidth: CGFloat
+}
+
 /// TextKit-1 layout manager that realises the hidden-syntax look:
 ///  • syntax-marker glyphs (`.vireoMarker`) are turned into null glyphs — present
 ///    in the backing store, zero-width and invisible on screen;
@@ -73,15 +88,31 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         didSet {
             let anchors = Set(tables.map(\.anchor))
             tableHorizontalOffsets = tableHorizontalOffsets.filter { anchors.contains($0.key) }
+            tablesByAnchor = Dictionary(uniqueKeysWithValues: tables.map { ($0.anchor, $0) })
+            if oldValue != tables { invalidateTableRenderCache() }
         }
     }
-    public var tableRowHeight: CGFloat = 40
-    public var tableScrollerGutter: CGFloat = 0
-    public var tableFont: NSFont = .systemFont(ofSize: 15)
-    public var tableHeaderFont: NSFont = .systemFont(ofSize: 15, weight: .semibold)
+    public var tableRowHeight: CGFloat = 40 {
+        didSet { if oldValue != tableRowHeight { invalidateTableRenderCache() } }
+    }
+    public var tableScrollerGutter: CGFloat = 0 {
+        didSet { if oldValue != tableScrollerGutter { invalidateTableRenderCache() } }
+    }
+    public var tableFont: NSFont = .systemFont(ofSize: 15) {
+        didSet { if oldValue != tableFont { invalidateTableRenderCache() } }
+    }
+    public var tableHeaderFont: NSFont = .systemFont(ofSize: 15, weight: .semibold) {
+        didSet { if oldValue != tableHeaderFont { invalidateTableRenderCache() } }
+    }
     /// Editor surfaces enable this; static snapshots and Quick Look retain the
     /// compact fit-to-column rendering used before rich table interaction.
-    public var tableHorizontalScrollingEnabled = false
+    public var tableHorizontalScrollingEnabled = false {
+        didSet {
+            if oldValue != tableHorizontalScrollingEnabled {
+                invalidateTableRenderCache()
+            }
+        }
+    }
     /// Cell frames from the current draw pass, in text-container coordinates.
     /// Keeping these independent of `drawGlyphs(... at:)` is essential because
     /// AppKit can translate that origin for partial/scrolled drawing passes.
@@ -90,6 +121,10 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     public private(set) var tableRects: [Int: NSRect] = [:]
     public private(set) var tableScrollGeometries: [Int: TableScrollGeometry] = [:]
     private var tableHorizontalOffsets: [Int: CGFloat] = [:]
+    private(set) var tableRenderCacheBuildCount = 0
+    private var tablesByAnchor: [Int: TableInfo] = [:]
+    private var tableRenderCache: [Int: CachedTableLayout] = [:]
+    private var cachedTableWidth: CGFloat?
 
     public func beginTableGeometryPass() {
         tableCellGeometries.removeAll(keepingCapacity: true)
@@ -158,11 +193,17 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     }
 
     // List/heading collapse and hover state (set on each restyle / mouse move).
-    public var listMarkers: [ListMarker] = []
-    public var taskMarks: [TaskMark] = []
+    public var listMarkers: [ListMarker] = [] {
+        didSet { listGuideIndexNeedsRebuild = true }
+    }
+    public var taskMarks: [TaskMark] = [] {
+        didSet { listGuideIndexNeedsRebuild = true }
+    }
     public var headingMarks: [HeadingMark] = []
     public var collapsedAnchors: Set<Int> = []
     public var hoveredAnchor: Int?
+    private var listGuideIndex = ListGuideIndex(listMarkers: [], tasks: [])
+    private var listGuideIndexNeedsRebuild = false
 
     /// Hit-test rects recorded during drawing (text-view coordinates):
     /// chevron toggles and collapsed-`…` expanders, keyed by item anchor.
@@ -181,6 +222,24 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         self.delegate = self
+    }
+
+    private func invalidateTableRenderCache() {
+        tableRenderCache.removeAll(keepingCapacity: true)
+        cachedTableWidth = nil
+    }
+
+    public override func processEditing(for textStorage: NSTextStorage,
+                                        edited editMask: NSTextStorageEditActions,
+                                        range newCharRange: NSRange,
+                                        changeInLength delta: Int,
+                                        invalidatedRange invalidatedCharRange: NSRange) {
+        if editMask.contains(.editedCharacters) {
+            invalidateTableRenderCache()
+        }
+        super.processEditing(for: textStorage, edited: editMask,
+                             range: newCharRange, changeInLength: delta,
+                             invalidatedRange: invalidatedCharRange)
     }
 
     // MARK: Hide markers by emitting null glyphs
@@ -253,7 +312,8 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
                 && storage.attribute(.vireoCollapsed, at: index, effectiveRange: nil) != nil
         }
 
-        drawListGuides(visibleCharRange: charRange, origin: origin)
+        drawListGuides(visibleCharRange: charRange,
+                       visibleGlyphRange: glyphsToShow, origin: origin)
 
         storage.enumerateAttribute(.vireoBullet, in: charRange) { value, range, _ in
             guard let s = value as? String, !isCollapsedAway(range.location) else { return }
@@ -285,7 +345,7 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         }
         storage.enumerateAttribute(.vireoTable, in: charRange) { value, range, _ in
             guard let n = value as? NSNumber,
-                  let info = tables.first(where: { $0.anchor == n.intValue }),
+                  let info = tablesByAnchor[n.intValue],
                   !isCollapsedAway(range.location) else { return }
             drawTable(info, atCharIndex: range.location, origin: origin, storage: storage)
         }
@@ -502,29 +562,36 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     }
 
     /// Faint vertical guides connecting a parent's marker to its subtree.
-    private func drawListGuides(visibleCharRange: NSRange, origin: NSPoint) {
+    private func drawListGuides(visibleCharRange: NSRange,
+                                visibleGlyphRange: NSRange,
+                                origin: NSPoint) {
         guard let container = textContainers.first, let storage = textStorage else { return }
-        let all: [(anchor: Int, subtree: NSRange?, text: String?)] =
-            listMarkers.map { ($0.anchor, $0.subtreeRange, $0.text) }
-            + taskMarks.map { ($0.anchor, $0.subtreeRange, nil) }
-
-        for entry in all {
-            guard let sub = entry.subtree,
+        if listGuideIndexNeedsRebuild {
+            listGuideIndex = ListGuideIndex(listMarkers: listMarkers, tasks: taskMarks)
+            listGuideIndexNeedsRebuild = false
+        }
+        let viewport = boundingRect(forGlyphRange: visibleGlyphRange, in: container)
+        for entry in listGuideIndex.overlapping(visibleCharRange) {
+            let visibleSubtree = NSIntersectionRange(entry.subtree, visibleCharRange)
+            guard visibleSubtree.length > 0,
                   !collapsedAnchors.contains(entry.anchor),
-                  NSIntersectionRange(sub, visibleCharRange).length > 0
-                    || NSLocationInRange(entry.anchor, visibleCharRange),
                   entry.anchor < storage.length,
                   storage.attribute(.vireoCollapsed, at: entry.anchor, effectiveRange: nil) == nil,
-                  let geo = markerGeometry(anchor: entry.anchor, markerText: entry.text) else { continue }
+                  let geo = markerGeometry(anchor: entry.anchor,
+                                           markerText: entry.markerText) else { continue }
 
-            let subGlyphs = glyphRange(forCharacterRange: sub, actualCharacterRange: nil)
+            // Geometry is requested only for the visible intersection. Asking
+            // TextKit for the complete subtree here used to lay out thousands
+            // of off-screen lines during a paint.
+            let subGlyphs = glyphRange(forCharacterRange: visibleSubtree,
+                                       actualCharacterRange: nil)
             guard subGlyphs.length > 0 else { continue }
             let bounds = boundingRect(forGlyphRange: subGlyphs, in: container)
             guard bounds.height > 1 else { continue }
 
             let x = origin.x + geo.textX - 5 - geo.markerWidth / 2
-            let top = origin.y + geo.lineRect.maxY + 2
-            let bottom = origin.y + bounds.maxY - 3
+            let top = origin.y + max(geo.lineRect.maxY + 2, viewport.minY)
+            let bottom = origin.y + min(bounds.maxY - 3, viewport.maxY)
             guard bottom > top else { continue }
             let line = NSBezierPath()
             line.lineWidth = 1
@@ -648,38 +715,13 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let left = lineRect.minX
         let pad: CGFloat = 10
         let rh = tableRowHeight
-        let cols = info.columnCount
-        guard cols > 0 else { return }
-
-        // Measure what users see, not hidden link destinations/delimiters.
-        var cellContents: [TableCellID: NSAttributedString] = [:]
-        var widths = [CGFloat](repeating: 0, count: cols)
-        let maxColumnWidth = max(280, min(480, lineRect.width * 0.8))
-        for (rowIndex, row) in info.rows.enumerated() {
-            for cell in row.cells where cell.column < cols {
-                let id = TableCellID(tableAnchor: info.anchor, row: rowIndex,
-                                     column: cell.column)
-                let content = tableDisplayContent(for: cell, header: row.isHeader,
-                                                  storage: storage)
-                cellContents[id] = content
-                let width = min(maxColumnWidth, ceil(content.size().width) + pad * 2)
-                widths[cell.column] = max(widths[cell.column], width)
-            }
-        }
-        var colW = widths.map { max(72, $0) }
         let available = max(72, lineRect.width)
-        let desired = colW.reduce(0, +)
-        if desired < available {
-            let extra = (available - desired) / CGFloat(cols)
-            colW = colW.map { $0 + extra }
-        } else if desired > available, !tableHorizontalScrollingEnabled {
-            let minimumTotal = CGFloat(cols) * 72
-            if minimumTotal < available {
-                let scale = (available - minimumTotal) / max(1, desired - minimumTotal)
-                colW = colW.map { 72 + ($0 - 72) * scale }
-            }
-        }
-        let totalW = colW.reduce(0, +)
+        let cached = cachedTableLayout(info, availableWidth: available,
+                                       padding: pad, storage: storage)
+        let colW = cached.columnWidths
+        let cols = colW.count
+        guard cols > 0 else { return }
+        let totalW = cached.totalWidth
         let rowCount = info.rows.count
         let rowAreaHeight = CGFloat(rowCount) * rh
         let tableH = rowAreaHeight
@@ -692,9 +734,7 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
             tableHorizontalOffsets[info.anchor] = nil
         }
 
-        var xs = [CGFloat]()
-        var acc = left - offset
-        for w in colW { xs.append(acc); acc += w }
+        let xs = cached.columnOffsets.map { left - offset + $0 }
         let right = left - offset + totalW
         let viewport = NSRect(x: left, y: top, width: available, height: tableH)
         tableRects[info.anchor] = viewport
@@ -737,34 +777,120 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         grid.stroke()
 
         // Cell text.
-        for (rIdx, row) in info.rows.enumerated() {
-            let y = top + CGFloat(rIdx) * rh
-            for cell in row.cells where cell.column < cols {
-                let cellX = xs[cell.column]
-                let cellWidth = colW[cell.column]
-                let cellRect = NSRect(x: cellX, y: y, width: cellWidth, height: rh)
-                let id = TableCellID(tableAnchor: info.anchor, row: rIdx,
-                                     column: cell.column)
-                tableCellGeometries[id] = TableCellGeometry(
-                    id: id, rect: cellRect, isHeader: row.isHeader,
-                    alignment: cell.alignment
-                )
+        for cell in cached.cells where cell.id.column < cols {
+            let y = top + CGFloat(cell.id.row) * rh
+            let cellRect = NSRect(x: xs[cell.id.column], y: y,
+                                  width: colW[cell.id.column], height: rh)
+            tableCellGeometries[cell.id] = TableCellGeometry(
+                id: cell.id, rect: cellRect, isHeader: cell.isHeader,
+                alignment: cell.alignment
+            )
+            guard cell.attributedText.length > 0 else { continue }
+            let drawRect = NSRect(x: origin.x + cellRect.minX + pad,
+                                  y: origin.y + cellRect.midY - cell.contentHeight / 2,
+                                  width: max(1, cellRect.width - pad * 2),
+                                  height: cell.contentHeight)
+            cell.attributedText.draw(
+                with: drawRect,
+                options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                context: nil
+            )
+        }
+    }
 
-                let content = cellContents[id] ?? NSAttributedString(string: "")
-                let measured = content.boundingRect(
-                    with: NSSize(width: max(1, cellRect.width - pad * 2), height: rh),
-                    options: [.usesLineFragmentOrigin]
+    private func cachedTableLayout(_ info: TableInfo, availableWidth: CGFloat,
+                                   padding: CGFloat,
+                                   storage: NSTextStorage) -> CachedTableLayout {
+        if let width = cachedTableWidth, abs(width - availableWidth) > 0.5 {
+            tableRenderCache.removeAll(keepingCapacity: true)
+        }
+        cachedTableWidth = availableWidth
+        if let cached = tableRenderCache[info.anchor] { return cached }
+
+        struct CellDraft {
+            let id: TableCellID
+            let content: NSMutableAttributedString
+            let isHeader: Bool
+            let alignment: TableAlignment
+        }
+        let cols = info.columnCount
+        guard cols > 0 else {
+            return CachedTableLayout(columnWidths: [], columnOffsets: [],
+                                     cells: [], totalWidth: 0)
+        }
+        var drafts: [CellDraft] = []
+        var naturalWidths = [CGFloat](repeating: 0, count: cols)
+        let maxColumnWidth = max(280, min(480, availableWidth * 0.8))
+        for (rowIndex, row) in info.rows.enumerated() {
+            for cell in row.cells where cell.column < cols {
+                let content = NSMutableAttributedString(
+                    attributedString: tableDisplayContent(
+                        for: cell, header: row.isHeader, storage: storage
+                    )
                 )
-                let contentHeight = min(rh, max(1, ceil(measured.height)))
-                let drawRect = NSRect(x: origin.x + cellRect.minX + pad,
-                                      y: origin.y + cellRect.midY - contentHeight / 2,
-                                      width: max(1, cellRect.width - pad * 2),
-                                      height: contentHeight)
-                content.draw(with: drawRect,
-                             options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                             context: nil)
+                naturalWidths[cell.column] = max(
+                    naturalWidths[cell.column],
+                    min(maxColumnWidth, ceil(content.size().width) + padding * 2)
+                )
+                drafts.append(CellDraft(
+                    id: TableCellID(tableAnchor: info.anchor, row: rowIndex,
+                                    column: cell.column),
+                    content: content, isHeader: row.isHeader,
+                    alignment: cell.alignment
+                ))
             }
         }
+
+        // Interactive tables retain readable natural widths and scroll inside
+        // the reading column. Static renderers compress very wide tables so
+        // snapshots and Quick Look stay bounded without a local scroller.
+        let minimum = tableHorizontalScrollingEnabled
+            ? 72 : min(72, availableWidth / CGFloat(cols))
+        var widths = naturalWidths.map { max(minimum, $0) }
+        let desired = widths.reduce(0, +)
+        if desired < availableWidth {
+            let extra = (availableWidth - desired) / CGFloat(cols)
+            widths = widths.map { $0 + extra }
+        } else if desired > availableWidth, !tableHorizontalScrollingEnabled {
+            let minimumTotal = CGFloat(cols) * minimum
+            let scale = (availableWidth - minimumTotal) / max(1, desired - minimumTotal)
+            widths = widths.map { minimum + ($0 - minimum) * max(0, scale) }
+        }
+        var offsets: [CGFloat] = []
+        offsets.reserveCapacity(cols)
+        var x: CGFloat = 0
+        for width in widths { offsets.append(x); x += width }
+
+        let prepared = drafts.map { draft -> PreparedTableCell in
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineBreakMode = .byTruncatingTail
+            switch draft.alignment {
+            case .center: paragraph.alignment = .center
+            case .right: paragraph.alignment = .right
+            default: paragraph.alignment = .left
+            }
+            let full = NSRange(location: 0, length: draft.content.length)
+            if full.length > 0 {
+                draft.content.addAttribute(.paragraphStyle, value: paragraph, range: full)
+            }
+            let contentWidth = max(1, widths[draft.id.column] - padding * 2)
+            let measured = draft.content.boundingRect(
+                with: NSSize(width: contentWidth, height: tableRowHeight),
+                options: [.usesLineFragmentOrigin]
+            )
+            return PreparedTableCell(
+                id: draft.id, attributedText: draft.content.copy() as! NSAttributedString,
+                isHeader: draft.isHeader, alignment: draft.alignment,
+                contentHeight: min(tableRowHeight, max(1, ceil(measured.height)))
+            )
+        }
+        let layout = CachedTableLayout(columnWidths: widths,
+                                       columnOffsets: offsets,
+                                       cells: prepared,
+                                       totalWidth: widths.reduce(0, +))
+        tableRenderCache[info.anchor] = layout
+        tableRenderCacheBuildCount += 1
+        return layout
     }
 
     /// Baseline offset (within the line fragment) for the marker anchored at
