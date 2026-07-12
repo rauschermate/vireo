@@ -65,6 +65,77 @@ final class IncrementalParserTests: XCTestCase {
                           "dirty range should be a fraction of the document")
     }
 
+    func testExactAppKitEditSkipsFullSourceDiff() {
+        let old = base as NSString
+        let location = old.range(of: "Intro paragraph").upperBound
+        let range = NSRange(location: location, length: 0)
+        let replacement = " smoothly"
+        let edited = old.replacingCharacters(in: range, with: replacement)
+        let parser = makeParser()
+        _ = parser.update(base)
+
+        let update = parser.update(
+            edited,
+            edit: SourceEdit(oldRange: range, replacement: replacement,
+                             oldSourceLength: old.length)
+        )
+
+        XCTAssertEqual(update.strategy, .exactEdit)
+        XCTAssertEqual(update.parsed, MarkdownParser().parse(edited))
+    }
+
+    func testExactReplacementUsesUTF16Coordinates() {
+        let old = base as NSString
+        let range = old.range(of: "émojis 😀")
+        let replacement = "emoji 🎉"
+        let edited = old.replacingCharacters(in: range, with: replacement)
+        let parser = makeParser()
+        _ = parser.update(base)
+
+        let update = parser.update(
+            edited,
+            edit: SourceEdit(oldRange: range, replacement: replacement,
+                             oldSourceLength: old.length)
+        )
+
+        XCTAssertEqual(update.strategy, .exactEdit)
+        XCTAssertEqual(update.parsed, MarkdownParser().parse(edited))
+    }
+
+    func testStaleExactEditFallsBackToSafeSourceDiff() {
+        let old = base as NSString
+        let actual = old.range(of: "Closing paragraph")
+        let edited = old.replacingCharacters(in: actual, with: "Final paragraph")
+        let stale = SourceEdit(oldRange: NSRange(location: actual.location - 5,
+                                                 length: actual.length),
+                               replacement: "Final paragraph",
+                               oldSourceLength: old.length)
+        let parser = makeParser()
+        _ = parser.update(base)
+
+        let update = parser.update(edited, edit: stale)
+
+        XCTAssertEqual(update.strategy, .sourceDiff)
+        XCTAssertEqual(update.parsed, MarkdownParser().parse(edited))
+    }
+
+    func testExactNoOpReturnsExistingParse() {
+        let old = base as NSString
+        let range = old.range(of: "bold")
+        let parser = makeParser()
+        let initial = parser.update(base)
+
+        let update = parser.update(
+            base,
+            edit: SourceEdit(oldRange: range, replacement: "bold",
+                             oldSourceLength: old.length)
+        )
+
+        XCTAssertEqual(update.strategy, .unchanged)
+        XCTAssertEqual(update.parsed, initial.parsed)
+        XCTAssertEqual(update.dirtyRange, NSRange(location: 0, length: 0))
+    }
+
     func testDeleteWord() {
         assertEquivalent(base.replacingOccurrences(of: "**bold**, ", with: ""))
     }
