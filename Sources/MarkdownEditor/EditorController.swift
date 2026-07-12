@@ -30,7 +30,7 @@ public final class EditorController: ObservableObject {
     private var lastSourceLength = 0
 
     public init() {
-        imageLoader.onChange = { [weak self] in self?.restyle() }
+        imageLoader.onChange = { [weak self] urls in self?.imagesDidLoad(urls) }
     }
 
     /// Show/hide the floating format toolbar and reveal/re-hide table source
@@ -210,8 +210,8 @@ public final class EditorController: ObservableObject {
         textView?.needsDisplay = true
     }
 
-    /// Full restyle: theme, zoom, appearance or image loads changed, so every
-    /// attribute must be recomputed even though the text didn't change.
+    /// Full restyle: theme, zoom or appearance changed, so every attribute must
+    /// be recomputed even though the text didn't change.
     public func restyle() {
         guard let tv = textView, let storage = tv.textStorage else { return }
         let update = incremental.update(storage.string)
@@ -224,25 +224,47 @@ public final class EditorController: ObservableObject {
     /// Characters are never touched, so the selection and the on-disk source
     /// are preserved; bounding the range bounds TextKit's layout invalidation.
     private func applyStyles(dirty: NSRange?) {
+        applyStyles(windows: dirty.map { [$0] })
+    }
+
+    /// Image completions can touch disjoint paragraphs. Keep those windows
+    /// separate so two images far apart never turn into a document-wide restyle.
+    private func applyStyles(dirtyRanges: [NSRange]) {
+        applyStyles(windows: dirtyRanges)
+    }
+
+    private func applyStyles(windows requestedWindows: [NSRange]?) {
         guard let tv = textView, let storage = tv.textStorage else { return }
         let full = NSRange(location: 0, length: storage.length)
-        var window = dirty.map { NSIntersectionRange($0, full) } ?? full
-        window = expandOverCollapsedSubtrees(window, storage: storage)
+        let rawWindows = requestedWindows ?? [full]
+        let expanded = rawWindows.map {
+            expandOverCollapsedSubtrees(NSIntersectionRange($0, full),
+                                        storage: storage)
+        }.filter { $0.length > 0 }
+        let windows = mergeStyleWindows(expanded)
 
-        if window.length > 0 {
-            var renderer = MarkdownRenderer(theme: theme, baseURL: baseURL,
-                                            imageLoader: imageLoader, isDark: tv.isDark)
-            renderer.revealTableAnchor = revealedTableAnchor
-            renderer.collapsedAnchors = collapsedAnchors
-            renderer.originOffset = window.location
-            let sliceSource = (storage.string as NSString).substring(with: window)
-            let sliceParsed = window == full ? parsed : parsed.slice(window)
-            let rendered = renderer.render(source: sliceSource, parsed: sliceParsed)
-
+        if !windows.isEmpty {
             storage.beginEditing()
-            rendered.enumerateAttributes(in: NSRange(location: 0, length: rendered.length)) { attrs, range, _ in
-                storage.setAttributes(attrs, range: NSRange(location: range.location + window.location,
-                                                            length: range.length))
+            for window in windows {
+                var renderer = MarkdownRenderer(theme: theme, baseURL: baseURL,
+                                                imageLoader: imageLoader,
+                                                isDark: tv.isDark)
+                renderer.revealTableAnchor = revealedTableAnchor
+                renderer.collapsedAnchors = collapsedAnchors
+                renderer.originOffset = window.location
+                let sliceSource = (storage.string as NSString).substring(with: window)
+                let sliceParsed = window == full ? parsed : parsed.slice(window)
+                let rendered = renderer.render(source: sliceSource, parsed: sliceParsed)
+
+                rendered.enumerateAttributes(
+                    in: NSRange(location: 0, length: rendered.length)
+                ) { attrs, range, _ in
+                    storage.setAttributes(
+                        attrs,
+                        range: NSRange(location: range.location + window.location,
+                                       length: range.length)
+                    )
+                }
             }
             storage.endEditing()
         }
@@ -260,6 +282,35 @@ public final class EditorController: ObservableObject {
         layoutManager?.collapsedAnchors = collapsedAnchors
         refreshTypingAttributes()
         tv.needsDisplay = true
+    }
+
+    private func mergeStyleWindows(_ ranges: [NSRange]) -> [NSRange] {
+        let sorted = ranges.sorted { $0.location < $1.location }
+        var merged: [NSRange] = []
+        for range in sorted {
+            guard let last = merged.last else {
+                merged.append(range)
+                continue
+            }
+            if range.location <= last.upperBound {
+                merged[merged.count - 1] = NSUnionRange(last, range)
+            } else {
+                merged.append(range)
+            }
+        }
+        return merged
+    }
+
+    private func imagesDidLoad(_ urls: Set<URL>) {
+        guard let tv = textView, let storage = tv.textStorage else { return }
+        let ranges = imageLoader.paragraphRanges(
+            forLoadedURLs: urls, images: parsed.images,
+            source: storage.string, baseURL: baseURL
+        )
+        guard !ranges.isEmpty else { return }
+        let viewport = TextViewportAnchor.capture(in: tv)
+        applyStyles(dirtyRanges: ranges)
+        viewport?.restore(in: tv)
     }
 
     /// A restyle window must cover any collapsed fold it touches *entirely* —
