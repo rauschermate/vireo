@@ -4,15 +4,6 @@ import UniformTypeIdentifiers
 import VireoCore
 import VireoUpdater
 
-/// A node in the opened-folder file tree (left sidebar).
-struct FileNode: Identifiable, Hashable {
-    let id: URL
-    var url: URL { id }
-    var name: String
-    var isDirectory: Bool
-    var children: [FileNode]?
-}
-
 /// Single window, custom Obsidian-style tab strip: ordered documents, one
 /// selected. (Native NSWindow tabs were tried first — the system bar can't do
 /// min/max-width tabs, inline rename, or custom titles; see eng-design §14.)
@@ -31,6 +22,8 @@ final class AppState: ObservableObject {
     @Published private(set) var documents: [DocumentModel] = []
     @Published var selectedID: UUID?
     @Published var rootFolder: FileNode?
+    @Published private(set) var isLoadingFileTree = false
+    @Published private(set) var fileTreeError: String?
 
     /// The last folder the user explicitly opened — used as a fallback root
     /// when the active tab is untitled (has no containing folder to follow).
@@ -44,6 +37,10 @@ final class AppState: ObservableObject {
 
     /// URLs from Finder / the CLI that arrived before the window existed.
     var pendingURLs: [URL] = []
+
+    private let fileTreeService = FileTreeService()
+    private var fileTreeTask: Task<Void, Never>?
+    private var fileTreeGeneration = 0
 
     var activeDocument: DocumentModel? {
         documents.first { $0.id == selectedID }
@@ -365,9 +362,14 @@ final class AppState: ObservableObject {
     /// the tab is untitled. `nil` when there's nothing to browse (empty state).
     func refreshFileTree() {
         if let folder = activeDocument?.url?.deletingLastPathComponent() ?? pinnedFolder {
-            rootFolder = buildTree(folder)
+            loadFileTree(folder)
         } else {
+            fileTreeTask?.cancel()
+            fileTreeTask = nil
+            fileTreeGeneration += 1
             rootFolder = nil
+            isLoadingFileTree = false
+            fileTreeError = nil
         }
     }
 
@@ -377,7 +379,7 @@ final class AppState: ObservableObject {
     func openFolder(_ url: URL) {
         pinnedFolder = url
         showFileSidebar = true
-        rootFolder = buildTree(url)
+        loadFileTree(url)
     }
 
     func saveActiveAs() {
@@ -397,22 +399,44 @@ final class AppState: ObservableObject {
         return types
     }
 
-    private func buildTree(_ url: URL) -> FileNode {
-        let fm = FileManager.default
-        var children: [FileNode] = []
-        let contents = (try? fm.contentsOfDirectory(at: url,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles])) ?? []
-        for child in contents.sorted(by: { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }) {
-            let isDir = (try? child.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-            if isDir {
-                let node = buildTree(child)
-                if !(node.children?.isEmpty ?? true) { children.append(node) }
-            } else if FileService.isMarkdown(child) {
-                children.append(FileNode(id: child, name: child.lastPathComponent, isDirectory: false, children: nil))
+    private func loadFileTree(_ url: URL) {
+        fileTreeTask?.cancel()
+        fileTreeGeneration += 1
+        let generation = fileTreeGeneration
+        let normalizedURL = url.standardizedFileURL
+        if rootFolder?.url != normalizedURL { rootFolder = nil }
+        isLoadingFileTree = true
+        fileTreeError = nil
+
+        let service = fileTreeService
+        fileTreeTask = Task { [weak self] in
+            let worker = Task.detached(priority: .userInitiated) {
+                try service.buildTree(at: normalizedURL)
+            }
+            let result: Result<FileNode, Error>
+            do {
+                let root = try await withTaskCancellationHandler {
+                    try await worker.value
+                } onCancel: {
+                    worker.cancel()
+                }
+                result = .success(root)
+            } catch {
+                result = .failure(error)
+            }
+
+            guard let self, self.fileTreeGeneration == generation else { return }
+            self.fileTreeTask = nil
+            self.isLoadingFileTree = false
+            switch result {
+            case .success(let root):
+                self.rootFolder = root
+            case .failure(let error) where error is CancellationError:
+                break
+            case .failure(let error):
+                self.fileTreeError = error.localizedDescription
+                NSLog("Vireo file tree failed: \(error)")
             }
         }
-        return FileNode(id: url, name: url.lastPathComponent, isDirectory: true,
-                        children: children.isEmpty ? nil : children)
     }
 }

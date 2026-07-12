@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import VireoCore
 
 /// Left panel: a tree of the active tab's containing folder — subfolders and
 /// markdown files only (the app can't open anything else). Re-roots to the new
@@ -30,12 +31,56 @@ struct FileSidebar: View {
                     .onChange(of: state.activeDocument?.url) { _, url in selection = url }
                     .onAppear { selection = state.activeDocument?.url }
                 }
+                .overlay(alignment: .topTrailing) {
+                    if state.isLoadingFileTree {
+                        ProgressView()
+                            .controlSize(.small)
+                            .padding(14)
+                            .accessibilityLabel("Refreshing folder")
+                    }
+                }
+            } else if state.isLoadingFileTree {
+                loadingState
+            } else if state.fileTreeError != nil {
+                errorState
             } else {
                 emptyState
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .modifier(SidebarBackground())
+    }
+
+    private var loadingState: some View {
+        VStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Loading folder…")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var errorState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 24, weight: .light))
+                .foregroundStyle(.tertiary)
+            Text("Couldn’t load folder")
+                .font(.callout).bold()
+                .foregroundStyle(.secondary)
+            Text(state.fileTreeError ?? "The folder isn’t available.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+            Button("Try Again") { state.refreshFileTree() }
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     /// App name over the root folder name, with a little breathing room before
