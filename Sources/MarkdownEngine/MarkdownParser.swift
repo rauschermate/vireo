@@ -473,6 +473,12 @@ private struct Accumulator {
             for (col, node) in cellNodes.enumerated() {
                 guard let r = map.nsRange(node.range) else { continue }
                 cells.append(TableCell(range: trim(r), column: col, alignment: alignment(col)))
+                // Table cells are still inline Markdown. Record emphasis,
+                // code, links and their delimiters just like paragraph text so
+                // the drawn grid can present rich content without raw syntax.
+                for child in node.children {
+                    visitInline(child, style: InlineStyle())
+                }
             }
             columnCount = max(columnCount, cells.count)
             rows.append(TableRow(isHeader: isHeader, cells: cells))
@@ -487,6 +493,14 @@ private struct Accumulator {
         var lines: [NSRange] = []
         enumerateLines(in: tableRange) { lines.append($0) }
         let separator = lines.count > 1 ? lines[1] : nil
+        if let headerLine = lines.first {
+            result.blockRuns.append(BlockRun(range: headerLine,
+                                             kind: .tableRow(isHeader: true)))
+        }
+        for line in lines.dropFirst(2) {
+            result.blockRuns.append(BlockRun(range: line,
+                                             kind: .tableRow(isHeader: false)))
+        }
 
         result.tables.append(TableInfo(range: tableRange, rows: rows,
                                        columnCount: columnCount, anchor: tableRange.location,

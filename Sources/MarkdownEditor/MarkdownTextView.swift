@@ -15,6 +15,11 @@ public final class MarkdownTextView: NSTextView {
         effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     }
 
+    public override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        controller?.tableGeometryDidChange()
+    }
+
     public override func mouseDown(with event: NSEvent) {
         // Collapse chevron / `…` expander.
         if event.clickCount == 1, let anchor = collapseTarget(at: event) {
@@ -25,6 +30,16 @@ public final class MarkdownTextView: NSTextView {
         if event.clickCount == 1, let anchor = checkboxAnchor(at: event) {
             controller?.toggleTask(atAnchor: anchor)
             return
+        }
+        // Tables remain rendered during editing. A click enters the drawn cell
+        // through one lightweight native overlay instead of exposing raw pipes.
+        if event.clickCount <= 2,
+           let layout = layoutManager as? MarkdownLayoutManager {
+            let point = convert(event.locationInWindow, from: nil)
+            if let cell = layout.tableCell(at: point) {
+                controller?.beginTableCellEditing(cell, selectAll: event.clickCount == 1)
+                return
+            }
         }
         // ⌘-click follows links (editor convention); a plain click must still
         // place the caret so link text stays editable.
@@ -332,6 +347,12 @@ public final class MarkdownTextView: NSTextView {
     private func move(_ affinity: MarkerAffinity, _ operation: () -> Void) {
         operation()
         normalizeSelection(affinity: affinity)
+        activateTableCellAtCaret()
+    }
+
+    private func activateTableCellAtCaret() {
+        guard selectedRange().length == 0 else { return }
+        controller?.beginTableCellEditing(atSourceLocation: selectedRange().location)
     }
 
     public override func moveRight(_ sender: Any?) { move(.downstream) { super.moveRight(sender) } }
@@ -369,6 +390,14 @@ public final class MarkdownTextView: NSTextView {
     public override func moveDownAndModifySelection(_ sender: Any?) { move(.nearest) { super.moveDownAndModifySelection(sender) } }
 
     public override func insertText(_ string: Any, replacementRange: NSRange) {
+        if replacementRange.location == NSNotFound, !hasMarkedText(),
+           controller?.beginTableCellEditing(atSourceLocation: selectedRange().location,
+                                             selectAll: selectedRange().length > 0) == true {
+            let plain = (string as? NSAttributedString)?.string
+                ?? (string as? String) ?? ""
+            controller?.insertTextIntoActiveTableCell(plain)
+            return
+        }
         // A vertical arrow, service or accessibility action may have left the
         // insertion point inside a hidden marker. Canonicalize before editing.
         if replacementRange.location == NSNotFound, !hasMarkedText() {
