@@ -39,6 +39,7 @@ xcodebuild -project Vireo.xcodeproj -scheme Vireo -configuration Release \
     archive
 
 APP="build/Vireo.xcarchive/Products/Applications/Vireo.app"
+"$ROOT/scripts/verify-bundle-metadata.sh" "$APP"
 echo "==> Notarizing the app bundle…"
 DITTO_ZIP="build/Vireo.zip"
 /usr/bin/ditto -c -k --keepParent "$APP" "$DITTO_ZIP"
