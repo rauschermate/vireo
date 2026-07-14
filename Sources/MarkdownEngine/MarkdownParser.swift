@@ -555,6 +555,10 @@ private struct Accumulator {
                                               source: image.source ?? "",
                                               alt: plainText(image),
                                               anchor: r.location))
+                // The source expression is drawing metadata, not visible text.
+                // Keep every character in the backing store but null its glyphs;
+                // `.vireoImage` on the first character remains the draw anchor.
+                result.markerRanges.append(r)
             }
 
         case let code as InlineCode:
