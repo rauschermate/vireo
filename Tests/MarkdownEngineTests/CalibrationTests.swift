@@ -27,7 +27,13 @@ final class ParserTests: XCTestCase {
     }
 
     func testHidesLink() {
-        XCTAssertEqual(visible("see [Apple](https://apple.com) site"), "see Apple site")
+        let source = "see [Apple](https://apple.com) site"
+        XCTAssertEqual(visible(source), "see Apple site")
+        let link = MarkdownParser().parse(source).links.first
+        XCTAssertEqual(link?.destination, "https://apple.com")
+        XCTAssertEqual(link.map { (source as NSString).substring(with: $0.range) },
+                       "[Apple](https://apple.com)")
+        XCTAssertEqual(link.map { (source as NSString).substring(with: $0.labelRange) }, "Apple")
     }
 
     func testHidesFencedCode() {
@@ -62,9 +68,13 @@ final class ParserTests: XCTestCase {
     }
 
     func testImage() {
-        let parsed = MarkdownParser().parse("![alt](pic.png)")
+        let source = "![alt](pic.png)"
+        let parsed = MarkdownParser().parse(source)
         XCTAssertEqual(parsed.images.count, 1)
         XCTAssertEqual(parsed.images.first?.source, "pic.png")
+        XCTAssertEqual(visible(source), "", "the full image expression is rendering metadata")
+        XCTAssertTrue(parsed.markerRanges.contains(NSRange(location: 0,
+                                                            length: (source as NSString).length)))
     }
 }
 
