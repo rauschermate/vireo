@@ -578,8 +578,10 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let drawRect = containerRect.offsetBy(dx: origin.x, dy: origin.y)
         img.draw(in: drawRect, from: .zero, operation: .sourceOver, fraction: 1,
                  respectFlipped: true, hints: nil)
-        drawImageOutline(in: drawRect, cornerRadius: 0,
-                         selected: selectedImageAnchor == charIndex)
+        let selected = selectedImageAnchor == charIndex
+        if selected || !imageUsesAlphaChannel(img) {
+            drawImageOutline(in: drawRect, cornerRadius: 0, selected: selected)
+        }
     }
 
     private func drawImageFallback(alt: String, atCharIndex charIndex: Int, origin: NSPoint) {
@@ -625,6 +627,23 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         (selected ? NSColor.systemBlue : imageOutlineColor).setStroke()
         outline.lineWidth = lineWidth
         outline.stroke()
+    }
+
+    /// Transparent artwork should keep its natural silhouette instead of
+    /// revealing the rectangular bounds of the image container. Checking the
+    /// backing image metadata avoids scanning large images during a redraw.
+    private func imageUsesAlphaChannel(_ image: NSImage) -> Bool {
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            return false
+        }
+        switch cgImage.alphaInfo {
+        case .premultipliedFirst, .premultipliedLast, .first, .last, .alphaOnly:
+            return true
+        case .none, .noneSkipFirst, .noneSkipLast:
+            return false
+        @unknown default:
+            return true
+        }
     }
 
     private var imageOutlineColor: NSColor {
