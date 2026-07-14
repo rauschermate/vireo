@@ -44,7 +44,7 @@ final class ImageEditingTests: XCTestCase {
         XCTAssertNil((textView.layoutManager as? MarkdownLayoutManager)?.selectedImageAnchor)
     }
 
-    func testEditorSurfaceDrawsImageUpright() throws {
+    func testEditorSurfaceDrawsImageUpright() async throws {
         let controller = EditorController()
         let (scroll, textView) = MarkdownSourceView.makeTextStack(
             source: "![Orientation](orientation.png)", controller: controller)
@@ -66,10 +66,14 @@ final class ImageEditingTests: XCTestCase {
         try png.write(to: sourceURL)
         defer { try? FileManager.default.removeItem(at: sourceURL) }
         let loader = ImageLoader()
-        guard let loadedImage = loader.image(forSource: sourceURL.path, baseURL: nil) else {
-            return XCTFail("test image could not be loaded")
+        var loadedImage = loader.image(forSource: sourceURL.path, baseURL: nil)
+        let deadline = ContinuousClock.now + .seconds(2)
+        while loadedImage == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+            loadedImage = loader.image(forSource: sourceURL.path, baseURL: nil)
         }
-        layout.imageProvider = { _ in loadedImage }
+        let image = try XCTUnwrap(loadedImage, "test image could not be loaded asynchronously")
+        layout.imageProvider = { _ in image }
         layout.ensureLayout(for: container)
 
         guard let bitmap = textView.bitmapImageRepForCachingDisplay(in: textView.bounds) else {
