@@ -68,15 +68,57 @@ final class ImageRenderingTests: XCTestCase {
         XCTAssertLessThanOrEqual(wide.imageRect.width, Theme().contentMaxWidth + 0.5)
     }
 
+    func testSelectedImageDrawsBlueFocusBorder() throws {
+        let snapshot = try snapshot(source: "![Selected](selected.png)", width: 180,
+                                    imageProvider: { _ in self.stripedImage() },
+                                    appearance: .aqua, selectedImageAnchor: 0)
+        let edge = snapshot.bitmap.colorAt(x: Int(snapshot.imageRect.minX + 1),
+                                           y: Int(snapshot.imageRect.midY))?
+            .usingColorSpace(.deviceRGB)
+        XCTAssertGreaterThan(edge?.blueComponent ?? 0, edge?.redComponent ?? 1,
+                             "selected images need a visible blue focus border")
+    }
+
+    func testTransparentImageDoesNotRevealItsRectangularBounds() throws {
+        let snapshot = try snapshot(source: "![Transparent](transparent.png)", width: 180,
+                                    imageProvider: { _ in self.transparentImage() },
+                                    appearance: .aqua)
+        let edge = snapshot.bitmap.colorAt(x: Int(snapshot.imageRect.minX),
+                                           y: Int(snapshot.imageRect.midY))?
+            .usingColorSpace(.deviceRGB)
+        let background = snapshot.bitmap.colorAt(x: Int(snapshot.imageRect.minX - 2),
+                                                 y: Int(snapshot.imageRect.midY))?
+            .usingColorSpace(.deviceRGB)
+
+        XCTAssertEqual(edge?.redComponent ?? 0, background?.redComponent ?? 1, accuracy: 0.02)
+        XCTAssertEqual(edge?.greenComponent ?? 0, background?.greenComponent ?? 1, accuracy: 0.02)
+        XCTAssertEqual(edge?.blueComponent ?? 0, background?.blueComponent ?? 1, accuracy: 0.02)
+    }
+
+    func testImageHitRectDoesNotDriftWithDrawingOrigin() throws {
+        let image = stripedImage()
+        let atZero = try snapshot(source: "![Hit target](image.png)", width: 180,
+                                  imageProvider: { _ in image }, appearance: .aqua)
+        let translated = try snapshot(source: "![Hit target](image.png)", width: 180,
+                                      imageProvider: { _ in image }, appearance: .aqua,
+                                      drawOrigin: NSPoint(x: 24, y: 28))
+
+        XCTAssertEqual(atZero.imageRect, translated.imageRect,
+                       "scrolling/redrawing must not move the image hit target")
+    }
+
     private func snapshot(source: String, width: CGFloat,
                           imageProvider: @escaping (String) -> NSImage?,
-                          appearance name: NSAppearance.Name) throws -> Snapshot {
+                          appearance name: NSAppearance.Name,
+                          selectedImageAnchor: Int? = nil,
+                          drawOrigin: NSPoint = .zero) throws -> Snapshot {
         let parsed = MarkdownParser().parse(source)
         let attributed = MarkdownRenderer(theme: Theme()).render(source: source, parsed: parsed)
         let storage = NSTextStorage(attributedString: attributed)
         let layout = MarkdownLayoutManager()
         layout.imageProvider = imageProvider
         layout.imageMaxWidth = Theme().contentMaxWidth
+        layout.selectedImageAnchor = selectedImageAnchor
         storage.addLayoutManager(layout)
         let container = NSTextContainer(size: NSSize(width: width, height: 1_000))
         container.lineFragmentPadding = 8
@@ -108,8 +150,8 @@ final class ImageRenderingTests: XCTestCase {
             NSColor.textBackgroundColor.setFill()
             NSRect(x: 0, y: 0, width: width + 24, height: height).fill()
             let glyphs = layout.glyphRange(for: container)
-            layout.drawBackground(forGlyphRange: glyphs, at: .zero)
-            layout.drawGlyphs(forGlyphRange: glyphs, at: .zero)
+            layout.drawBackground(forGlyphRange: glyphs, at: drawOrigin)
+            layout.drawGlyphs(forGlyphRange: glyphs, at: drawOrigin)
         }
         NSGraphicsContext.restoreGraphicsState()
         cg.restoreGState()
@@ -134,6 +176,25 @@ final class ImageRenderingTests: XCTestCase {
                 ? NSColor(deviceRed: 1, green: 0, blue: 0, alpha: 1)
                 : NSColor(deviceRed: 0, green: 0, blue: 1, alpha: 1)
             for x in 0..<width { rep.setColor(color, atX: x, y: y) }
+        }
+        let image = NSImage(size: NSSize(width: width, height: height))
+        image.addRepresentation(rep)
+        return image
+    }
+
+    private func transparentImage(width: Int = 40, height: Int = 20) -> NSImage {
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
+                                   bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                   isPlanar: false, colorSpaceName: .deviceRGB,
+                                   bytesPerRow: 0, bitsPerPixel: 0)!
+        let artwork = NSColor(deviceRed: 0, green: 0.65, blue: 0.7, alpha: 1)
+        let transparent = NSColor(deviceRed: 0, green: 0, blue: 0, alpha: 0)
+        for y in 0..<height {
+            for x in 0..<width {
+                let insideArtwork = x >= width / 4 && x < width * 3 / 4
+                    && y >= height / 4 && y < height * 3 / 4
+                rep.setColor(insideArtwork ? artwork : transparent, atX: x, y: y)
+            }
         }
         let image = NSImage(size: NSSize(width: width, height: height))
         image.addRepresentation(rep)
