@@ -39,8 +39,9 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     /// chevron toggles and collapsed-`…` expanders, keyed by item anchor.
     public private(set) var chevronRects: [Int: NSRect] = [:]
     public private(set) var dotsRects: [Int: NSRect] = [:]
-    /// Rendered image hit targets in text-view coordinates, keyed by source anchor.
-    /// `MarkdownTextView` uses these for the native edit/remove affordance.
+    /// Rendered image hit targets in text-container coordinates, keyed by source
+    /// anchor. Keeping these independent of a particular drawing pass matters:
+    /// AppKit may translate `origin` while drawing a scrolled dirty region.
     public private(set) var imageRects: [Int: NSRect] = [:]
 
     public override init() {
@@ -570,13 +571,14 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let scale = min(1, maxW / img.size.width)
         let w = img.size.width * scale
         let h = img.size.height * scale
-        let rect = NSRect(x: origin.x + lineRect.minX + 12,
-                          y: origin.y + lineRect.minY + 4,
-                          width: w, height: h)
-        imageRects[charIndex] = rect
-        img.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1,
+        let containerRect = NSRect(x: lineRect.minX + 12,
+                                   y: lineRect.minY + 4,
+                                   width: w, height: h)
+        imageRects[charIndex] = containerRect
+        let drawRect = containerRect.offsetBy(dx: origin.x, dy: origin.y)
+        img.draw(in: drawRect, from: .zero, operation: .sourceOver, fraction: 1,
                  respectFlipped: true, hints: nil)
-        drawImageOutline(in: rect, cornerRadius: 0,
+        drawImageOutline(in: drawRect, cornerRadius: 0,
                          selected: selectedImageAnchor == charIndex)
     }
 
@@ -587,10 +589,11 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let lineRect = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
         let available = max(1, container.size.width - container.lineFragmentPadding * 2 - 24)
         let width = max(1, min(imageMaxWidth, available))
-        let rect = NSRect(x: origin.x + lineRect.minX + 12,
-                          y: origin.y + lineRect.minY + 4,
-                          width: width, height: max(32, lineRect.height - 8))
-        imageRects[charIndex] = rect
+        let containerRect = NSRect(x: lineRect.minX + 12,
+                                   y: lineRect.minY + 4,
+                                   width: width, height: max(32, lineRect.height - 8))
+        imageRects[charIndex] = containerRect
+        let rect = containerRect.offsetBy(dx: origin.x, dy: origin.y)
         NSColor.controlBackgroundColor.setFill()
         NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
         drawImageOutline(in: rect, cornerRadius: 6,

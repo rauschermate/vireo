@@ -77,9 +77,11 @@ final class ImageEditingTests: XCTestCase {
         }
         textView.cacheDisplay(in: textView.bounds, to: bitmap)
 
-        guard let rect = layout.imageRects[0] else {
+        guard let containerRect = layout.imageRects[0] else {
             return XCTFail("image renderer did not record a hit target")
         }
+        let origin = textView.textContainerOrigin
+        let rect = containerRect.offsetBy(dx: origin.x, dy: origin.y)
         let scaleX = CGFloat(bitmap.pixelsWide) / textView.bounds.width
         let scaleY = CGFloat(bitmap.pixelsHigh) / textView.bounds.height
         let x = Int(rect.midX * scaleX)

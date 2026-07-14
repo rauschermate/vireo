@@ -79,10 +79,23 @@ final class ImageRenderingTests: XCTestCase {
                              "selected images need a visible blue focus border")
     }
 
+    func testImageHitRectDoesNotDriftWithDrawingOrigin() throws {
+        let image = stripedImage()
+        let atZero = try snapshot(source: "![Hit target](image.png)", width: 180,
+                                  imageProvider: { _ in image }, appearance: .aqua)
+        let translated = try snapshot(source: "![Hit target](image.png)", width: 180,
+                                      imageProvider: { _ in image }, appearance: .aqua,
+                                      drawOrigin: NSPoint(x: 24, y: 28))
+
+        XCTAssertEqual(atZero.imageRect, translated.imageRect,
+                       "scrolling/redrawing must not move the image hit target")
+    }
+
     private func snapshot(source: String, width: CGFloat,
                           imageProvider: @escaping (String) -> NSImage?,
                           appearance name: NSAppearance.Name,
-                          selectedImageAnchor: Int? = nil) throws -> Snapshot {
+                          selectedImageAnchor: Int? = nil,
+                          drawOrigin: NSPoint = .zero) throws -> Snapshot {
         let parsed = MarkdownParser().parse(source)
         let attributed = MarkdownRenderer(theme: Theme()).render(source: source, parsed: parsed)
         let storage = NSTextStorage(attributedString: attributed)
@@ -121,8 +134,8 @@ final class ImageRenderingTests: XCTestCase {
             NSColor.textBackgroundColor.setFill()
             NSRect(x: 0, y: 0, width: width + 24, height: height).fill()
             let glyphs = layout.glyphRange(for: container)
-            layout.drawBackground(forGlyphRange: glyphs, at: .zero)
-            layout.drawGlyphs(forGlyphRange: glyphs, at: .zero)
+            layout.drawBackground(forGlyphRange: glyphs, at: drawOrigin)
+            layout.drawGlyphs(forGlyphRange: glyphs, at: drawOrigin)
         }
         NSGraphicsContext.restoreGraphicsState()
         cg.restoreGState()

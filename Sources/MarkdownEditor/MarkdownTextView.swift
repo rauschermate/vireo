@@ -342,7 +342,9 @@ public final class MarkdownTextView: NSTextView {
         guard let lm = layoutManager as? MarkdownLayoutManager,
               let storage = textStorage else { return nil }
         let point = convert(event.locationInWindow, from: nil)
-        for (anchor, rect) in lm.imageRects where rect.contains(point) {
+        let origin = textContainerOrigin
+        let containerPoint = NSPoint(x: point.x - origin.x, y: point.y - origin.y)
+        for (anchor, rect) in lm.imageRects where rect.contains(containerPoint) {
             guard anchor < storage.length,
                   storage.attribute(.vireoImage, at: anchor, effectiveRange: nil) != nil else {
                 continue
