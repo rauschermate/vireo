@@ -18,6 +18,9 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     public var bulletFont: NSFont = .systemFont(ofSize: 16)
     public var imageProvider: ((String) -> NSImage?)?
     public var imageMaxWidth: CGFloat = 640
+    /// The rendered image currently selected by the editor, if any.
+    /// Selection is visual only; the Markdown source remains hidden.
+    public var selectedImageAnchor: Int?
 
     // Table drawing config (set on each restyle).
     public var tables: [TableInfo] = []
@@ -573,10 +576,8 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         imageRects[charIndex] = rect
         img.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1,
                  respectFlipped: true, hints: nil)
-        imageOutlineColor.setStroke()
-        let outline = NSBezierPath(rect: rect.insetBy(dx: 0.5, dy: 0.5))
-        outline.lineWidth = 1
-        outline.stroke()
+        drawImageOutline(in: rect, cornerRadius: 0,
+                         selected: selectedImageAnchor == charIndex)
     }
 
     private func drawImageFallback(alt: String, atCharIndex charIndex: Int, origin: NSPoint) {
@@ -592,11 +593,8 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         imageRects[charIndex] = rect
         NSColor.controlBackgroundColor.setFill()
         NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
-        imageOutlineColor.setStroke()
-        let outline = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5),
-                                   xRadius: 5.5, yRadius: 5.5)
-        outline.lineWidth = 1
-        outline.stroke()
+        drawImageOutline(in: rect, cornerRadius: 6,
+                         selected: selectedImageAnchor == charIndex)
 
         let label = alt.trimmingCharacters(in: .whitespacesAndNewlines)
         let text = (label.isEmpty ? "Image" : label) as NSString
@@ -611,6 +609,19 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let labelRect = NSRect(x: rect.minX + 12, y: rect.midY - size.height / 2,
                                width: max(0, rect.width - 24), height: size.height)
         text.draw(in: labelRect, withAttributes: attrs)
+    }
+
+    private func drawImageOutline(in rect: NSRect, cornerRadius: CGFloat, selected: Bool) {
+        let lineWidth: CGFloat = selected ? 2 : 1
+        let inset = lineWidth / 2
+        let outlineRect = rect.insetBy(dx: inset, dy: inset)
+        let radius = max(0, cornerRadius - inset)
+        let outline = cornerRadius > 0
+            ? NSBezierPath(roundedRect: outlineRect, xRadius: radius, yRadius: radius)
+            : NSBezierPath(rect: outlineRect)
+        (selected ? NSColor.systemBlue : imageOutlineColor).setStroke()
+        outline.lineWidth = lineWidth
+        outline.stroke()
     }
 
     private var imageOutlineColor: NSColor {

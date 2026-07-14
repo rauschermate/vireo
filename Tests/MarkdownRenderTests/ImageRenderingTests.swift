@@ -68,15 +68,28 @@ final class ImageRenderingTests: XCTestCase {
         XCTAssertLessThanOrEqual(wide.imageRect.width, Theme().contentMaxWidth + 0.5)
     }
 
+    func testSelectedImageDrawsBlueFocusBorder() throws {
+        let snapshot = try snapshot(source: "![Selected](selected.png)", width: 180,
+                                    imageProvider: { _ in self.stripedImage() },
+                                    appearance: .aqua, selectedImageAnchor: 0)
+        let edge = snapshot.bitmap.colorAt(x: Int(snapshot.imageRect.minX + 1),
+                                           y: Int(snapshot.imageRect.midY))?
+            .usingColorSpace(.deviceRGB)
+        XCTAssertGreaterThan(edge?.blueComponent ?? 0, edge?.redComponent ?? 1,
+                             "selected images need a visible blue focus border")
+    }
+
     private func snapshot(source: String, width: CGFloat,
                           imageProvider: @escaping (String) -> NSImage?,
-                          appearance name: NSAppearance.Name) throws -> Snapshot {
+                          appearance name: NSAppearance.Name,
+                          selectedImageAnchor: Int? = nil) throws -> Snapshot {
         let parsed = MarkdownParser().parse(source)
         let attributed = MarkdownRenderer(theme: Theme()).render(source: source, parsed: parsed)
         let storage = NSTextStorage(attributedString: attributed)
         let layout = MarkdownLayoutManager()
         layout.imageProvider = imageProvider
         layout.imageMaxWidth = Theme().contentMaxWidth
+        layout.selectedImageAnchor = selectedImageAnchor
         storage.addLayoutManager(layout)
         let container = NSTextContainer(size: NSSize(width: width, height: 1_000))
         container.lineFragmentPadding = 8
