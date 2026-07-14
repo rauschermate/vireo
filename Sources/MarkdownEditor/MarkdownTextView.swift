@@ -6,12 +6,25 @@ import MarkdownRender
 /// `EditorController`. Clicks on link text follow the link (reader behaviour).
 public final class MarkdownTextView: NSTextView {
     weak var controller: EditorController?
+    private var representedImageAnchor: Int?
+    private(set) var selectedImageAnchor: Int?
 
     var isDark: Bool {
         effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     }
 
     public override func mouseDown(with event: NSEvent) {
+        // A rendered image behaves like a native selectable object: one click
+        // gives it focus without exposing or placing the caret inside its
+        // hidden Markdown expression.
+        if event.clickCount == 1 {
+            if let anchor = imageAnchor(at: event) {
+                selectImage(atAnchor: anchor)
+                window?.makeFirstResponder(self)
+                return
+            }
+            selectImage(atAnchor: nil)
+        }
         // Collapse chevron / `…` expander.
         if event.clickCount == 1, let anchor = collapseTarget(at: event) {
             controller?.toggleCollapse(anchor: anchor)
@@ -30,8 +43,106 @@ public final class MarkdownTextView: NSTextView {
             controller?.onOpenLink?(link)
             return
         }
+        // Rendered images keep their Markdown source hidden. Double-clicking
+        // opens a native editor so changing the alt text/source never requires
+        // manipulating invisible delimiters.
+        if event.clickCount == 2, let anchor = imageAnchor(at: event) {
+            selectImage(atAnchor: anchor)
+            controller?.editImage(atAnchor: anchor)
+            return
+        }
         super.mouseDown(with: event)
         snapCaretAfterListMarker() // clicks land inside hidden markers too
+    }
+
+    public override func menu(for event: NSEvent) -> NSMenu? {
+        guard let anchor = imageAnchor(at: event) else { return super.menu(for: event) }
+        selectImage(atAnchor: anchor)
+        window?.makeFirstResponder(self)
+        representedImageAnchor = anchor
+        let menu = NSMenu(title: "Image")
+        let edit = NSMenuItem(title: "Edit Image…", action: #selector(editRepresentedImage),
+                              keyEquivalent: "")
+        edit.target = self
+        menu.addItem(edit)
+        menu.addItem(.separator())
+        let remove = NSMenuItem(title: "Remove Image", action: #selector(removeRepresentedImage),
+                                keyEquivalent: "")
+        remove.target = self
+        menu.addItem(remove)
+        return menu
+    }
+
+    @objc private func editRepresentedImage() {
+        guard let anchor = representedImageAnchor else { return }
+        controller?.editImage(atAnchor: anchor)
+    }
+
+    @objc private func removeRepresentedImage() {
+        guard let anchor = representedImageAnchor else { return }
+        selectImage(atAnchor: nil)
+        controller?.removeImage(atAnchor: anchor)
+    }
+
+    /// Keep rendered-image selection separate from AppKit's text selection.
+    /// The layout manager owns the border because it also owns image drawing.
+    func selectImage(atAnchor anchor: Int?) {
+        let validAnchor = anchor.flatMap { candidate -> Int? in
+            guard let storage = textStorage, candidate >= 0, candidate < storage.length,
+                  storage.attribute(.vireoImage, at: candidate, effectiveRange: nil) != nil else {
+                return nil
+            }
+            return candidate
+        }
+        guard selectedImageAnchor != validAnchor else { return }
+        selectedImageAnchor = validAnchor
+        (layoutManager as? MarkdownLayoutManager)?.selectedImageAnchor = validAnchor
+        if let validAnchor,
+           let image = controller?.parsed.images.first(where: { $0.anchor == validAnchor }) {
+            // Collapse any prior text selection at a safe visible boundary.
+            // The insertion point stays hidden while the image is selected.
+            setSelectedRange(NSRange(location: min(image.range.upperBound,
+                                                    textStorage?.length ?? 0),
+                                     length: 0))
+        }
+        needsDisplay = true
+    }
+
+    @discardableResult
+    private func removeSelectedImage() -> Bool {
+        guard let anchor = selectedImageAnchor, let controller else { return false }
+        selectImage(atAnchor: nil)
+        controller.removeImage(atAnchor: anchor)
+        return true
+    }
+
+    public override func deleteBackward(_ sender: Any?) {
+        if !removeSelectedImage() { super.deleteBackward(sender) }
+    }
+
+    public override func deleteForward(_ sender: Any?) {
+        if !removeSelectedImage() { super.deleteForward(sender) }
+    }
+
+    public override func keyDown(with event: NSEvent) {
+        // Delete/Forward Delete are dispatched to the overrides above. Any
+        // other keyboard action returns focus to the text caret; Escape simply
+        // clears the object selection.
+        if selectedImageAnchor != nil {
+            if event.keyCode == 53 {
+                selectImage(atAnchor: nil)
+                return
+            }
+            if event.keyCode != 51, event.keyCode != 117 {
+                selectImage(atAnchor: nil)
+            }
+        }
+        super.keyDown(with: event)
+    }
+
+    public override func didChangeText() {
+        selectImage(atAnchor: nil)
+        super.didChangeText()
     }
 
     /// If the click lands on a drawn checkbox (left of a task item's first
@@ -85,6 +196,7 @@ public final class MarkdownTextView: NSTextView {
     private var lastDrawnCaretRect: NSRect?
 
     public override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
+        guard selectedImageAnchor == nil else { return }
         let corrected = insertionRect(for: rect)
         lastDrawnCaretRect = corrected
         super.drawInsertionPoint(in: corrected, color: color, turnedOn: flag)
@@ -177,7 +289,8 @@ public final class MarkdownTextView: NSTextView {
         controller?.setHoveredListAnchor(collapsibleAnchorOnLine(at: event))
         // Arrow cursor over the clickable controls (fold chevron / `…` /
         // task checkboxes) — a subtle hint that they're clickable, not text.
-        if collapseTarget(at: event) != nil || checkboxAnchor(at: event) != nil {
+        if collapseTarget(at: event) != nil || checkboxAnchor(at: event) != nil
+            || imageAnchor(at: event) != nil {
             NSCursor.arrow.set()
         }
     }
@@ -222,6 +335,22 @@ public final class MarkdownTextView: NSTextView {
         let point = convert(event.locationInWindow, from: nil)
         for (anchor, rect) in lm.chevronRects where rect.contains(point) { return anchor }
         for (anchor, rect) in lm.dotsRects where rect.contains(point) { return anchor }
+        return nil
+    }
+
+    private func imageAnchor(at event: NSEvent) -> Int? {
+        guard let lm = layoutManager as? MarkdownLayoutManager,
+              let storage = textStorage else { return nil }
+        let point = convert(event.locationInWindow, from: nil)
+        let origin = textContainerOrigin
+        let containerPoint = NSPoint(x: point.x - origin.x, y: point.y - origin.y)
+        for (anchor, rect) in lm.imageRects where rect.contains(containerPoint) {
+            guard anchor < storage.length,
+                  storage.attribute(.vireoImage, at: anchor, effectiveRange: nil) != nil else {
+                continue
+            }
+            return anchor
+        }
         return nil
     }
 

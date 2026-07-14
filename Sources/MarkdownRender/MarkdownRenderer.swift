@@ -243,6 +243,8 @@ public struct MarkdownRenderer {
         text.addAttribute(.paragraphStyle, value: p, range: image.range)
         text.addAttribute(.vireoImage, value: image.source as NSString,
                           range: NSRange(location: image.anchor, length: 1))
+        text.addAttribute(.vireoImageAlt, value: image.alt as NSString,
+                          range: NSRange(location: image.anchor, length: 1))
     }
 
     // MARK: Typographic arrows

@@ -8,6 +8,8 @@ public extension NSAttributedString.Key {
     static let vireoLink = NSAttributedString.Key("vireoLink")
     /// Image source on the (hidden) anchor char; layout manager draws it (NSString).
     static let vireoImage = NSAttributedString.Key("vireoImage")
+    /// Image alt text on the draw anchor, used for a calm missing/loading fallback.
+    static let vireoImageAlt = NSAttributedString.Key("vireoImageAlt")
     /// Bullet/number text drawn left of this (visible) char (NSString).
     static let vireoBullet = NSAttributedString.Key("vireoBullet")
     /// Task checkbox state drawn left of this (visible) char (NSNumber bool).

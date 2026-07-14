@@ -62,9 +62,13 @@ final class ParserTests: XCTestCase {
     }
 
     func testImage() {
-        let parsed = MarkdownParser().parse("![alt](pic.png)")
+        let source = "![alt](pic.png)"
+        let parsed = MarkdownParser().parse(source)
         XCTAssertEqual(parsed.images.count, 1)
         XCTAssertEqual(parsed.images.first?.source, "pic.png")
+        XCTAssertEqual(visible(source), "", "the full image expression is rendering metadata")
+        XCTAssertTrue(parsed.markerRanges.contains(NSRange(location: 0,
+                                                            length: (source as NSString).length)))
     }
 }
 
