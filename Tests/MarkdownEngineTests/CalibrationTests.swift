@@ -27,7 +27,13 @@ final class ParserTests: XCTestCase {
     }
 
     func testHidesLink() {
-        XCTAssertEqual(visible("see [Apple](https://apple.com) site"), "see Apple site")
+        let source = "see [Apple](https://apple.com) site"
+        XCTAssertEqual(visible(source), "see Apple site")
+        let link = MarkdownParser().parse(source).links.first
+        XCTAssertEqual(link?.destination, "https://apple.com")
+        XCTAssertEqual(link.map { (source as NSString).substring(with: $0.range) },
+                       "[Apple](https://apple.com)")
+        XCTAssertEqual(link.map { (source as NSString).substring(with: $0.labelRange) }, "Apple")
     }
 
     func testHidesFencedCode() {

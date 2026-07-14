@@ -22,6 +22,7 @@ public final class EditorController: ObservableObject {
     private let incremental = IncrementalParser()
     public private(set) var parsed = ParsedMarkdown()
     private lazy var toolbar = FloatingToolbar(controller: self)
+    private lazy var linkPopover = LinkPopover()
     /// Table whose source is revealed because the caret is inside it
     /// (identified by absolute anchor — stable across incremental edits).
     private var revealedTableAnchor: Int?
@@ -491,18 +492,160 @@ public final class EditorController: ObservableObject {
         }
     }
 
+    private struct LinkEditSession {
+        var replacementRange: NSRange
+        var labelSource: String?
+        var initialLabel: String
+        var originalSelection: NSRange
+        var canRemove: Bool
+    }
+
     public func insertLink() {
-        guard let tv = textView, let storage = tv.textStorage else { return }
-        let sel = tv.selectedRange()
-        let text = sel.length > 0 ? storage.attributedSubstring(from: sel).string : "link"
-        let replacement = "[\(text)](https://)"
-        if tv.shouldChangeText(in: sel, replacementString: replacement) {
-            storage.replaceCharacters(in: sel, with: replacement)
-            tv.didChangeText()
-            // place caret inside the empty URL parens
-            let caret = sel.location + (replacement as NSString).length - 1
-            tv.setSelectedRange(NSRange(location: caret, length: 0))
+        guard let tv = textView, let storage = tv.textStorage, tv.window != nil else { return }
+        let selection = tv.selectedRange()
+        let existing = link(at: selection)
+        let session: LinkEditSession
+        let anchorRange: NSRange
+        let destination: String
+
+        if let existing {
+            session = LinkEditSession(
+                replacementRange: existing.range,
+                labelSource: (storage.string as NSString).substring(with: existing.labelRange),
+                initialLabel: existing.label,
+                originalSelection: selection,
+                canRemove: true)
+            anchorRange = existing.labelRange
+            destination = existing.destination
+        } else {
+            let selectedSource = selection.length > 0
+                ? (storage.string as NSString).substring(with: selection) : nil
+            let label = selection.length > 0 ? visibleText(in: selection, source: storage.string) : "link"
+            session = LinkEditSession(replacementRange: selection,
+                                      labelSource: selectedSource.flatMap {
+                                          linkLabelSourceIsSafe($0) ? $0 : nil
+                                      },
+                                      initialLabel: label,
+                                      originalSelection: selection,
+                                      canRemove: false)
+            anchorRange = selection
+            destination = ""
         }
+
+        toolbar.hide()
+        let rect = popoverAnchor(for: anchorRange, in: tv)
+        linkPopover.show(label: session.initialLabel, destination: destination,
+                         canRemove: session.canRemove, relativeTo: rect, of: tv) { [weak self, weak tv] action in
+            guard let self, let tv else { return }
+            var restoreFocus = true
+            switch action {
+            case .save(let label, let destination):
+                _ = self.replaceLink(in: session.replacementRange, label: label,
+                                     destination: destination,
+                                     preservedLabelSource: session.labelSource,
+                                     preservedLabel: session.initialLabel)
+            case .remove:
+                if let labelSource = session.labelSource {
+                    self.removeLink(in: session.replacementRange, keeping: labelSource)
+                }
+            case .cancel:
+                let length = tv.textStorage?.length ?? 0
+                let location = min(session.originalSelection.location, length)
+                let selected = NSRange(location: location,
+                                       length: min(session.originalSelection.length, length - location))
+                tv.setSelectedRange(selected)
+            case .dismiss:
+                // A click outside the transient popover owns the next focus and
+                // selection; do not steal either back from the clicked control.
+                restoreFocus = false
+            }
+            if restoreFocus {
+                DispatchQueue.main.async { tv.window?.makeFirstResponder(tv) }
+            }
+        }
+    }
+
+    @discardableResult
+    func replaceLink(in range: NSRange, label: String, destination rawDestination: String,
+                     preservedLabelSource: String? = nil, preservedLabel: String? = nil) -> Bool {
+        guard let tv = textView, let storage = tv.textStorage,
+              range.upperBound <= storage.length,
+              let destination = try? LinkDestination.normalize(rawDestination) else { return false }
+        let labelSource: String
+        if label == preservedLabel, let preservedLabelSource {
+            labelSource = preservedLabelSource
+        } else {
+            labelSource = label.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "]", with: "\\]")
+        }
+        let escapedDestination = destination.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "(", with: "\\(")
+            .replacingOccurrences(of: ")", with: "\\)")
+        let replacement = "[\(labelSource)](\(escapedDestination))"
+        guard tv.shouldChangeText(in: range, replacementString: replacement) else { return false }
+        storage.replaceCharacters(in: range, with: replacement)
+        tv.didChangeText()
+        tv.setSelectedRange(NSRange(location: range.location + 1,
+                                    length: (labelSource as NSString).length))
+        return true
+    }
+
+    func removeLink(in range: NSRange, keeping labelSource: String) {
+        guard let tv = textView, let storage = tv.textStorage,
+              range.upperBound <= storage.length,
+              tv.shouldChangeText(in: range, replacementString: labelSource) else { return }
+        storage.replaceCharacters(in: range, with: labelSource)
+        tv.didChangeText()
+        tv.setSelectedRange(NSRange(location: range.location,
+                                    length: (labelSource as NSString).length))
+    }
+
+    private func link(at selection: NSRange) -> LinkRun? {
+        if selection.length > 0 {
+            return parsed.links.first { NSIntersectionRange($0.labelRange, selection).length > 0
+                || NSIntersectionRange($0.range, selection).length == selection.length }
+        }
+        let location = selection.location
+        return parsed.links.first {
+            location >= $0.labelRange.location && location <= $0.labelRange.upperBound
+        } ?? parsed.links.first { NSLocationInRange(location, $0.range) }
+    }
+
+    private func visibleText(in range: NSRange, source: String) -> String {
+        let visible = NSMutableString(string: (source as NSString).substring(with: range))
+        let intersections = parsed.markerRanges.map { NSIntersectionRange($0, range) }
+            .filter { $0.length > 0 }
+            .sorted { $0.location > $1.location }
+        for intersection in intersections {
+            visible.deleteCharacters(in: NSRange(location: intersection.location - range.location,
+                                                  length: intersection.length))
+        }
+        return visible as String
+    }
+
+    /// An unescaped closing bracket would terminate the new link label. Keep
+    /// valid nested emphasis/code source intact, but flatten unsafe selections
+    /// through the escaped plain-label path.
+    private func linkLabelSourceIsSafe(_ source: String) -> Bool {
+        var precedingBackslashes = 0
+        for character in source {
+            if character == "\\" {
+                precedingBackslashes += 1
+                continue
+            }
+            if character == "]", precedingBackslashes.isMultiple(of: 2) { return false }
+            precedingBackslashes = 0
+        }
+        return true
+    }
+
+    private func popoverAnchor(for range: NSRange, in textView: NSTextView) -> NSRect {
+        let screenRect = textView.firstRect(forCharacterRange: range, actualRange: nil)
+        guard let window = textView.window else { return textView.visibleRect }
+        let windowRect = window.convertFromScreen(screenRect)
+        let viewRect = textView.convert(windowRect, from: nil)
+        return viewRect.isEmpty ? NSRect(x: viewRect.minX, y: viewRect.minY, width: 1, height: 20)
+                                : viewRect
     }
 
     // MARK: Insert menu (tables, code blocks, images, …)
