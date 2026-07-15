@@ -79,5 +79,13 @@ let package = Package(
             name: "VireoUpdaterTests",
             dependencies: ["VireoUpdater"]
         ),
+        .testTarget(
+            name: "VireoCoreTests",
+            dependencies: ["VireoCore"]
+        ),
+        .testTarget(
+            name: "VireoTests",
+            dependencies: ["Vireo"]
+        ),
     ]
 )
