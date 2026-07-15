@@ -116,6 +116,7 @@ struct Snapshot {
         layout.tableRowHeight = theme.tableRowHeight
         layout.tableFont = theme.tableFont
         layout.tableHeaderFont = theme.tableHeaderFont
+        layout.imageMaxWidth = theme.contentMaxWidth
         layout.listMarkers = parsed.listMarkers
         layout.taskMarks = parsed.tasks
         layout.headingMarks = parsed.headings

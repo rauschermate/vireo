@@ -21,7 +21,19 @@ public final class EditorController: ObservableObject {
 
     private let incremental = IncrementalParser()
     public private(set) var parsed = ParsedMarkdown()
+    /// Shared source/visual boundary map. Every editor interaction uses this
+    /// index rather than rediscovering marker ranges from text attributes.
+    public private(set) var markerIndex = MarkerIndex.empty
+    /// Semantic markers plus any delimiters retained while a formerly-valid
+    /// construct is transiently incomplete in the active paragraph.
+    private var presentationMarkerRanges: [NSRange] = []
+    private var provisionalMarkerRanges: [NSRange]?
+    private var expectedEditedSourceLength: Int?
+    private var expectedEditedAnchor: Int?
+    private var transientMarkerRanges: [NSRange] = []
+    private var transientParagraphRange: NSRange?
     private lazy var toolbar = FloatingToolbar(controller: self)
+    private lazy var linkPopover = LinkPopover()
     private var tableCellEditor: TableCellEditorOverlay?
     private var pendingTableActivation: DispatchWorkItem?
     private var pendingTableCellID: TableCellID?
@@ -32,7 +44,17 @@ public final class EditorController: ObservableObject {
     private var lastSourceLength = 0
 
     public init() {
-        imageLoader.onChange = { [weak self] in self?.restyle() }
+        imageLoader.onChange = { [weak self] urls in self?.imagesDidLoad(urls) }
+    }
+
+    /// Give interaction code an identity source map immediately, before the
+    /// first deferred parse/style pass. Without this bootstrap, a keystroke in
+    /// the launch runloop would be clamped against `MarkerIndex.empty` and land
+    /// at the beginning of a non-empty document.
+    func bootstrapMarkerIndex(sourceLength: Int) {
+        guard markerIndex.sourceLength != sourceLength else { return }
+        markerIndex = MarkerIndex(ranges: presentationMarkerRanges,
+                                  sourceLength: sourceLength)
     }
 
     /// Show/hide the floating format toolbar as the selection moves.
@@ -40,6 +62,14 @@ public final class EditorController: ObservableObject {
         guard let tv = textView else { return }
         let sel = tv.selectedRange()
 
+        // Incomplete syntax is retained only for the paragraph being actively
+        // repaired. Moving away commits it as literal text rather than hiding
+        // arbitrary punctuation indefinitely.
+        if !transientMarkerRanges.isEmpty,
+           let paragraph = transientParagraphRange,
+           (sel.location < paragraph.location || sel.location >= paragraph.upperBound) {
+            clearTransientMarkerPresentation(dirty: paragraph)
+        }
         // Caret geometry on empty lines follows typingAttributes — keep them
         // in sync with wherever the caret just moved to.
         refreshTypingAttributes()
@@ -120,12 +150,30 @@ public final class EditorController: ObservableObject {
         restyleAfterEdit()
     }
 
+    /// Capture marker presentation before an edit mutates the source. Existing
+    /// delimiters that survive an edit can remain hidden even if the parser
+    /// temporarily stops recognizing their now-incomplete construct.
+    public func prepareForEdit(in range: NSRange, replacementString: String) {
+        guard let storage = textView?.textStorage else { return }
+        let sourceLength = storage.length
+        let lower = min(max(0, range.location), sourceLength)
+        let upper = min(max(lower, range.upperBound), sourceLength)
+        let edit = NSRange(location: lower, length: upper - lower)
+        let replacementLength = (replacementString as NSString).length
+        let base = provisionalMarkerRanges ?? presentationMarkerRanges
+        provisionalMarkerRanges = transformMarkerRanges(base, through: edit,
+                                                         replacementLength: replacementLength)
+        expectedEditedSourceLength = sourceLength - edit.length + replacementLength
+        expectedEditedAnchor = edit.location + replacementLength
+    }
+
     /// Edit path: incremental parse; re-apply attributes only over the dirty
     /// region (the whole document when the parser had to fall back).
     private func restyleAfterEdit() {
         guard let tv = textView, let storage = tv.textStorage else { return }
         let update = incremental.update(storage.string)
         parsed = update.parsed
+        updateMarkerPresentation(after: update, storage: storage)
         onParsed?(parsed)
         remapCollapsedAnchors(dirty: update.dirtyRange,
                               delta: storage.length - lastSourceLength)
@@ -181,14 +229,24 @@ public final class EditorController: ObservableObject {
         subtree(forAnchor: anchor) != nil
     }
 
-    /// The hidden leading marker (`- `, `1. `, `- [ ] `) that `location` sits
-    /// strictly inside, if any — every position in it renders at the same
-    /// zero-width spot, so the caret should snap across it, not step through.
-    public func listMarkerRange(containing location: Int) -> NSRange? {
-        let anchors = Set(parsed.tasks.map(\.anchor) + parsed.listMarkers.map(\.anchor))
-        return parsed.markerRanges.first {
-            NSLocationInRange(location, $0) && anchors.contains($0.upperBound)
+    /// Normalize an AppKit selection against every hidden Markdown marker.
+    /// Direction determines which side owns a collapsed caret boundary.
+    public func normalizedSelection(_ proposed: NSRange,
+                                    previous: NSRange? = nil,
+                                    affinity explicitAffinity: MarkerAffinity? = nil) -> NSRange {
+        if proposed.length > 0 { return markerIndex.atomicSelection(proposed) }
+        let affinity: MarkerAffinity
+        if let explicitAffinity {
+            affinity = explicitAffinity
+        } else if let previous, proposed.location < previous.location {
+            affinity = .upstream
+        } else if let previous, proposed.location > previous.upperBound {
+            affinity = .downstream
+        } else {
+            affinity = .nearest
         }
+        return NSRange(location: markerIndex.caretPosition(proposed.location, affinity: affinity),
+                       length: 0)
     }
 
     /// Hover target for the collapse chevron (set from mouse tracking).
@@ -198,12 +256,17 @@ public final class EditorController: ObservableObject {
         textView?.needsDisplay = true
     }
 
-    /// Full restyle: theme, zoom, appearance or image loads changed, so every
-    /// attribute must be recomputed even though the text didn't change.
+    /// Full restyle: theme, zoom or appearance changed, so every attribute must
+    /// be recomputed even though the text didn't change.
     public func restyle() {
         guard let tv = textView, let storage = tv.textStorage else { return }
         let update = incremental.update(storage.string)
         parsed = update.parsed
+        // A theme/image restyle does not end an active repair transaction.
+        if presentationMarkerRanges.isEmpty {
+            presentationMarkerRanges = parsed.markerRanges
+        }
+        markerIndex = MarkerIndex(ranges: presentationMarkerRanges, sourceLength: storage.length)
         onParsed?(parsed)
         applyStyles(dirty: nil)
     }
@@ -212,24 +275,49 @@ public final class EditorController: ObservableObject {
     /// Characters are never touched, so the selection and the on-disk source
     /// are preserved; bounding the range bounds TextKit's layout invalidation.
     private func applyStyles(dirty: NSRange?) {
+        applyStyles(windows: dirty.map { [$0] })
+    }
+
+    /// Image completions can touch disjoint paragraphs. Keep those windows
+    /// separate so two images far apart never turn into a document-wide restyle.
+    private func applyStyles(dirtyRanges: [NSRange]) {
+        applyStyles(windows: dirtyRanges)
+    }
+
+    private func applyStyles(windows requestedWindows: [NSRange]?) {
         guard let tv = textView, let storage = tv.textStorage else { return }
         let full = NSRange(location: 0, length: storage.length)
-        var window = dirty.map { NSIntersectionRange($0, full) } ?? full
-        window = expandOverCollapsedSubtrees(window, storage: storage)
+        let rawWindows = requestedWindows ?? [full]
+        let expanded = rawWindows.map {
+            expandOverCollapsedSubtrees(NSIntersectionRange($0, full),
+                                        storage: storage)
+        }.filter { $0.length > 0 }
+        let windows = mergeStyleWindows(expanded)
 
-        if window.length > 0 {
-            var renderer = MarkdownRenderer(theme: theme, baseURL: baseURL,
-                                            imageLoader: imageLoader, isDark: tv.isDark)
-            renderer.collapsedAnchors = collapsedAnchors
-            renderer.originOffset = window.location
-            let sliceSource = (storage.string as NSString).substring(with: window)
-            let sliceParsed = window == full ? parsed : parsed.slice(window)
-            let rendered = renderer.render(source: sliceSource, parsed: sliceParsed)
+        var presented = parsed
+        presented.markerRanges = presentationMarkerRanges
 
+        if !windows.isEmpty {
             storage.beginEditing()
-            rendered.enumerateAttributes(in: NSRange(location: 0, length: rendered.length)) { attrs, range, _ in
-                storage.setAttributes(attrs, range: NSRange(location: range.location + window.location,
-                                                            length: range.length))
+            for window in windows {
+                var renderer = MarkdownRenderer(theme: theme, baseURL: baseURL,
+                                                imageLoader: imageLoader,
+                                                isDark: tv.isDark)
+                renderer.collapsedAnchors = collapsedAnchors
+                renderer.originOffset = window.location
+                let sliceSource = (storage.string as NSString).substring(with: window)
+                let sliceParsed = window == full ? presented : presented.slice(window)
+                let rendered = renderer.render(source: sliceSource, parsed: sliceParsed)
+
+                rendered.enumerateAttributes(
+                    in: NSRange(location: 0, length: rendered.length)
+                ) { attrs, range, _ in
+                    storage.setAttributes(
+                        attrs,
+                        range: NSRange(location: range.location + window.location,
+                                       length: range.length)
+                    )
+                }
             }
             storage.endEditing()
         }
@@ -241,6 +329,7 @@ public final class EditorController: ObservableObject {
         layoutManager?.tableRowHeight = theme.tableRowHeight
         layoutManager?.tableFont = theme.tableFont
         layoutManager?.tableHeaderFont = theme.tableHeaderFont
+        layoutManager?.imageMaxWidth = theme.contentMaxWidth
         layoutManager?.listMarkers = parsed.listMarkers
         layoutManager?.taskMarks = parsed.tasks
         layoutManager?.headingMarks = parsed.headings
@@ -524,6 +613,35 @@ public final class EditorController: ObservableObject {
         installTableCellEditor(geometry, selectAll: true)
     }
 
+    private func mergeStyleWindows(_ ranges: [NSRange]) -> [NSRange] {
+        let sorted = ranges.sorted { $0.location < $1.location }
+        var merged: [NSRange] = []
+        for range in sorted {
+            guard let last = merged.last else {
+                merged.append(range)
+                continue
+            }
+            if range.location <= last.upperBound {
+                merged[merged.count - 1] = NSUnionRange(last, range)
+            } else {
+                merged.append(range)
+            }
+        }
+        return merged
+    }
+
+    private func imagesDidLoad(_ urls: Set<URL>) {
+        guard let tv = textView, let storage = tv.textStorage else { return }
+        let ranges = imageLoader.paragraphRanges(
+            forLoadedURLs: urls, images: parsed.images,
+            source: storage.string, baseURL: baseURL
+        )
+        guard !ranges.isEmpty else { return }
+        let viewport = TextViewportAnchor.capture(in: tv)
+        applyStyles(dirtyRanges: ranges)
+        viewport?.restore(in: tv)
+    }
+
     /// A restyle window must cover any collapsed fold it touches *entirely* —
     /// the renderer re-applies `.vireoCollapsed` from the anchor's subtree, so
     /// re-rendering only part of one (headings especially: their folds span
@@ -593,9 +711,92 @@ public final class EditorController: ObservableObject {
         let sel = tv.selectedRange()
         storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: s)
         incremental.reset() // wholesale replacement — diffing history is useless
+        presentationMarkerRanges = []
+        provisionalMarkerRanges = nil
+        expectedEditedSourceLength = nil
+        expectedEditedAnchor = nil
+        transientMarkerRanges = []
+        transientParagraphRange = nil
         restyle()
         let caret = min(sel.location, (s as NSString).length)
         tv.setSelectedRange(NSRange(location: caret, length: 0))
+    }
+
+    private func updateMarkerPresentation(after update: IncrementalUpdate,
+                                          storage: NSTextStorage) {
+        defer {
+            provisionalMarkerRanges = nil
+            expectedEditedSourceLength = nil
+            expectedEditedAnchor = nil
+        }
+
+        guard let candidates = provisionalMarkerRanges,
+              expectedEditedSourceLength == storage.length else {
+            transientMarkerRanges = []
+            transientParagraphRange = nil
+            presentationMarkerRanges = parsed.markerRanges
+            markerIndex = MarkerIndex(ranges: presentationMarkerRanges,
+                                      sourceLength: storage.length)
+            return
+        }
+
+        let ns = storage.string as NSString
+        let anchor = min(expectedEditedAnchor ?? update.dirtyRange?.location ?? 0, storage.length)
+        let paragraph = ns.paragraphRange(for: NSRange(location: anchor, length: 0))
+        let semantic = MarkerIndex(ranges: parsed.markerRanges, sourceLength: storage.length)
+        transientMarkerRanges = candidates.filter { candidate in
+            guard NSIntersectionRange(candidate, paragraph).length > 0 else { return false }
+            return !semantic.ranges.contains { semanticRange in
+                semanticRange.location <= candidate.location
+                    && semanticRange.upperBound >= candidate.upperBound
+            }
+        }
+        transientParagraphRange = transientMarkerRanges.isEmpty ? nil : paragraph
+        presentationMarkerRanges = MarkerIndex(
+            ranges: parsed.markerRanges + transientMarkerRanges,
+            sourceLength: storage.length
+        ).ranges
+        markerIndex = MarkerIndex(ranges: presentationMarkerRanges,
+                                  sourceLength: storage.length)
+    }
+
+    private func clearTransientMarkerPresentation(dirty: NSRange) {
+        transientMarkerRanges = []
+        transientParagraphRange = nil
+        presentationMarkerRanges = parsed.markerRanges
+        if let storage = textView?.textStorage {
+            markerIndex = MarkerIndex(ranges: presentationMarkerRanges,
+                                      sourceLength: storage.length)
+        }
+        applyStyles(dirty: dirty)
+    }
+
+    private func transformMarkerRanges(_ ranges: [NSRange], through edit: NSRange,
+                                       replacementLength: Int) -> [NSRange] {
+        let delta = replacementLength - edit.length
+        var result: [NSRange] = []
+        result.reserveCapacity(ranges.count + 2)
+        for marker in ranges {
+            if marker.upperBound <= edit.location {
+                result.append(marker)
+            } else if marker.location >= edit.upperBound {
+                result.append(NSRange(location: marker.location + delta, length: marker.length))
+            } else {
+                let leftEnd = min(marker.upperBound, edit.location)
+                if leftEnd > marker.location {
+                    result.append(NSRange(location: marker.location,
+                                          length: leftEnd - marker.location))
+                }
+                let rightStart = max(marker.location, edit.upperBound)
+                if marker.upperBound > rightStart {
+                    let shiftedStart = rightStart + delta
+                    result.append(NSRange(location: shiftedStart,
+                                          length: marker.upperBound - rightStart))
+                }
+            }
+        }
+        let newLength = max(0, (textView?.textStorage?.length ?? 0) + delta)
+        return MarkerIndex(ranges: result, sourceLength: newLength).ranges
     }
 
     // MARK: Navigation
@@ -702,18 +903,160 @@ public final class EditorController: ObservableObject {
         }
     }
 
+    private struct LinkEditSession {
+        var replacementRange: NSRange
+        var labelSource: String?
+        var initialLabel: String
+        var originalSelection: NSRange
+        var canRemove: Bool
+    }
+
     public func insertLink() {
-        guard let tv = textView, let storage = tv.textStorage else { return }
-        let sel = tv.selectedRange()
-        let text = sel.length > 0 ? storage.attributedSubstring(from: sel).string : "link"
-        let replacement = "[\(text)](https://)"
-        if tv.shouldChangeText(in: sel, replacementString: replacement) {
-            storage.replaceCharacters(in: sel, with: replacement)
-            tv.didChangeText()
-            // place caret inside the empty URL parens
-            let caret = sel.location + (replacement as NSString).length - 1
-            tv.setSelectedRange(NSRange(location: caret, length: 0))
+        guard let tv = textView, let storage = tv.textStorage, tv.window != nil else { return }
+        let selection = tv.selectedRange()
+        let existing = link(at: selection)
+        let session: LinkEditSession
+        let anchorRange: NSRange
+        let destination: String
+
+        if let existing {
+            session = LinkEditSession(
+                replacementRange: existing.range,
+                labelSource: (storage.string as NSString).substring(with: existing.labelRange),
+                initialLabel: existing.label,
+                originalSelection: selection,
+                canRemove: true)
+            anchorRange = existing.labelRange
+            destination = existing.destination
+        } else {
+            let selectedSource = selection.length > 0
+                ? (storage.string as NSString).substring(with: selection) : nil
+            let label = selection.length > 0 ? visibleText(in: selection, source: storage.string) : "link"
+            session = LinkEditSession(replacementRange: selection,
+                                      labelSource: selectedSource.flatMap {
+                                          linkLabelSourceIsSafe($0) ? $0 : nil
+                                      },
+                                      initialLabel: label,
+                                      originalSelection: selection,
+                                      canRemove: false)
+            anchorRange = selection
+            destination = ""
         }
+
+        toolbar.hide()
+        let rect = popoverAnchor(for: anchorRange, in: tv)
+        linkPopover.show(label: session.initialLabel, destination: destination,
+                         canRemove: session.canRemove, relativeTo: rect, of: tv) { [weak self, weak tv] action in
+            guard let self, let tv else { return }
+            var restoreFocus = true
+            switch action {
+            case .save(let label, let destination):
+                _ = self.replaceLink(in: session.replacementRange, label: label,
+                                     destination: destination,
+                                     preservedLabelSource: session.labelSource,
+                                     preservedLabel: session.initialLabel)
+            case .remove:
+                if let labelSource = session.labelSource {
+                    self.removeLink(in: session.replacementRange, keeping: labelSource)
+                }
+            case .cancel:
+                let length = tv.textStorage?.length ?? 0
+                let location = min(session.originalSelection.location, length)
+                let selected = NSRange(location: location,
+                                       length: min(session.originalSelection.length, length - location))
+                tv.setSelectedRange(selected)
+            case .dismiss:
+                // A click outside the transient popover owns the next focus and
+                // selection; do not steal either back from the clicked control.
+                restoreFocus = false
+            }
+            if restoreFocus {
+                DispatchQueue.main.async { tv.window?.makeFirstResponder(tv) }
+            }
+        }
+    }
+
+    @discardableResult
+    func replaceLink(in range: NSRange, label: String, destination rawDestination: String,
+                     preservedLabelSource: String? = nil, preservedLabel: String? = nil) -> Bool {
+        guard let tv = textView, let storage = tv.textStorage,
+              range.upperBound <= storage.length,
+              let destination = try? LinkDestination.normalize(rawDestination) else { return false }
+        let labelSource: String
+        if label == preservedLabel, let preservedLabelSource {
+            labelSource = preservedLabelSource
+        } else {
+            labelSource = label.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "]", with: "\\]")
+        }
+        let escapedDestination = destination.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "(", with: "\\(")
+            .replacingOccurrences(of: ")", with: "\\)")
+        let replacement = "[\(labelSource)](\(escapedDestination))"
+        guard tv.shouldChangeText(in: range, replacementString: replacement) else { return false }
+        storage.replaceCharacters(in: range, with: replacement)
+        tv.didChangeText()
+        tv.setSelectedRange(NSRange(location: range.location + 1,
+                                    length: (labelSource as NSString).length))
+        return true
+    }
+
+    func removeLink(in range: NSRange, keeping labelSource: String) {
+        guard let tv = textView, let storage = tv.textStorage,
+              range.upperBound <= storage.length,
+              tv.shouldChangeText(in: range, replacementString: labelSource) else { return }
+        storage.replaceCharacters(in: range, with: labelSource)
+        tv.didChangeText()
+        tv.setSelectedRange(NSRange(location: range.location,
+                                    length: (labelSource as NSString).length))
+    }
+
+    private func link(at selection: NSRange) -> LinkRun? {
+        if selection.length > 0 {
+            return parsed.links.first { NSIntersectionRange($0.labelRange, selection).length > 0
+                || NSIntersectionRange($0.range, selection).length == selection.length }
+        }
+        let location = selection.location
+        return parsed.links.first {
+            location >= $0.labelRange.location && location <= $0.labelRange.upperBound
+        } ?? parsed.links.first { NSLocationInRange(location, $0.range) }
+    }
+
+    private func visibleText(in range: NSRange, source: String) -> String {
+        let visible = NSMutableString(string: (source as NSString).substring(with: range))
+        let intersections = parsed.markerRanges.map { NSIntersectionRange($0, range) }
+            .filter { $0.length > 0 }
+            .sorted { $0.location > $1.location }
+        for intersection in intersections {
+            visible.deleteCharacters(in: NSRange(location: intersection.location - range.location,
+                                                  length: intersection.length))
+        }
+        return visible as String
+    }
+
+    /// An unescaped closing bracket would terminate the new link label. Keep
+    /// valid nested emphasis/code source intact, but flatten unsafe selections
+    /// through the escaped plain-label path.
+    private func linkLabelSourceIsSafe(_ source: String) -> Bool {
+        var precedingBackslashes = 0
+        for character in source {
+            if character == "\\" {
+                precedingBackslashes += 1
+                continue
+            }
+            if character == "]", precedingBackslashes.isMultiple(of: 2) { return false }
+            precedingBackslashes = 0
+        }
+        return true
+    }
+
+    private func popoverAnchor(for range: NSRange, in textView: NSTextView) -> NSRect {
+        let screenRect = textView.firstRect(forCharacterRange: range, actualRange: nil)
+        guard let window = textView.window else { return textView.visibleRect }
+        let windowRect = window.convertFromScreen(screenRect)
+        let viewRect = textView.convert(windowRect, from: nil)
+        return viewRect.isEmpty ? NSRect(x: viewRect.minX, y: viewRect.minY, width: 1, height: 20)
+                                : viewRect
     }
 
     // MARK: Insert menu (tables, code blocks, images, …)
@@ -753,6 +1096,79 @@ public final class EditorController: ObservableObject {
                 self.insertBlockSnippet("![\(url.deletingPathExtension().lastPathComponent)](\(path))")
             }
         }
+    }
+
+    /// Edit the rendered image without exposing its hidden Markdown expression.
+    /// The same surface is available by double-click and from the context menu.
+    public func editImage(atAnchor anchor: Int) {
+        guard let tv = textView, let window = tv.window,
+              let image = parsed.images.first(where: { $0.anchor == anchor }) else { return }
+
+        let altField = NSTextField(string: image.alt)
+        altField.placeholderString = "Describe the image"
+        altField.setAccessibilityLabel("Alt text")
+        let sourceField = NSTextField(string: image.source)
+        sourceField.placeholderString = "Path or URL"
+        sourceField.setAccessibilityLabel("Image source")
+
+        let grid = NSGridView(views: [
+            [NSTextField(labelWithString: "Alt text"), altField],
+            [NSTextField(labelWithString: "Source"), sourceField],
+        ])
+        grid.column(at: 0).xPlacement = .trailing
+        grid.column(at: 1).width = 320
+        grid.rowSpacing = 8
+        grid.columnSpacing = 10
+
+        let alert = NSAlert()
+        alert.messageText = "Edit Image"
+        alert.informativeText = "Update the description or image path."
+        alert.accessoryView = grid
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Remove Image")
+        alert.buttons.last?.hasDestructiveAction = true
+        alert.window.initialFirstResponder = altField
+
+        alert.beginSheetModal(for: window) { [weak self] response in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if response == .alertFirstButtonReturn {
+                    let source = sourceField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !source.isEmpty else {
+                        NSSound.beep()
+                        return
+                    }
+                    self.replaceImage(atAnchor: anchor, alt: altField.stringValue, source: source)
+                } else if response == .alertThirdButtonReturn {
+                    self.removeImage(atAnchor: anchor)
+                }
+            }
+        }
+    }
+
+    public func removeImage(atAnchor anchor: Int) {
+        replaceImageSource(atAnchor: anchor, replacement: "")
+    }
+
+    func replaceImage(atAnchor anchor: Int, alt: String, source: String) {
+        let escapedAlt = alt.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "]", with: "\\]")
+        let escapedSource = source.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "(", with: "\\(")
+            .replacingOccurrences(of: ")", with: "\\)")
+        replaceImageSource(atAnchor: anchor,
+                           replacement: "![\(escapedAlt)](\(escapedSource))")
+    }
+
+    private func replaceImageSource(atAnchor anchor: Int, replacement: String) {
+        guard let tv = textView, let storage = tv.textStorage,
+              let image = parsed.images.first(where: { $0.anchor == anchor }) else { return }
+        guard tv.shouldChangeText(in: image.range, replacementString: replacement) else { return }
+        storage.replaceCharacters(in: image.range, with: replacement)
+        tv.didChangeText()
+        let caret = min(image.range.location + (replacement as NSString).length, storage.length)
+        tv.setSelectedRange(NSRange(location: caret, length: 0))
     }
 
     private func relativePath(for url: URL) -> String {

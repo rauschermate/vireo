@@ -62,7 +62,7 @@ private struct EditorPane: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            MarkdownSourceView(source: doc.source, controller: doc.controller)
+            MarkdownSourceView(session: doc.editorSession)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .id(doc.id)
             if doc.showTOC && !state.focusMode, !doc.toc.isEmpty {
@@ -196,9 +196,7 @@ final class WindowDelegateProxy: NSObject, NSWindowDelegate {
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         for doc in AppState.shared.documents {
-            guard AppState.shared.confirmDiscardIfNeeded(doc) else { return false }
-            doc.flushPendingSave()
-            if doc.isDirty, doc.url != nil { doc.saveNow() }
+            guard AppState.shared.prepareToClose(doc) else { return false }
         }
         if let original,
            original.responds(to: #selector(NSWindowDelegate.windowShouldClose(_:))) {
@@ -216,5 +214,24 @@ final class WindowDelegateProxy: NSObject, NSWindowDelegate {
            original.responds(to: #selector(NSWindowDelegate.windowDidResize(_:))) {
             original.windowDidResize?(notification)
         }
+    }
+
+    /// SwiftUI's window-level Undo command does not automatically discover an
+    /// undo manager owned by an NSTextView inside NSViewRepresentable. Bridge
+    /// the first responder's native manager to the window so Edit > Undo and
+    /// Command-Z target the same per-document history as direct text editing.
+    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
+        if let textView = window.firstResponder as? NSTextView,
+           let manager = textView.undoManager {
+            return manager
+        }
+        if let manager = AppState.shared.activeDocument?.editorSession.textView.undoManager {
+            return manager
+        }
+        if let original,
+           original.responds(to: #selector(NSWindowDelegate.windowWillReturnUndoManager(_:))) {
+            return original.windowWillReturnUndoManager?(window)
+        }
+        return nil
     }
 }

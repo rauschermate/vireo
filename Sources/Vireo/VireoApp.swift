@@ -7,6 +7,7 @@ struct VireoApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @ObservedObject private var state = AppState.shared
     @ObservedObject private var prefs = Preferences.shared
+    @ObservedObject private var editorUndo = EditorUndoCommandState.shared
 
     var body: some Scene {
         Window("Vireo", id: "main") {
@@ -30,6 +31,17 @@ struct VireoApp: App {
         CommandGroup(after: .appInfo) {
             Button("Check for Updates…") { state.updater.checkForUpdates() }
         }
+        // SwiftUI cannot infer the undo manager inside our NSViewRepresentable
+        // editor. Keep the native Edit menu and shortcuts, but drive them from
+        // the active document's persistent NSTextView history.
+        CommandGroup(replacing: .undoRedo) {
+            Button(editorUndo.undoTitle) { editorUndo.undo() }
+                .keyboardShortcut("z", modifiers: [.command])
+                .disabled(!editorUndo.canUndo)
+            Button(editorUndo.redoTitle) { editorUndo.redo() }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+                .disabled(!editorUndo.canRedo)
+        }
         CommandGroup(replacing: .newItem) {
             Button("New File") { state.createNewFile() }.keyboardShortcut("n")
             Button("New Tab") { state.newDocument() }.keyboardShortcut("t")
@@ -41,7 +53,8 @@ struct VireoApp: App {
                 if state.activeDocument?.url == nil { state.saveActiveAs() } else { state.activeDocument?.saveNow() }
             }
             .keyboardShortcut("s")
-            .disabled(prefs.autoSave && state.activeDocument?.url != nil)
+            .disabled(prefs.autoSave && state.activeDocument?.url != nil
+                      && state.activeDocument?.saveState.failureMessage == nil)
             Button("Save As…") { state.saveActiveAs() }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
             Divider()

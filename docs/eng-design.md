@@ -237,6 +237,14 @@ Where the shipped implementation intentionally differs from the sections above:
 - **TextKit 1, not TextKit 2 (§2, §4).** The always-hidden-syntax bet (option C)
   shipped — but via `NSLayoutManager` null glyphs, which need glyph-level control
   TextKit 2 doesn't expose. The spike's real outcome: C is achievable, on TK1.
+- **One visual/source boundary model (§4).** Parsed marker ranges are normalized
+  into an indexed `MarkerIndex`; caret movement, Shift/Option selection, line
+  boundaries, insertion, atomic deletion, hit testing, Find, copy/cut and
+  accessibility all map through it. If an already-rendered construct becomes
+  temporarily invalid, its surviving delimiters retain their hidden presentation
+  while the user remains in that paragraph. Newly typed unmatched punctuation is
+  literal (and therefore visible) until it forms valid Markdown; leaving the
+  repair paragraph commits any still-invalid punctuation as literal content.
 - **Custom tab strip, not native window tabs (§8).** Native `NSWindow` tabbing
   shipped first, then was replaced: the system tab bar always fills the window
   width and offers no hooks for min/max-width tabs, content-derived titles,

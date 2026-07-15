@@ -1,4 +1,5 @@
 import AppKit
+import MarkdownEngine
 import MarkdownRender
 
 /// NSTextView specialised for the hidden-syntax markdown surface. It keeps the
@@ -6,6 +7,13 @@ import MarkdownRender
 /// `EditorController`. Clicks on link text follow the link (reader behaviour).
 public final class MarkdownTextView: NSTextView {
     weak var controller: EditorController?
+    private let persistentUndoManager = UndoManager()
+    private var syntaxFreeFinder: NSTextFinder?
+    private var syntaxFreeFinderClient: VisibleTextFinderClient?
+    private var representedImageAnchor: Int?
+    private(set) var selectedImageAnchor: Int?
+
+    public override var undoManager: UndoManager? { persistentUndoManager }
 
     var isDark: Bool {
         effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
@@ -17,6 +25,17 @@ public final class MarkdownTextView: NSTextView {
     }
 
     public override func mouseDown(with event: NSEvent) {
+        // A rendered image behaves like a native selectable object: one click
+        // gives it focus without exposing or placing the caret inside its
+        // hidden Markdown expression.
+        if event.clickCount == 1 {
+            if let anchor = imageAnchor(at: event) {
+                selectImage(atAnchor: anchor)
+                window?.makeFirstResponder(self)
+                return
+            }
+            selectImage(atAnchor: nil)
+        }
         // Collapse chevron / `…` expander.
         if event.clickCount == 1, let anchor = collapseTarget(at: event) {
             controller?.toggleCollapse(anchor: anchor)
@@ -45,8 +64,98 @@ public final class MarkdownTextView: NSTextView {
             controller?.onOpenLink?(link)
             return
         }
+        // Rendered images keep their Markdown source hidden. Double-clicking
+        // opens a native editor so changing the alt text/source never requires
+        // manipulating invisible delimiters.
+        if event.clickCount == 2, let anchor = imageAnchor(at: event) {
+            selectImage(atAnchor: anchor)
+            controller?.editImage(atAnchor: anchor)
+            return
+        }
         super.mouseDown(with: event)
-        snapCaretAfterListMarker() // clicks land inside hidden markers too
+        normalizeSelection(affinity: .nearest) // clicks can land in null glyphs
+    }
+
+    public override func menu(for event: NSEvent) -> NSMenu? {
+        guard let anchor = imageAnchor(at: event) else { return super.menu(for: event) }
+        selectImage(atAnchor: anchor)
+        window?.makeFirstResponder(self)
+        representedImageAnchor = anchor
+        let menu = NSMenu(title: "Image")
+        let edit = NSMenuItem(title: "Edit Image…", action: #selector(editRepresentedImage),
+                              keyEquivalent: "")
+        edit.target = self
+        menu.addItem(edit)
+        menu.addItem(.separator())
+        let remove = NSMenuItem(title: "Remove Image", action: #selector(removeRepresentedImage),
+                                keyEquivalent: "")
+        remove.target = self
+        menu.addItem(remove)
+        return menu
+    }
+
+    @objc private func editRepresentedImage() {
+        guard let anchor = representedImageAnchor else { return }
+        controller?.editImage(atAnchor: anchor)
+    }
+
+    @objc private func removeRepresentedImage() {
+        guard let anchor = representedImageAnchor else { return }
+        selectImage(atAnchor: nil)
+        controller?.removeImage(atAnchor: anchor)
+    }
+
+    /// Keep rendered-image selection separate from AppKit's text selection.
+    /// The layout manager owns the border because it also owns image drawing.
+    func selectImage(atAnchor anchor: Int?) {
+        let validAnchor = anchor.flatMap { candidate -> Int? in
+            guard let storage = textStorage, candidate >= 0, candidate < storage.length,
+                  storage.attribute(.vireoImage, at: candidate, effectiveRange: nil) != nil else {
+                return nil
+            }
+            return candidate
+        }
+        guard selectedImageAnchor != validAnchor else { return }
+        selectedImageAnchor = validAnchor
+        (layoutManager as? MarkdownLayoutManager)?.selectedImageAnchor = validAnchor
+        if let validAnchor,
+           let image = controller?.parsed.images.first(where: { $0.anchor == validAnchor }) {
+            // Collapse any prior text selection at a safe visible boundary.
+            // The insertion point stays hidden while the image is selected.
+            setSelectedRange(NSRange(location: min(image.range.upperBound,
+                                                    textStorage?.length ?? 0),
+                                     length: 0))
+        }
+        needsDisplay = true
+    }
+
+    @discardableResult
+    private func removeSelectedImage() -> Bool {
+        guard let anchor = selectedImageAnchor, let controller else { return false }
+        selectImage(atAnchor: nil)
+        controller.removeImage(atAnchor: anchor)
+        return true
+    }
+
+    public override func keyDown(with event: NSEvent) {
+        // Delete/Forward Delete are dispatched to the overrides above. Any
+        // other keyboard action returns focus to the text caret; Escape simply
+        // clears the object selection.
+        if selectedImageAnchor != nil {
+            if event.keyCode == 53 {
+                selectImage(atAnchor: nil)
+                return
+            }
+            if event.keyCode != 51, event.keyCode != 117 {
+                selectImage(atAnchor: nil)
+            }
+        }
+        super.keyDown(with: event)
+    }
+
+    public override func didChangeText() {
+        selectImage(atAnchor: nil)
+        super.didChangeText()
     }
 
     /// If the click lands on a drawn checkbox (left of a task item's first
@@ -100,33 +209,25 @@ public final class MarkdownTextView: NSTextView {
     private var lastDrawnCaretRect: NSRect?
 
     public override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
+        guard selectedImageAnchor == nil else { return }
         let corrected = insertionRect(for: rect)
         lastDrawnCaretRect = corrected
         super.drawInsertionPoint(in: corrected, color: color, turnedOn: flag)
     }
 
-    private func insertionRect(for rect: NSRect) -> NSRect {
+    /// Return the visually correct caret rectangle for the current source
+    /// selection. Internal so marker-boundary geometry stays regression-tested.
+    func insertionRect(for rect: NSRect) -> NSRect {
         var r = rect
-
-        // Directly after hidden marker glyphs (a fresh "3. " / "- [ ] " line)
-        // AppKit anchors the caret to the last *real* glyph — the previous
-        // line's newline. Recompute from the glyph at the caret instead — but
-        // only when that glyph is already laid out, so this never *forces*
-        // layout (it runs from setNeedsDisplay, which may pass
-        // avoidAdditionalLayout). An unlaid caret isn't on screen anyway; it
-        // relocates on the next draw once layout reaches it.
         let caret = selectedRange().location
-        if let storage = textStorage, let lm = layoutManager,
-           caret > 0, caret < storage.length,
-           caret < lm.firstUnlaidCharacterIndex(),
-           storage.attribute(.vireoMarker, at: caret - 1, effectiveRange: nil) != nil {
-            let glyph = lm.glyphIndexForCharacter(at: caret)
-            if glyph < lm.numberOfGlyphs {
-                let lineRect = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
-                r = NSRect(x: lineRect.minX + lm.location(forGlyphAt: glyph).x + textContainerInset.width,
-                           y: lineRect.minY + textContainerInset.height,
-                           width: rect.width, height: lineRect.height)
-            }
+
+        // A hidden marker collapses multiple source offsets onto one visual
+        // boundary. TextKit's default caret rect can then borrow the null
+        // glyph's geometry, appearing low or at the end of the line. Anchor it
+        // to the next visible glyph (or the previous glyph at document end)
+        // and derive its vertical position from that line's actual baseline.
+        if let boundary = markerBoundaryInsertionRect(caret: caret, width: rect.width) {
+            return boundary
         }
 
         var font = typingAttributes[.font] as? NSFont
@@ -140,6 +241,50 @@ public final class MarkdownTextView: NSTextView {
         r.origin.y += r.height - height
         r.size.height = height
         return r
+    }
+
+    private func markerBoundaryInsertionRect(caret: Int, width: CGFloat) -> NSRect? {
+        guard let storage = textStorage, let lm = layoutManager,
+              let container = textContainer, let controller,
+              controller.markerIndex.sourceLength == storage.length else { return nil }
+
+        let index = controller.markerIndex
+        let visual = index.visibleOffset(forSourceOffset: caret)
+        let upstream = index.sourceOffset(forVisibleOffset: visual, affinity: .upstream)
+        let downstream = index.sourceOffset(forVisibleOffset: visual, affinity: .downstream)
+        guard upstream != downstream else { return nil }
+
+        let source = storage.string as NSString
+        let next = index.nextVisibleCharacter(after: downstream, in: source)
+        let previous = index.previousVisibleCharacter(before: upstream, in: source)
+        guard let anchorRange = next ?? previous,
+              anchorRange.location < lm.firstUnlaidCharacterIndex() else { return nil }
+
+        let glyphRange = lm.glyphRange(forCharacterRange: anchorRange,
+                                       actualCharacterRange: nil)
+        guard glyphRange.length > 0 else { return nil }
+        let glyph = next == nil ? glyphRange.upperBound - 1 : glyphRange.location
+        guard glyph < lm.numberOfGlyphs else { return nil }
+
+        let lineRect = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let glyphLocation = lm.location(forGlyphAt: glyph)
+        let origin = textContainerOrigin
+        let x: CGFloat
+        if next != nil {
+            x = origin.x + lineRect.minX + glyphLocation.x
+        } else {
+            x = origin.x + lm.boundingRect(forGlyphRange: glyphRange, in: container).maxX
+        }
+
+        let fontIndex = min(anchorRange.location, max(0, storage.length - 1))
+        let font = (storage.attribute(.font, at: fontIndex,
+                                      effectiveRange: nil) as? NSFont)
+            ?? (typingAttributes[.font] as? NSFont)
+            ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let height = ceil(font.ascender - font.descender) + 2
+        let baseline = origin.y + lineRect.minY + glyphLocation.y
+        return NSRect(x: x, y: baseline - font.ascender - 1,
+                      width: max(1, width), height: height)
     }
 
     /// The system invalidates the caret's *uncorrected* rect on every blink.
@@ -174,6 +319,44 @@ public final class MarkdownTextView: NSTextView {
         return super.performKeyEquivalent(with: event)
     }
 
+    /// Keep AppKit's standard Find bar, but point it at the syntax-free string
+    /// supplied by VisibleTextFinderClient rather than NSTextView's raw source.
+    public override func performTextFinderAction(_ sender: Any?) {
+        let action = NSTextFinder.Action(rawValue: (sender as? NSMenuItem)?.tag ?? 0)
+        guard let action else { return }
+        if syntaxFreeFinder == nil {
+            let finder = NSTextFinder()
+            let client = VisibleTextFinderClient(textView: self)
+            finder.client = client
+            finder.isIncrementalSearchingEnabled = true
+            finder.incrementalSearchingShouldDimContentView = true
+            syntaxFreeFinder = finder
+            syntaxFreeFinderClient = client
+        }
+        syntaxFreeFinder?.findBarContainer = enclosingScrollView
+        syntaxFreeFinder?.performAction(action)
+    }
+
+    public override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(performTextFinderAction(_:)),
+           let action = NSTextFinder.Action(rawValue: item.tag) {
+            return syntaxFreeFinder?.validateAction(action) ?? true
+        }
+        return super.validateUserInterfaceItem(item)
+    }
+
+    public override func shouldChangeText(in affectedCharRange: NSRange,
+                                          replacementString: String?) -> Bool {
+        syntaxFreeFinder?.noteClientStringWillChange()
+        let allowed = super.shouldChangeText(in: affectedCharRange,
+                                             replacementString: replacementString)
+        if allowed, let replacementString {
+            controller?.prepareForEdit(in: affectedCharRange,
+                                       replacementString: replacementString)
+        }
+        return allowed
+    }
+
     // MARK: List collapse — hover chevrons and click targets
 
     public override func updateTrackingAreas() {
@@ -192,7 +375,8 @@ public final class MarkdownTextView: NSTextView {
         controller?.setHoveredListAnchor(collapsibleAnchorOnLine(at: event))
         // Arrow cursor over the clickable controls (fold chevron / `…` /
         // task checkboxes) — a subtle hint that they're clickable, not text.
-        if collapseTarget(at: event) != nil || checkboxAnchor(at: event) != nil {
+        if collapseTarget(at: event) != nil || checkboxAnchor(at: event) != nil
+            || imageAnchor(at: event) != nil {
             NSCursor.arrow.set()
         }
     }
@@ -240,76 +424,142 @@ public final class MarkdownTextView: NSTextView {
         return nil
     }
 
-    // MARK: Caret vs hidden list markers
-
-    /// A list item's leading marker (`- [ ] `, `1. `, …) is 2–8 invisible
-    /// zero-width caret stops — arrows appeared stuck and clicks landed
-    /// "nowhere". Snap the caret across the whole marker instead: forward to
-    /// the item's first visible char, or (moving left) past it entirely.
-    private func snapCaretAfterListMarker() {
-        guard selectedRange().length == 0, let controller else { return }
-        if let marker = controller.listMarkerRange(containing: selectedRange().location),
-           selectedRange().location != marker.upperBound {
-            setSelectedRange(NSRange(location: marker.upperBound, length: 0))
+    private func imageAnchor(at event: NSEvent) -> Int? {
+        guard let lm = layoutManager as? MarkdownLayoutManager,
+              let storage = textStorage else { return nil }
+        let point = convert(event.locationInWindow, from: nil)
+        let origin = textContainerOrigin
+        let containerPoint = NSPoint(x: point.x - origin.x, y: point.y - origin.y)
+        for (anchor, rect) in lm.imageRects where rect.contains(containerPoint) {
+            guard anchor < storage.length,
+                  storage.attribute(.vireoImage, at: anchor, effectiveRange: nil) != nil else {
+                continue
+            }
+            return anchor
         }
+        return nil
+    }
+
+    // MARK: Source / visual boundaries
+
+    /// Apply the controller's one marker-boundary policy after a native AppKit
+    /// movement. We keep AppKit's word, bidi, line and vertical navigation, then
+    /// canonicalize only if it landed in invisible syntax.
+    @discardableResult
+    private func normalizeSelection(affinity: MarkerAffinity) -> NSRange {
+        guard let controller else { return selectedRange() }
+        let current = selectedRange()
+        let normalized = controller.normalizedSelection(current, affinity: affinity)
+        if current != normalized { setSelectedRange(normalized) }
+        return normalized
+    }
+
+    private func move(_ affinity: MarkerAffinity, _ operation: () -> Void) {
+        operation()
+        normalizeSelection(affinity: affinity)
+    }
+
+    /// TextKit can treat a zero-width delimiter glyph as a line-edge stop when
+    /// an unmodified arrow starts exactly on that collapsed boundary. Move the
+    /// one adjacent visible grapheme ourselves only at that boundary; all
+    /// other positions stay on AppKit's native bidi-aware movement path.
+    @discardableResult
+    private func moveAcrossCollapsedMarker(_ affinity: MarkerAffinity) -> Bool {
+        guard selectedRange().length == 0, let storage = textStorage, let controller else {
+            return false
+        }
+        let index = controller.markerIndex
+        let caret = selectedRange().location
+        let visible = index.visibleOffset(forSourceOffset: caret)
+        guard index.sourceOffset(forVisibleOffset: visible, affinity: .upstream)
+                != index.sourceOffset(forVisibleOffset: visible, affinity: .downstream) else {
+            return false
+        }
+
+        let source = storage.string as NSString
+        let target: Int?
+        switch affinity {
+        case .upstream:
+            target = index.previousVisibleCharacter(before: caret, in: source)?.location
+        case .downstream:
+            target = index.nextVisibleCharacter(after: caret, in: source)?.upperBound
+        case .nearest:
+            target = nil
+        }
+        guard let target else { return false }
+        let proposed = NSRange(location: target, length: 0)
+        setSelectedRange(controller.normalizedSelection(proposed, affinity: affinity))
+        scrollRangeToVisible(selectedRange())
+        return true
     }
 
     public override func moveRight(_ sender: Any?) {
-        super.moveRight(sender)
-        snapCaretAfterListMarker()
+        if !moveAcrossCollapsedMarker(.downstream) {
+            move(.downstream) { super.moveRight(sender) }
+        }
+        activateTableCellAtCaret()
+    }
+
+    public override func moveForward(_ sender: Any?) {
+        if !moveAcrossCollapsedMarker(.downstream) {
+            move(.downstream) { super.moveForward(sender) }
+        }
         activateTableCellAtCaret()
     }
 
     public override func moveLeft(_ sender: Any?) {
-        super.moveLeft(sender)
-        guard selectedRange().length == 0, let controller else { return }
-        if let marker = controller.listMarkerRange(containing: selectedRange().location) {
-            setSelectedRange(NSRange(location: max(0, marker.location - 1), length: 0))
+        if !moveAcrossCollapsedMarker(.upstream) {
+            move(.upstream) { super.moveLeft(sender) }
         }
         activateTableCellAtCaret()
     }
 
-    public override func moveUp(_ sender: Any?) {
-        super.moveUp(sender)
+    public override func moveBackward(_ sender: Any?) {
+        if !moveAcrossCollapsedMarker(.upstream) {
+            move(.upstream) { super.moveBackward(sender) }
+        }
         activateTableCellAtCaret()
     }
 
-    public override func moveDown(_ sender: Any?) {
-        super.moveDown(sender)
+    private func moveAndActivate(_ affinity: MarkerAffinity, _ operation: () -> Void) {
+        move(affinity, operation)
         activateTableCellAtCaret()
     }
 
-    public override func moveWordForward(_ sender: Any?) {
-        super.moveWordForward(sender)
-        activateTableCellAtCaret()
-    }
-
-    public override func moveWordBackward(_ sender: Any?) {
-        super.moveWordBackward(sender)
-        activateTableCellAtCaret()
-    }
-
-    public override func moveToBeginningOfLine(_ sender: Any?) {
-        super.moveToBeginningOfLine(sender)
-        activateTableCellAtCaret()
-    }
-
-    public override func moveToEndOfLine(_ sender: Any?) {
-        super.moveToEndOfLine(sender)
-        activateTableCellAtCaret()
-    }
+    public override func moveWordRight(_ sender: Any?) { moveAndActivate(.downstream) { super.moveWordRight(sender) } }
+    public override func moveWordForward(_ sender: Any?) { moveAndActivate(.downstream) { super.moveWordForward(sender) } }
+    public override func moveWordLeft(_ sender: Any?) { moveAndActivate(.upstream) { super.moveWordLeft(sender) } }
+    public override func moveWordBackward(_ sender: Any?) { moveAndActivate(.upstream) { super.moveWordBackward(sender) } }
+    public override func moveToEndOfLine(_ sender: Any?) { moveAndActivate(.upstream) { super.moveToEndOfLine(sender) } }
+    public override func moveToRightEndOfLine(_ sender: Any?) { moveAndActivate(.upstream) { super.moveToRightEndOfLine(sender) } }
+    public override func moveToBeginningOfLine(_ sender: Any?) { moveAndActivate(.downstream) { super.moveToBeginningOfLine(sender) } }
+    public override func moveToLeftEndOfLine(_ sender: Any?) { moveAndActivate(.downstream) { super.moveToLeftEndOfLine(sender) } }
+    public override func moveToEndOfParagraph(_ sender: Any?) { moveAndActivate(.upstream) { super.moveToEndOfParagraph(sender) } }
+    public override func moveToBeginningOfParagraph(_ sender: Any?) { moveAndActivate(.downstream) { super.moveToBeginningOfParagraph(sender) } }
+    public override func moveUp(_ sender: Any?) { moveAndActivate(.nearest) { super.moveUp(sender) } }
+    public override func moveDown(_ sender: Any?) { moveAndActivate(.nearest) { super.moveDown(sender) } }
 
     private func activateTableCellAtCaret() {
         guard selectedRange().length == 0 else { return }
         controller?.beginTableCellEditing(atSourceLocation: selectedRange().location)
     }
 
-    // NB: moveUp/moveDown deliberately do NOT snap out of hidden markers.
-    // setSelectedRange resets AppKit's remembered goal column, so snapping on
-    // every vertical step made the caret drift horizontally when scanning up/
-    // down past list lines. A caret that lands inside a zero-width marker still
-    // renders at the item's first visible glyph, and the next horizontal move,
-    // click, or keystroke snaps it out (below / moveLeft / moveRight / mouseDown).
+    public override func moveRightAndModifySelection(_ sender: Any?) { move(.downstream) { super.moveRightAndModifySelection(sender) } }
+    public override func moveForwardAndModifySelection(_ sender: Any?) { move(.downstream) { super.moveForwardAndModifySelection(sender) } }
+    public override func moveLeftAndModifySelection(_ sender: Any?) { move(.upstream) { super.moveLeftAndModifySelection(sender) } }
+    public override func moveBackwardAndModifySelection(_ sender: Any?) { move(.upstream) { super.moveBackwardAndModifySelection(sender) } }
+    public override func moveWordRightAndModifySelection(_ sender: Any?) { move(.downstream) { super.moveWordRightAndModifySelection(sender) } }
+    public override func moveWordForwardAndModifySelection(_ sender: Any?) { move(.downstream) { super.moveWordForwardAndModifySelection(sender) } }
+    public override func moveWordLeftAndModifySelection(_ sender: Any?) { move(.upstream) { super.moveWordLeftAndModifySelection(sender) } }
+    public override func moveWordBackwardAndModifySelection(_ sender: Any?) { move(.upstream) { super.moveWordBackwardAndModifySelection(sender) } }
+    public override func moveToEndOfLineAndModifySelection(_ sender: Any?) { move(.upstream) { super.moveToEndOfLineAndModifySelection(sender) } }
+    public override func moveToRightEndOfLineAndModifySelection(_ sender: Any?) { move(.upstream) { super.moveToRightEndOfLineAndModifySelection(sender) } }
+    public override func moveToBeginningOfLineAndModifySelection(_ sender: Any?) { move(.downstream) { super.moveToBeginningOfLineAndModifySelection(sender) } }
+    public override func moveToLeftEndOfLineAndModifySelection(_ sender: Any?) { move(.downstream) { super.moveToLeftEndOfLineAndModifySelection(sender) } }
+    public override func moveToEndOfParagraphAndModifySelection(_ sender: Any?) { move(.upstream) { super.moveToEndOfParagraphAndModifySelection(sender) } }
+    public override func moveToBeginningOfParagraphAndModifySelection(_ sender: Any?) { move(.downstream) { super.moveToBeginningOfParagraphAndModifySelection(sender) } }
+    public override func moveUpAndModifySelection(_ sender: Any?) { move(.nearest) { super.moveUpAndModifySelection(sender) } }
+    public override func moveDownAndModifySelection(_ sender: Any?) { move(.nearest) { super.moveDownAndModifySelection(sender) } }
 
     public override func insertText(_ string: Any, replacementRange: NSRange) {
         if replacementRange.location == NSNotFound, !hasMarkedText(),
@@ -319,12 +569,139 @@ public final class MarkdownTextView: NSTextView {
             controller?.insertTextIntoActiveTableCell(plain)
             return
         }
-        // A vertical arrow may have left the caret inside a hidden marker; snap
-        // out first so typed text lands in the item's content, not its syntax.
+        // A vertical arrow, service or accessibility action may have left the
+        // insertion point inside a hidden marker. Canonicalize before editing.
         if replacementRange.location == NSNotFound, !hasMarkedText() {
-            snapCaretAfterListMarker()
+            normalizeSelection(affinity: .downstream)
+            super.insertText(string, replacementRange: replacementRange)
+        } else if let controller, !hasMarkedText() {
+            let normalized = controller.normalizedSelection(replacementRange,
+                                                            affinity: .downstream)
+            super.insertText(string, replacementRange: normalized)
+        } else {
+            super.insertText(string, replacementRange: replacementRange)
         }
-        super.insertText(string, replacementRange: replacementRange)
+    }
+
+    // MARK: Atomic deletion and pasteboard
+
+    public override func deleteBackward(_ sender: Any?) {
+        if removeSelectedImage() { return }
+        if deleteSelectedVisibleText() { return }
+        guard let storage = textStorage, let controller,
+              let character = controller.markerIndex.previousVisibleCharacter(
+                before: selectedRange().location, in: storage.string as NSString) else {
+            super.deleteBackward(sender)
+            return
+        }
+        deleteVisibleRange(character)
+    }
+
+    public override func deleteForward(_ sender: Any?) {
+        if removeSelectedImage() { return }
+        if deleteSelectedVisibleText() { return }
+        guard let storage = textStorage, let controller,
+              let character = controller.markerIndex.nextVisibleCharacter(
+                after: selectedRange().location, in: storage.string as NSString) else {
+            super.deleteForward(sender)
+            return
+        }
+        deleteVisibleRange(character)
+    }
+
+    public override func deleteBackwardByDecomposingPreviousCharacter(_ sender: Any?) {
+        // A Markdown boundary is more important than decomposing one scalar of
+        // a grapheme: never leave half a delimiter or half an emoji behind.
+        deleteBackward(sender)
+    }
+
+    public override func deleteWordBackward(_ sender: Any?) {
+        if deleteSelectedVisibleText() { return }
+        super.moveWordBackwardAndModifySelection(sender)
+        normalizeSelection(affinity: .upstream)
+        _ = deleteSelectedVisibleText()
+    }
+
+    public override func deleteWordForward(_ sender: Any?) {
+        if deleteSelectedVisibleText() { return }
+        super.moveWordForwardAndModifySelection(sender)
+        normalizeSelection(affinity: .downstream)
+        _ = deleteSelectedVisibleText()
+    }
+
+    public override func deleteToBeginningOfLine(_ sender: Any?) {
+        if deleteSelectedVisibleText() { return }
+        super.moveToBeginningOfLineAndModifySelection(sender)
+        normalizeSelection(affinity: .downstream)
+        _ = deleteSelectedVisibleText()
+    }
+
+    public override func deleteToEndOfLine(_ sender: Any?) {
+        if deleteSelectedVisibleText() { return }
+        super.moveToEndOfLineAndModifySelection(sender)
+        normalizeSelection(affinity: .upstream)
+        _ = deleteSelectedVisibleText()
+    }
+
+    public override func deleteToBeginningOfParagraph(_ sender: Any?) {
+        if deleteSelectedVisibleText() { return }
+        super.moveToBeginningOfParagraphAndModifySelection(sender)
+        normalizeSelection(affinity: .downstream)
+        _ = deleteSelectedVisibleText()
+    }
+
+    public override func deleteToEndOfParagraph(_ sender: Any?) {
+        if deleteSelectedVisibleText() { return }
+        super.moveToEndOfParagraphAndModifySelection(sender)
+        normalizeSelection(affinity: .upstream)
+        _ = deleteSelectedVisibleText()
+    }
+
+    @discardableResult
+    private func deleteSelectedVisibleText() -> Bool {
+        let selection = selectedRange()
+        guard selection.length > 0 else { return false }
+        deleteVisibleRange(selection)
+        return true
+    }
+
+    private func deleteVisibleRange(_ range: NSRange) {
+        guard let storage = textStorage, let controller else { return }
+        let deletion = controller.markerIndex.balancedDeletionRange(range)
+        guard deletion.length > 0 else { return }
+        // NSTextView owns undo registration. Going through its editing path
+        // keeps atomic syntax deletion indistinguishable from native typing.
+        super.insertText("", replacementRange: deletion)
+        setSelectedRange(NSRange(location: min(deletion.location, storage.length), length: 0))
+    }
+
+    public override func copy(_ sender: Any?) {
+        guard let storage = textStorage, let controller, selectedRange().length > 0 else {
+            super.copy(sender)
+            return
+        }
+        let selection = controller.markerIndex.atomicSelection(selectedRange())
+        let visible = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: selection))
+        for marker in controller.markerIndex.ranges.reversed() {
+            let intersection = NSIntersectionRange(marker, selection)
+            guard intersection.length > 0 else { continue }
+            visible.deleteCharacters(in: NSRange(location: intersection.location - selection.location,
+                                                 length: intersection.length))
+        }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(visible.string, forType: .string)
+        if let rtf = try? visible.data(from: NSRange(location: 0, length: visible.length),
+                                       documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]) {
+            pasteboard.setData(rtf, forType: .rtf)
+        }
+    }
+
+    public override func cut(_ sender: Any?) {
+        guard selectedRange().length > 0 else { return }
+        copy(sender)
+        _ = deleteSelectedVisibleText()
     }
 
     // MARK: Enter — list continuation and hidden-marker hygiene
@@ -486,7 +863,113 @@ public final class MarkdownTextView: NSTextView {
         return true
     }
 
-    // NB: no didChangeText override — the Coordinator's textDidChange
-    // notification already triggers the (synchronous) restyle; overriding here
-    // too would restyle every keystroke twice.
+    // MARK: Accessibility's visual text model
+
+    /// NSTextView normally exposes its backing string to VoiceOver. For Vireo,
+    /// that is an implementation detail: accessibility must describe the same
+    /// syntax-free document sighted users read and edit.
+    public override func accessibilityValue() -> String? {
+        guard let storage = textStorage, let controller else { return super.accessibilityValue() }
+        return controller.markerIndex.visibleString(in: storage.string as NSString)
+    }
+
+    public override func accessibilityNumberOfCharacters() -> Int {
+        controller?.markerIndex.visibleLength ?? super.accessibilityNumberOfCharacters()
+    }
+
+    public override func accessibilitySelectedText() -> String? {
+        guard let storage = textStorage, let controller else { return super.accessibilitySelectedText() }
+        return controller.markerIndex.visibleString(in: selectedRange(), source: storage.string as NSString)
+    }
+
+    public override func accessibilitySelectedTextRange() -> NSRange {
+        guard let controller else { return super.accessibilitySelectedTextRange() }
+        return controller.markerIndex.visibleRange(forSourceRange: selectedRange())
+    }
+
+    public override func setAccessibilitySelectedTextRange(_ range: NSRange) {
+        guard let controller else { super.setAccessibilitySelectedTextRange(range); return }
+        setSelectedRange(controller.markerIndex.sourceRange(forVisibleRange: range))
+    }
+
+    public override func accessibilitySelectedTextRanges() -> [NSValue]? {
+        guard let controller else { return super.accessibilitySelectedTextRanges() }
+        return selectedRanges.map {
+            NSValue(range: controller.markerIndex.visibleRange(forSourceRange: $0.rangeValue))
+        }
+    }
+
+    public override func setAccessibilitySelectedTextRanges(_ ranges: [NSValue]?) {
+        guard let controller, let ranges, !ranges.isEmpty else {
+            super.setAccessibilitySelectedTextRanges(ranges)
+            return
+        }
+        setSelectedRanges(ranges.map {
+            NSValue(range: controller.markerIndex.sourceRange(forVisibleRange: $0.rangeValue))
+        }, affinity: .downstream, stillSelecting: false)
+    }
+
+    public override func accessibilityVisibleCharacterRange() -> NSRange {
+        guard let controller else { return super.accessibilityVisibleCharacterRange() }
+        return controller.markerIndex.visibleRange(
+            forSourceRange: super.accessibilityVisibleCharacterRange()
+        )
+    }
+
+    public override func accessibilityString(for range: NSRange) -> String? {
+        guard let storage = textStorage, let controller else { return super.accessibilityString(for: range) }
+        let visible = controller.markerIndex.visibleString(in: storage.string as NSString) as NSString
+        let lower = min(max(0, range.location), visible.length)
+        let upper = min(max(lower, range.upperBound), visible.length)
+        return visible.substring(with: NSRange(location: lower, length: upper - lower))
+    }
+
+    public override func accessibilityAttributedString(for range: NSRange) -> NSAttributedString? {
+        guard let storage = textStorage, let controller else {
+            return super.accessibilityAttributedString(for: range)
+        }
+        let sourceRange = controller.markerIndex.sourceRange(forVisibleRange: range)
+        let result = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: sourceRange))
+        for marker in controller.markerIndex.ranges.reversed() {
+            let intersection = NSIntersectionRange(marker, sourceRange)
+            if intersection.length > 0 {
+                result.deleteCharacters(in: NSRange(location: intersection.location - sourceRange.location,
+                                                    length: intersection.length))
+            }
+        }
+        return result
+    }
+
+    public override func accessibilityRange(for index: Int) -> NSRange {
+        guard let storage = textStorage, let controller else { return super.accessibilityRange(for: index) }
+        let visible = controller.markerIndex.visibleString(in: storage.string as NSString) as NSString
+        guard index >= 0, index < visible.length else {
+            return NSRange(location: min(max(0, index), visible.length), length: 0)
+        }
+        return visible.rangeOfComposedCharacterSequence(at: index)
+    }
+
+    public override func accessibilityRange(for point: NSPoint) -> NSRange {
+        guard let controller else { return super.accessibilityRange(for: point) }
+        return controller.markerIndex.visibleRange(
+            forSourceRange: super.accessibilityRange(for: point)
+        )
+    }
+
+    public override func accessibilityFrame(for range: NSRange) -> NSRect {
+        guard let controller else { return super.accessibilityFrame(for: range) }
+        return super.accessibilityFrame(
+            for: controller.markerIndex.sourceRange(forVisibleRange: range)
+        )
+    }
+
+    public override func accessibilityStyleRange(for index: Int) -> NSRange {
+        guard let controller else { return super.accessibilityStyleRange(for: index) }
+        let sourceIndex = controller.markerIndex.sourceOffset(forVisibleOffset: index,
+                                                               affinity: .downstream)
+        return controller.markerIndex.visibleRange(
+            forSourceRange: super.accessibilityStyleRange(for: sourceIndex)
+        )
+    }
+
 }
