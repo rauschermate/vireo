@@ -31,9 +31,10 @@ final class FloatingToolbar {
     }
 
     private var activeItems: [Item] = []
+    var presentedItemHelp: [String] { activeItems.map(\.help) }
 
     private func items(for context: Context) -> [Item] {
-        let inline = [
+        var inline = [
             Item(symbol: "bold", help: "Bold",
                  isActive: { $0.bold }) { $0.toggleBold() },
             Item(symbol: "italic", help: "Italic",
@@ -45,7 +46,12 @@ final class FloatingToolbar {
                 $0.toggleInlineCode()
             },
         ]
-        guard context == .document else { return inline }
+        let link = Item(symbol: "link", help: "Link",
+                        isActive: { $0.link }) { $0.insertLink() }
+        guard context == .document else {
+            inline[inline.count - 1].separatorAfter = true
+            return inline + [link]
+        }
         return [
             Item(title: "H1", help: "Heading 1",
                  isActive: { $0.headingLevel == 1 }) { $0.makeHeading(1) },
@@ -62,8 +68,7 @@ final class FloatingToolbar {
                  isActive: { $0.list }) { $0.toggleBulletList() },
             Item(symbol: "text.quote", help: "Quote",
                  isActive: { $0.quote }) { $0.toggleQuote() },
-            Item(symbol: "link", help: "Link",
-                 isActive: { $0.link }) { $0.insertLink() },
+            link,
         ]
     }
 

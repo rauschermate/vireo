@@ -298,6 +298,8 @@ final class RichTableEditingTests: XCTestCase {
 
         XCTAssertTrue(harness.controller.isFormattingToolbarPresented)
         XCTAssertEqual(harness.controller.formattingToolbarContext, .tableCell)
+        XCTAssertEqual(harness.controller.formattingToolbarItemHelp,
+                       ["Bold", "Italic", "Strikethrough", "Inline Code", "Link"])
 
         harness.controller.toggleBold()
         harness.controller.toggleItalic()

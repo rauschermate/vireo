@@ -44,6 +44,7 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
     private var isFinishing = false
     private var hasBegunEditing = false
     private var isActivatingEditor = false
+    private var isEditingLink = false
     private weak var observedEditor: NSTextView?
 
     var onCommit: ((String, TableCellNavigation) -> Void)?
@@ -150,7 +151,9 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
         requestEditorActivation(selectAll: selectAll, attempt: 0)
     }
 
-    private func requestEditorActivation(selectAll: Bool, attempt: Int) {
+    private func requestEditorActivation(selectAll: Bool,
+                                         selection explicitSelection: NSRange? = nil,
+                                         attempt: Int) {
         DispatchQueue.main.async { [weak self] in
             guard let self, let window, superview != nil, !isFinishing else { return }
             isActivatingEditor = true
@@ -158,9 +161,9 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
             if accepted, let editor = field.currentEditor() as? NSTextView {
                 hasBegunEditing = true
                 let length = (field.stringValue as NSString).length
-                let selection = selectAll
+                let selection = explicitSelection ?? (selectAll
                     ? NSRange(location: 0, length: length)
-                    : NSRange(location: length, length: 0)
+                    : NSRange(location: length, length: 0))
                 beginObservingSelection(in: editor)
                 refreshFieldPresentation(in: editor, preserving: selection)
                 publishSelection(from: editor)
@@ -169,7 +172,9 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
             }
             isActivatingEditor = false
             if !hasBegunEditing, attempt < 2 {
-                requestEditorActivation(selectAll: selectAll, attempt: attempt + 1)
+                requestEditorActivation(selectAll: selectAll,
+                                        selection: explicitSelection,
+                                        attempt: attempt + 1)
             }
         }
     }
@@ -305,6 +310,67 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
         publishSelection(from: editor)
     }
 
+    func editLink(using popover: LinkPopover) {
+        guard !isEditingLink,
+              let editor = field.currentEditor() as? NSTextView,
+              let window else { return }
+        syncMarkdownWithVisibleText()
+        let session = EditableMarkdownTable.linkEditSession(
+            in: markdownText, visibleRange: editor.selectedRange
+        )
+        let screenRect = editor.firstRect(
+            forCharacterRange: session.labelVisibleRange, actualRange: nil
+        )
+        let localRect = convert(window.convertFromScreen(screenRect), from: nil)
+        isEditingLink = true
+        endObservingSelection()
+        popover.show(label: session.initialLabel,
+                     destination: session.destination,
+                     canRemove: session.canRemove,
+                     relativeTo: localRect.isEmpty
+                        ? NSRect(x: field.frame.minX, y: field.frame.midY, width: 1, height: 20)
+                        : localRect,
+                     of: self) { [weak self] action in
+            guard let self, !isFinishing else { return }
+            switch action {
+            case .save(let label, let destination):
+                if let result = EditableMarkdownTable.applyingLink(
+                    session, to: markdownText, label: label, destination: destination
+                ) {
+                    applyLinkResult(result)
+                } else {
+                    restoreAfterLinkEditing(selection: session.originalSelection)
+                }
+            case .remove:
+                if let result = EditableMarkdownTable.removingLink(
+                    session, from: markdownText
+                ) {
+                    applyLinkResult(result)
+                } else {
+                    restoreAfterLinkEditing(selection: session.originalSelection)
+                }
+            case .cancel:
+                restoreAfterLinkEditing(selection: session.originalSelection)
+            case .dismiss:
+                isEditingLink = false
+                isFinishing = true
+                onCommit?(field.stringValue, .finish)
+            }
+        }
+    }
+
+    private func applyLinkResult(_ result: TableLinkEditResult) {
+        markdownText = result.markdown
+        field.stringValue = EditableMarkdownTable.visibleText(fromMarkdown: markdownText)
+        refreshFieldPresentation()
+        restoreAfterLinkEditing(selection: result.visibleSelection)
+    }
+
+    private func restoreAfterLinkEditing(selection: NSRange) {
+        isEditingLink = false
+        requestEditorActivation(selectAll: false, selection: selection, attempt: 0)
+    }
+
     func insertText(_ text: String) {
         if let editor = field.currentEditor() {
             editor.insertText(text)
@@ -321,7 +387,8 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
     }
 
     func controlTextDidEndEditing(_ obj: Notification) {
-        guard hasBegunEditing, !isActivatingEditor, !isFinishing else { return }
+        guard hasBegunEditing, !isActivatingEditor, !isEditingLink,
+              !isFinishing else { return }
         isFinishing = true
         endObservingSelection()
         onCommit?(field.stringValue, .finish)

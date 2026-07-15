@@ -26,6 +26,21 @@ enum TableInlineFormat {
     }
 }
 
+struct TableLinkEditSession: Equatable {
+    var replacementRange: NSRange
+    var labelSource: String?
+    var initialLabel: String
+    var destination: String
+    var originalSelection: NSRange
+    var labelVisibleRange: NSRange
+    var canRemove: Bool
+}
+
+struct TableLinkEditResult: Equatable {
+    var markdown: String
+    var visibleSelection: NSRange
+}
+
 /// Source-preserving editing model for one GFM table. Cell text remains raw
 /// Markdown internally so structural operations do not strip formatting from
 /// untouched cells; the UI asks `visibleText` for syntax-free field content.
@@ -232,6 +247,122 @@ public struct EditableMarkdownTable: Equatable {
             result.insert(delimiter, at: sourceRange.location)
         }
         return result as String
+    }
+
+    static func linkEditSession(in markdown: String,
+                                visibleRange rawSelection: NSRange) -> TableLinkEditSession {
+        let index = presentationIndex(for: markdown)
+        let selection = clampedVisibleRange(rawSelection, length: index.visibleLength)
+        let parsed = MarkdownParser().parse(markdown)
+        let existing = parsed.links.first { link in
+            let visibleLabel = index.visibleRange(forSourceRange: link.labelRange)
+            if selection.length > 0 {
+                return NSIntersectionRange(visibleLabel, selection).length > 0
+                    || NSIntersectionRange(
+                        index.visibleRange(forSourceRange: link.range), selection
+                    ).length == selection.length
+            }
+            return selection.location >= visibleLabel.location
+                && selection.location <= visibleLabel.upperBound
+        }
+        let source = markdown as NSString
+
+        if let existing {
+            return TableLinkEditSession(
+                replacementRange: existing.range,
+                labelSource: source.substring(with: existing.labelRange),
+                initialLabel: existing.label,
+                destination: existing.destination,
+                originalSelection: selection,
+                labelVisibleRange: index.visibleRange(forSourceRange: existing.labelRange),
+                canRemove: true
+            )
+        }
+
+        let sourceSelection = index.sourceRange(forVisibleRange: selection)
+        let selectedSource = sourceSelection.length > 0
+            ? source.substring(with: sourceSelection) : nil
+        let visible = visibleText(fromMarkdown: markdown) as NSString
+        let label = selection.length > 0
+            ? visible.substring(with: selection) : "link"
+        return TableLinkEditSession(
+            replacementRange: sourceSelection,
+            labelSource: selectedSource.flatMap { linkLabelSourceIsSafe($0) ? $0 : nil },
+            initialLabel: label,
+            destination: "",
+            originalSelection: selection,
+            labelVisibleRange: selection,
+            canRemove: false
+        )
+    }
+
+    static func applyingLink(_ session: TableLinkEditSession,
+                             to markdown: String, label: String,
+                             destination rawDestination: String) -> TableLinkEditResult? {
+        let source = markdown as NSString
+        guard session.replacementRange.upperBound <= source.length,
+              let destination = try? LinkDestination.normalize(rawDestination) else { return nil }
+        let labelSource: String
+        if label == session.initialLabel, let preserved = session.labelSource {
+            labelSource = preserved
+        } else {
+            labelSource = escapedLinkLabel(label)
+        }
+        let escapedDestination = destination.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "(", with: "\\(")
+            .replacingOccurrences(of: ")", with: "\\)")
+            .replacingOccurrences(of: "|", with: "\\|")
+        let replacement = "[\(labelSource)](\(escapedDestination))"
+        let result = NSMutableString(string: markdown)
+        result.replaceCharacters(in: session.replacementRange, with: replacement)
+        let updated = result as String
+        let labelRange = NSRange(location: session.replacementRange.location + 1,
+                                 length: (labelSource as NSString).length)
+        return TableLinkEditResult(
+            markdown: updated,
+            visibleSelection: presentationIndex(for: updated)
+                .visibleRange(forSourceRange: labelRange)
+        )
+    }
+
+    static func removingLink(_ session: TableLinkEditSession,
+                             from markdown: String) -> TableLinkEditResult? {
+        guard session.canRemove, let labelSource = session.labelSource,
+              session.replacementRange.upperBound <= (markdown as NSString).length else {
+            return nil
+        }
+        let result = NSMutableString(string: markdown)
+        result.replaceCharacters(in: session.replacementRange, with: labelSource)
+        let updated = result as String
+        let labelRange = NSRange(location: session.replacementRange.location,
+                                 length: (labelSource as NSString).length)
+        return TableLinkEditResult(
+            markdown: updated,
+            visibleSelection: presentationIndex(for: updated)
+                .visibleRange(forSourceRange: labelRange)
+        )
+    }
+
+    private static func escapedLinkLabel(_ label: String) -> String {
+        label.replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "]", with: "\\]")
+            .replacingOccurrences(of: "|", with: "\\|")
+    }
+
+    private static func linkLabelSourceIsSafe(_ source: String) -> Bool {
+        var precedingBackslashes = 0
+        for character in source {
+            if character == "\\" {
+                precedingBackslashes += 1
+                continue
+            }
+            if character == "]", precedingBackslashes.isMultiple(of: 2) { return false }
+            precedingBackslashes = 0
+        }
+        return true
     }
 
     private static let escapablePunctuation = Set(

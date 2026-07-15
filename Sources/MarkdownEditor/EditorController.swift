@@ -352,6 +352,7 @@ public final class EditorController: ObservableObject {
     var formattingToolbarContext: FloatingToolbar.Context? {
         toolbar.presentedContext
     }
+    var formattingToolbarItemHelp: [String] { toolbar.presentedItemHelp }
 
     /// Mount a native single-line editor over the drawn cell. The table itself
     /// remains rendered, so source pipes and the separator row never appear.
@@ -1105,6 +1106,11 @@ public final class EditorController: ObservableObject {
     }
 
     public func insertLink() {
+        if let tableCellEditor {
+            toolbar.hide()
+            tableCellEditor.editLink(using: linkPopover)
+            return
+        }
         guard !isTableInteractionActive else { return }
         guard let tv = textView, let storage = tv.textStorage, tv.window != nil else { return }
         let selection = tv.selectedRange()

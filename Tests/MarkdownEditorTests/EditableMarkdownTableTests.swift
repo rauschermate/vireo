@@ -97,4 +97,68 @@ final class EditableMarkdownTableTests: XCTestCase {
         XCTAssertEqual(EditableMarkdownTable.visibleText(fromMarkdown: formatted),
                        "A | B")
     }
+
+    func testCellLinkCanBeAddedEditedAndRemovedWithoutExposingSyntax() throws {
+        let selection = NSRange(location: 0, length: 13)
+        let addSession = EditableMarkdownTable.linkEditSession(
+            in: "Documentation", visibleRange: selection
+        )
+        let added = try XCTUnwrap(EditableMarkdownTable.applyingLink(
+            addSession, to: "Documentation", label: "Documentation",
+            destination: "example.com/docs"
+        ))
+        XCTAssertEqual(added.markdown,
+                       "[Documentation](https://example.com/docs)")
+        XCTAssertEqual(added.visibleSelection, selection)
+        XCTAssertTrue(EditableMarkdownTable.activeFormats(
+            in: added.markdown, visibleRange: added.visibleSelection
+        ).link)
+
+        let editSession = EditableMarkdownTable.linkEditSession(
+            in: added.markdown, visibleRange: selection
+        )
+        XCTAssertTrue(editSession.canRemove)
+        XCTAssertEqual(editSession.destination, "https://example.com/docs")
+        let edited = try XCTUnwrap(EditableMarkdownTable.applyingLink(
+            editSession, to: added.markdown, label: "Product docs",
+            destination: "https://docs.example.com"
+        ))
+        XCTAssertEqual(edited.markdown,
+                       "[Product docs](https://docs.example.com)")
+        XCTAssertEqual(EditableMarkdownTable.visibleText(fromMarkdown: edited.markdown),
+                       "Product docs")
+
+        let removeSession = EditableMarkdownTable.linkEditSession(
+            in: edited.markdown, visibleRange: edited.visibleSelection
+        )
+        let removed = try XCTUnwrap(EditableMarkdownTable.removingLink(
+            removeSession, from: edited.markdown
+        ))
+        XCTAssertEqual(removed.markdown, "Product docs")
+        XCTAssertEqual(removed.visibleSelection, NSRange(location: 0, length: 12))
+    }
+
+    func testCellLinkPreservesFormattedLabelsAndEscapesLiteralPipes() throws {
+        let formatted = "[**Docs**](https://example.com)"
+        let existing = EditableMarkdownTable.linkEditSession(
+            in: formatted, visibleRange: NSRange(location: 0, length: 4)
+        )
+        let removed = try XCTUnwrap(EditableMarkdownTable.removingLink(
+            existing, from: formatted
+        ))
+        XCTAssertEqual(removed.markdown, "**Docs**")
+        XCTAssertEqual(EditableMarkdownTable.visibleText(fromMarkdown: removed.markdown),
+                       "Docs")
+
+        let plain = "Label"
+        let session = EditableMarkdownTable.linkEditSession(
+            in: plain, visibleRange: NSRange(location: 0, length: 5)
+        )
+        let linked = try XCTUnwrap(EditableMarkdownTable.applyingLink(
+            session, to: plain, label: "A | B", destination: "example.com"
+        ))
+        XCTAssertEqual(linked.markdown, "[A \\| B](https://example.com)")
+        XCTAssertEqual(EditableMarkdownTable.visibleText(fromMarkdown: linked.markdown),
+                       "A | B")
+    }
 }
