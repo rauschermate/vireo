@@ -430,15 +430,16 @@ public final class EditorController: ObservableObject {
               let visible = model.visibleText(row: geometry.id.row, column: geometry.id.column)
         else { return }
 
-        // Update the backing selection before mounting the field. AppKit can
-        // emit an end-editing notification while the text view changes its
-        // selection; if the new field already exists, that callback tears it
-        // down in the same mouse event that created it.
+        // Park a collapsed backing caret before mounting the field. Selecting
+        // the raw source range would paint an unrelated sliver elsewhere in
+        // the rendered row; the overlay owns the visible text selection.
+        // Doing this first also avoids an AppKit end-editing callback tearing
+        // down a newly mounted field in the same mouse event that created it.
         if table.rows.indices.contains(geometry.id.row),
            let cell = table.rows[geometry.id.row].cells.first(where: {
                $0.column == geometry.id.column
            }) {
-            tv.setSelectedRange(cell.range)
+            tv.setSelectedRange(NSRange(location: cell.range.location, length: 0))
         }
 
         toolbar.hide()

@@ -90,6 +90,8 @@ final class RichTableEditingTests: XCTestCase {
         harness.textView.mouseDown(with: event)
 
         XCTAssertEqual(harness.controller.activeTableCellID, id)
+        XCTAssertEqual(harness.textView.selectedRange().length, 0,
+                       "only the visible field selection should be painted")
         XCTAssertEqual(
             harness.textView.subviews.compactMap { $0 as? TableCellEditorOverlay }.count,
             1
