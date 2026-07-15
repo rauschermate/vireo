@@ -347,6 +347,37 @@ final class RichTableEditingTests: XCTestCase {
         XCTAssertEqual(harness.controller.activeTableCellID?.column, 0)
     }
 
+    func testReturnAppendsBlankRowWithoutRenderingPipes() throws {
+        let harness = Harness(source: source)
+        let id = TableCellID(tableAnchor: 0, row: 1, column: 0)
+        harness.controller.beginTableCellEditing(
+            try XCTUnwrap(harness.layout.geometry(for: id))
+        )
+        let overlay = try XCTUnwrap(
+            harness.textView.subviews.compactMap { $0 as? TableCellEditorOverlay }.first
+        )
+        let field = try XCTUnwrap(
+            overlay.subviews.compactMap { $0 as? NSTextField }.first
+        )
+
+        XCTAssertTrue(overlay.control(
+            field, textView: NSTextView(),
+            doCommandBy: #selector(NSResponder.insertNewline(_:))
+        ))
+        harness.settle()
+
+        let table = try XCTUnwrap(harness.controller.parsed.tables.first)
+        XCTAssertEqual(table.rows.count, 3)
+        let storage = try XCTUnwrap(harness.textView.textStorage)
+        let displayed = table.rows[2].cells.map {
+            harness.layout.tableDisplayContent(for: $0, header: false,
+                                               storage: storage).string
+        }
+        XCTAssertEqual(displayed, ["", ""])
+        XCTAssertEqual(harness.controller.activeTableCellID,
+                       TableCellID(tableAnchor: 0, row: 2, column: 0))
+    }
+
     func testCellActionCanInsertColumnWithoutExposingSource() {
         let harness = Harness(source: source)
         let id = TableCellID(tableAnchor: 0, row: 0, column: 0)

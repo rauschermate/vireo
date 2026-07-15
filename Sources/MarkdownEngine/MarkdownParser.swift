@@ -472,7 +472,17 @@ private struct Accumulator {
             var cells: [TableCell] = []
             for (col, node) in cellNodes.enumerated() {
                 guard let r = map.nsRange(node.range) else { continue }
-                cells.append(TableCell(range: trim(r), column: col, alignment: alignment(col)))
+                var contentRange = trim(r)
+                // swift-markdown can anchor an empty GFM cell to one of its
+                // structural `|` delimiters. The delimiter is table plumbing,
+                // never cell content; represent the cell as a zero-length
+                // insertion point so drawing and editing both see it as blank.
+                if contentRange.length == 1,
+                   ns.character(at: contentRange.location) == 0x7C {
+                    contentRange.length = 0
+                }
+                cells.append(TableCell(range: contentRange, column: col,
+                                       alignment: alignment(col)))
                 // Table cells are still inline Markdown. Record emphasis,
                 // code, links and their delimiters just like paragraph text so
                 // the drawn grid can present rich content without raw syntax.
