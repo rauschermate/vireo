@@ -111,9 +111,16 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
     override func layout() {
         super.layout()
         let buttonWidth: CGFloat = 40
-        field.frame = NSRect(x: 8, y: 2,
-                             width: max(20, bounds.width - buttonWidth - 10),
-                             height: max(20, bounds.height - 4))
+        let naturalFieldHeight = ceil(
+            baseFont.ascender - baseFont.descender + baseFont.leading + 8
+        )
+        let fieldHeight = min(bounds.height, max(22, naturalFieldHeight))
+        field.frame = NSRect(
+            x: 8,
+            y: floor((bounds.height - fieldHeight) / 2),
+            width: max(20, bounds.width - buttonWidth - 10),
+            height: fieldHeight
+        )
         menuButton.frame = NSRect(x: bounds.width - buttonWidth, y: 0,
                                   width: buttonWidth, height: bounds.height)
     }

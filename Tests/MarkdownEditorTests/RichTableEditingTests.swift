@@ -421,6 +421,17 @@ final class RichTableEditingTests: XCTestCase {
         XCTAssertEqual(displayed, ["", ""])
         XCTAssertEqual(harness.controller.activeTableCellID,
                        TableCellID(tableAnchor: 0, row: 2, column: 0))
+        let nextOverlay = try XCTUnwrap(
+            harness.textView.subviews.compactMap { $0 as? TableCellEditorOverlay }.first
+        )
+        nextOverlay.layoutSubtreeIfNeeded()
+        let nextField = try XCTUnwrap(
+            nextOverlay.subviews.compactMap { $0 as? NSTextField }.first
+        )
+        XCTAssertEqual(nextField.placeholderString, "Empty cell")
+        XCTAssertEqual(nextField.frame.midY, nextOverlay.bounds.midY, accuracy: 0.5)
+        XCTAssertLessThan(nextField.frame.height, nextOverlay.bounds.height,
+                          "the field editor should use its natural centered line height")
     }
 
     func testCellActionCanInsertColumnWithoutExposingSource() {
