@@ -21,5 +21,6 @@ SRC="build/DerivedData/Build/Products/$CONFIG/Vireo.app"
 DEST="build/Vireo.app"
 rm -rf "$DEST"
 cp -R "$SRC" "$DEST"
+"$ROOT/scripts/verify-bundle-metadata.sh" "$DEST"
 codesign --force --deep --sign - "$DEST" >/dev/null 2>&1 || true
 echo "Built $DEST (with Quick Look extension in Contents/PlugIns)"

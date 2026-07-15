@@ -77,6 +77,14 @@ final class AppState: ObservableObject {
                 else { opened.scrollToAnchor(anchor) }
             }
         }
+        doc.onSaveFailure = { [weak self, weak doc] message in
+            guard let self, let doc else { return }
+            self.presentSaveFailure(message, for: doc)
+        }
+        doc.onSaveConflict = { [weak self, weak doc] conflict in
+            guard let self, let doc else { return }
+            self.presentSaveConflict(conflict, for: doc)
+        }
     }
 
     /// Close a tab, prompting for unsaved changes first. Keeps at least one
@@ -106,9 +114,7 @@ final class AppState: ObservableObject {
 
     /// Prompt-close a single tab. Returns false when the user cancelled.
     private func close(_ doc: DocumentModel) -> Bool {
-        guard confirmDiscardIfNeeded(doc) else { return false }
-        doc.flushPendingSave()
-        if doc.isDirty, doc.url != nil { doc.saveNow() }
+        guard prepareToClose(doc) else { return false }
         guard let idx = documents.firstIndex(where: { $0.id == doc.id }) else { return true }
         documents.remove(at: idx)
         if selectedID == doc.id {
@@ -119,12 +125,19 @@ final class AppState: ObservableObject {
 
     /// Save-changes prompt when closing would lose work. Returns true when
     /// it's OK to proceed.
+    func prepareToClose(_ doc: DocumentModel) -> Bool {
+        if doc.url != nil, doc.isDirty, doc.autoSaveEnabled {
+            return handleCloseSaveResult(doc.saveSynchronously(notifyFailure: false), for: doc)
+        }
+        return confirmDiscardIfNeeded(doc)
+    }
+
     func confirmDiscardIfNeeded(_ doc: DocumentModel) -> Bool {
         let needsPrompt: Bool
         if doc.url == nil {
             needsPrompt = !doc.source.isEmpty
         } else {
-            needsPrompt = doc.isDirty && !Preferences.shared.autoSave
+            needsPrompt = doc.isDirty
         }
         guard needsPrompt else { return true }
 
@@ -142,16 +155,100 @@ final class AppState: ObservableObject {
                 let panel = NSSavePanel()
                 panel.nameFieldStringValue = "\(doc.displayTitle).md"
                 guard panel.runModal() == .OK, let saveURL = panel.url else { return false }
-                doc.save(to: saveURL)
+                guard doc.save(to: saveURL) else { return false }
                 Preferences.shared.addRecent(saveURL)
             } else {
-                doc.saveNow()
+                return handleCloseSaveResult(doc.saveSynchronously(notifyFailure: false), for: doc)
             }
             return true
         case .alertSecondButtonReturn:
             return true
         default:
             return false
+        }
+    }
+
+    private func handleCloseSaveResult(_ result: DocumentWriteResult,
+                                       for doc: DocumentModel) -> Bool {
+        switch result {
+        case .success:
+            return true
+        case .conflict(let disk):
+            let conflict = DocumentConflict(url: doc.url ?? URL(fileURLWithPath: ""), disk: disk)
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "“\(conflict.url.lastPathComponent)” changed on disk"
+            alert.informativeText = "Vireo did not overwrite the newer disk version. Keep your edits, reload the disk version, or cancel closing."
+            alert.addButton(withTitle: "Keep Mine")
+            alert.addButton(withTitle: "Reload Disk")
+            alert.addButton(withTitle: "Cancel")
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                doc.acceptConflictForSynchronousOverwrite(conflict)
+                return handleCloseSaveResult(doc.saveSynchronously(notifyFailure: false), for: doc)
+            case .alertSecondButtonReturn:
+                doc.resolveConflict(.reloadDisk, conflict: conflict)
+                return true
+            default:
+                return false
+            }
+        case .failure(let message):
+            let alert = NSAlert()
+            alert.alertStyle = .critical
+            alert.messageText = "Couldn't save “\(doc.displayTitle)”"
+            alert.informativeText = "\(message) Your edits are still in Vireo."
+            alert.addButton(withTitle: "Try Again")
+            alert.addButton(withTitle: "Close Without Saving")
+            alert.addButton(withTitle: "Cancel")
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                return handleCloseSaveResult(doc.saveSynchronously(notifyFailure: false), for: doc)
+            case .alertSecondButtonReturn:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    private func presentSaveFailure(_ message: String, for doc: DocumentModel) {
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = "Couldn't auto-save “\(doc.displayTitle)”"
+        alert.informativeText = "\(message) Your edits are still open and marked unsaved."
+        alert.addButton(withTitle: "Try Again")
+        alert.addButton(withTitle: "OK")
+        let retry: (NSApplication.ModalResponse) -> Void = { response in
+            if response == .alertFirstButtonReturn { doc.saveNow() }
+        }
+        if let window = NSApp.keyWindow, window.attachedSheet == nil {
+            alert.beginSheetModal(for: window, completionHandler: retry)
+        } else {
+            retry(alert.runModal())
+        }
+    }
+
+    private func presentSaveConflict(_ conflict: DocumentConflict, for doc: DocumentModel) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "“\(conflict.url.lastPathComponent)” changed on disk"
+        alert.informativeText = "Vireo kept your unsaved edits and did not overwrite the newer disk version."
+        alert.addButton(withTitle: "Keep Mine")
+        alert.addButton(withTitle: "Reload Disk")
+        alert.addButton(withTitle: "Cancel")
+        let resolve: (NSApplication.ModalResponse) -> Void = { response in
+            if response == .alertFirstButtonReturn {
+                doc.resolveConflict(.keepMine, conflict: conflict)
+            } else if response == .alertSecondButtonReturn {
+                doc.resolveConflict(.reloadDisk, conflict: conflict)
+            } else {
+                doc.resolveConflict(.cancel, conflict: conflict)
+            }
+        }
+        if let window = NSApp.keyWindow, window.attachedSheet == nil {
+            alert.beginSheetModal(for: window, completionHandler: resolve)
+        } else {
+            resolve(alert.runModal())
         }
     }
 
@@ -289,8 +386,7 @@ final class AppState: ObservableObject {
         panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
         panel.nameFieldStringValue = doc.title.hasSuffix(".md") ? doc.title : doc.displayTitle + ".md"
         if panel.runModal() == .OK, let url = panel.url {
-            doc.save(to: url)
-            Preferences.shared.addRecent(url)
+            if doc.save(to: url) { Preferences.shared.addRecent(url) }
         }
     }
 

@@ -41,7 +41,8 @@ struct VireoApp: App {
                 if state.activeDocument?.url == nil { state.saveActiveAs() } else { state.activeDocument?.saveNow() }
             }
             .keyboardShortcut("s")
-            .disabled(prefs.autoSave && state.activeDocument?.url != nil)
+            .disabled(prefs.autoSave && state.activeDocument?.url != nil
+                      && state.activeDocument?.saveState.failureMessage == nil)
             Button("Save As…") { state.saveActiveAs() }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
             Divider()

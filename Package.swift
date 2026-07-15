@@ -68,12 +68,20 @@ let package = Package(
             dependencies: ["MarkdownEngine"]
         ),
         .testTarget(
+            name: "MarkdownRenderTests",
+            dependencies: ["MarkdownEngine", "MarkdownRender"]
+        ),
+        .testTarget(
             name: "MarkdownEditorTests",
             dependencies: ["MarkdownEditor"]
         ),
         .testTarget(
             name: "VireoUpdaterTests",
             dependencies: ["VireoUpdater"]
+        ),
+        .testTarget(
+            name: "VireoCoreTests",
+            dependencies: ["VireoCore"]
         ),
         .testTarget(
             name: "VireoTests",

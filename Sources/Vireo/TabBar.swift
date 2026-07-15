@@ -210,6 +210,12 @@ private struct TabMenuRow: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 0)
+                if case .failed(let message) = doc.saveState {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Color.red)
+                        .help("Save failed: \(message)")
+                }
                 if isSelected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 10, weight: .semibold))
@@ -258,6 +264,21 @@ private struct TabItem: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+            }
+
+            switch doc.saveState {
+            case .saving:
+                ProgressView()
+                    .controlSize(.mini)
+                    .frame(width: 10, height: 10)
+                    .help("Saving…")
+            case .failed(let message):
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Color.red)
+                    .help("Save failed: \(message)")
+            case .saved, .unsaved:
+                EmptyView()
             }
 
             Spacer(minLength: 0) // title hugs the left edge, ✕ the right
