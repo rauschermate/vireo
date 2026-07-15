@@ -17,6 +17,10 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     public var markerColor: NSColor = .secondaryLabelColor
     public var bulletFont: NSFont = .systemFont(ofSize: 16)
     public var imageProvider: ((String) -> NSImage?)?
+    public var imageMaxWidth: CGFloat = 640
+    /// The rendered image currently selected by the editor, if any.
+    /// Selection is visual only; the Markdown source remains hidden.
+    public var selectedImageAnchor: Int?
 
     // Table drawing config (set on each restyle).
     public var tables: [TableInfo] = []
@@ -35,6 +39,10 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     /// chevron toggles and collapsed-`…` expanders, keyed by item anchor.
     public private(set) var chevronRects: [Int: NSRect] = [:]
     public private(set) var dotsRects: [Int: NSRect] = [:]
+    /// Rendered image hit targets in text-container coordinates, keyed by source
+    /// anchor. Keeping these independent of a particular drawing pass matters:
+    /// AppKit may translate `origin` while drawing a scrolled dirty region.
+    public private(set) var imageRects: [Int: NSRect] = [:]
 
     public override init() {
         super.init()
@@ -137,9 +145,14 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
             drawHeadingAdornments(anchor: range.location, origin: origin, storage: storage)
         }
         storage.enumerateAttribute(.vireoImage, in: charRange) { value, range, _ in
-            guard let src = value as? String, let img = imageProvider?(src),
-                  !isCollapsedAway(range.location) else { return }
-            drawImage(img, atCharIndex: range.location, origin: origin)
+            guard let src = value as? String, !isCollapsedAway(range.location) else { return }
+            if let img = imageProvider?(src) {
+                drawImage(img, atCharIndex: range.location, origin: origin)
+            } else {
+                let alt = storage.attribute(.vireoImageAlt, at: range.location,
+                                            effectiveRange: nil) as? String ?? ""
+                drawImageFallback(alt: alt, atCharIndex: range.location, origin: origin)
+            }
         }
         storage.enumerateAttribute(.vireoTable, in: charRange) { value, range, _ in
             guard let n = value as? NSNumber,
@@ -552,14 +565,92 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let glyph = glyphIndexForCharacter(at: charIndex)
         guard glyph < numberOfGlyphs else { return }
         let lineRect = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
-        let maxW = container.size.width - container.lineFragmentPadding * 2
-        guard img.size.width > 0 else { return }
+        let available = max(1, container.size.width - container.lineFragmentPadding * 2 - 24)
+        let maxW = max(1, min(imageMaxWidth, available))
+        guard img.size.width > 0, img.size.height > 0 else { return }
         let scale = min(1, maxW / img.size.width)
         let w = img.size.width * scale
         let h = img.size.height * scale
-        let rect = NSRect(x: origin.x + lineRect.minX + 12,
-                          y: origin.y + lineRect.minY + 4,
-                          width: w, height: h)
-        img.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
+        let containerRect = NSRect(x: lineRect.minX + 12,
+                                   y: lineRect.minY + 4,
+                                   width: w, height: h)
+        imageRects[charIndex] = containerRect
+        let drawRect = containerRect.offsetBy(dx: origin.x, dy: origin.y)
+        img.draw(in: drawRect, from: .zero, operation: .sourceOver, fraction: 1,
+                 respectFlipped: true, hints: nil)
+        let selected = selectedImageAnchor == charIndex
+        if selected || !imageUsesAlphaChannel(img) {
+            drawImageOutline(in: drawRect, cornerRadius: 0, selected: selected)
+        }
+    }
+
+    private func drawImageFallback(alt: String, atCharIndex charIndex: Int, origin: NSPoint) {
+        guard charIndex < numberOfGlyphs, let container = textContainers.first else { return }
+        let glyph = glyphIndexForCharacter(at: charIndex)
+        guard glyph < numberOfGlyphs else { return }
+        let lineRect = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let available = max(1, container.size.width - container.lineFragmentPadding * 2 - 24)
+        let width = max(1, min(imageMaxWidth, available))
+        let containerRect = NSRect(x: lineRect.minX + 12,
+                                   y: lineRect.minY + 4,
+                                   width: width, height: max(32, lineRect.height - 8))
+        imageRects[charIndex] = containerRect
+        let rect = containerRect.offsetBy(dx: origin.x, dy: origin.y)
+        NSColor.controlBackgroundColor.setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
+        drawImageOutline(in: rect, cornerRadius: 6,
+                         selected: selectedImageAnchor == charIndex)
+
+        let label = alt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = (label.isEmpty ? "Image" : label) as NSString
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 13),
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .paragraphStyle: paragraph,
+        ]
+        let size = text.size(withAttributes: attrs)
+        let labelRect = NSRect(x: rect.minX + 12, y: rect.midY - size.height / 2,
+                               width: max(0, rect.width - 24), height: size.height)
+        text.draw(in: labelRect, withAttributes: attrs)
+    }
+
+    private func drawImageOutline(in rect: NSRect, cornerRadius: CGFloat, selected: Bool) {
+        let lineWidth: CGFloat = selected ? 2 : 1
+        let inset = lineWidth / 2
+        let outlineRect = rect.insetBy(dx: inset, dy: inset)
+        let radius = max(0, cornerRadius - inset)
+        let outline = cornerRadius > 0
+            ? NSBezierPath(roundedRect: outlineRect, xRadius: radius, yRadius: radius)
+            : NSBezierPath(rect: outlineRect)
+        (selected ? NSColor.systemBlue : imageOutlineColor).setStroke()
+        outline.lineWidth = lineWidth
+        outline.stroke()
+    }
+
+    /// Transparent artwork should keep its natural silhouette instead of
+    /// revealing the rectangular bounds of the image container. Checking the
+    /// backing image metadata avoids scanning large images during a redraw.
+    private func imageUsesAlphaChannel(_ image: NSImage) -> Bool {
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            return false
+        }
+        switch cgImage.alphaInfo {
+        case .premultipliedFirst, .premultipliedLast, .first, .last, .alphaOnly:
+            return true
+        case .none, .noneSkipFirst, .noneSkipLast:
+            return false
+        @unknown default:
+            return true
+        }
+    }
+
+    private var imageOutlineColor: NSColor {
+        NSColor(name: nil) { appearance in
+            let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            return dark ? NSColor.white.withAlphaComponent(0.10)
+                        : NSColor.black.withAlphaComponent(0.10)
+        }
     }
 }

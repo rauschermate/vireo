@@ -31,7 +31,7 @@ public enum TOCDefaultOption: String, CaseIterable, Identifiable, Sendable {
 @MainActor
 public final class Preferences: ObservableObject {
     public static let shared = Preferences()
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
 
     private enum Keys {
         static let autoSave = "vireo.autoSave"
@@ -55,7 +55,8 @@ public final class Preferences: ObservableObject {
         didSet { defaults.set(tocDefault.rawValue, forKey: Keys.tocDefault) }
     }
 
-    public init() {
+    public init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         autoSave = defaults.object(forKey: Keys.autoSave) as? Bool ?? true
         appearance = AppearanceOption(rawValue: defaults.string(forKey: Keys.appearance) ?? "") ?? .system
         tocDefault = TOCDefaultOption(rawValue: defaults.string(forKey: Keys.tocDefault) ?? "") ?? .dynamic
