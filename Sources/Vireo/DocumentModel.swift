@@ -52,6 +52,7 @@ final class DocumentModel: ObservableObject, Identifiable {
     }
 
     let controller = EditorController()
+    lazy var editorSession = EditorSession(source: source, controller: controller)
     private(set) var source: String
     private let preferences: Preferences
     private let writer: DocumentWriter

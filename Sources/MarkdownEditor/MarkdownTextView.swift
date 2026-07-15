@@ -6,8 +6,11 @@ import MarkdownRender
 /// `EditorController`. Clicks on link text follow the link (reader behaviour).
 public final class MarkdownTextView: NSTextView {
     weak var controller: EditorController?
+    private let persistentUndoManager = UndoManager()
     private var representedImageAnchor: Int?
     private(set) var selectedImageAnchor: Int?
+
+    public override var undoManager: UndoManager? { persistentUndoManager }
 
     var isDark: Bool {
         effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua

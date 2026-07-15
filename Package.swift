@@ -85,7 +85,7 @@ let package = Package(
         ),
         .testTarget(
             name: "VireoTests",
-            dependencies: ["Vireo"]
+            dependencies: ["Vireo", "MarkdownEditor"]
         ),
     ]
 )
