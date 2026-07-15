@@ -1,7 +1,7 @@
 import XCTest
 import AppKit
 import MarkdownEngine
-import MarkdownRender
+@testable import MarkdownRender
 @testable import MarkdownEditor
 
 @MainActor
@@ -161,6 +161,36 @@ final class RichTableEditingTests: XCTestCase {
                        scroll.maxOffset, accuracy: 0.5)
     }
 
+    func testHorizontalScrollCommitsActiveCellBeforeMovingTable() throws {
+        let harness = Harness(source: wideSource)
+        let id = TableCellID(tableAnchor: 0, row: 1, column: 0)
+        harness.controller.beginTableCellEditing(
+            try XCTUnwrap(harness.layout.geometry(for: id))
+        )
+        let overlay = try XCTUnwrap(
+            harness.textView.subviews.compactMap { $0 as? TableCellEditorOverlay }.first
+        )
+        let field = try XCTUnwrap(
+            overlay.subviews.compactMap { $0 as? NSTextField }.first
+        )
+        field.stringValue = "Updated milestone"
+        let scroll = try XCTUnwrap(harness.layout.tableScrollGeometry(for: 0))
+
+        XCTAssertTrue(harness.controller.scrollTableHorizontally(
+            atContainerPoint: NSPoint(x: scroll.viewportRect.midX,
+                                      y: scroll.viewportRect.midY),
+            delta: 120
+        ))
+        harness.settle()
+
+        XCTAssertNil(harness.controller.activeTableCellID)
+        XCTAssertTrue(harness.textView.string.contains("| Updated milestone |"))
+        XCTAssertGreaterThan(
+            try XCTUnwrap(harness.layout.tableScrollGeometry(for: 0)).offset,
+            scroll.offset
+        )
+    }
+
     func testKeyboardRevealScrollsLastColumnIntoViewport() throws {
         let harness = Harness(source: wideSource)
         let id = TableCellID(tableAnchor: 0, row: 1, column: 3)
@@ -201,6 +231,81 @@ final class RichTableEditingTests: XCTestCase {
                        TableCellID(tableAnchor: 0, row: 1, column: 1))
         XCTAssertFalse(harness.textView.string.contains("| --- | Engineer"),
                        "editing must never target the hidden separator row")
+    }
+
+    func testBackingTextViewTabStillRoutesThroughActiveTableCell() throws {
+        let harness = Harness(source: source)
+        let id = TableCellID(tableAnchor: 0, row: 1, column: 0)
+        harness.controller.beginTableCellEditing(
+            try XCTUnwrap(harness.layout.geometry(for: id))
+        )
+        let overlay = try XCTUnwrap(
+            harness.textView.subviews.compactMap { $0 as? TableCellEditorOverlay }.first
+        )
+        let field = try XCTUnwrap(
+            overlay.subviews.compactMap { $0 as? NSTextField }.first
+        )
+        field.stringValue = "Grace"
+
+        // Simulate AppKit briefly returning first-responder status to the
+        // backing text view between native field editors.
+        harness.textView.insertTab(nil)
+        harness.settle()
+
+        XCTAssertFalse(harness.textView.string.contains("\t"))
+        XCTAssertTrue(harness.textView.string.contains("| Grace | Engineer |"))
+        XCTAssertEqual(harness.controller.activeTableCellID,
+                       TableCellID(tableAnchor: 0, row: 1, column: 1))
+    }
+
+    func testCellEditorUsesAdaptiveDarkAppearance() throws {
+        let harness = Harness(source: source)
+        harness.window.appearance = NSAppearance(named: .darkAqua)
+        harness.settle()
+        let id = TableCellID(tableAnchor: 0, row: 1, column: 0)
+        harness.controller.beginTableCellEditing(
+            try XCTUnwrap(harness.layout.geometry(for: id))
+        )
+        let overlay = try XCTUnwrap(
+            harness.textView.subviews.compactMap { $0 as? TableCellEditorOverlay }.first
+        )
+        let layerColor = try XCTUnwrap(overlay.layer?.backgroundColor)
+        let background = try XCTUnwrap(
+            NSColor(cgColor: layerColor)?.usingColorSpace(.deviceRGB)
+        )
+
+        XCTAssertLessThan(background.brightnessComponent, 0.5,
+                          "the active cell must remain dark in dark mode")
+    }
+
+    func testTableDisplayHidesPipeEscapesAndCodeDelimiters() throws {
+        let specialSource = """
+        | Expression |
+        | --- |
+        | A \\| B |
+        | `x \\| y` |
+        """
+        let harness = Harness(source: specialSource)
+        let table = try XCTUnwrap(harness.controller.parsed.tables.first)
+        let literalCell = try XCTUnwrap(table.rows[1].cells.first)
+        let codeCell = try XCTUnwrap(table.rows[2].cells.first)
+        let storage = try XCTUnwrap(harness.textView.textStorage)
+
+        let literal = harness.layout.tableDisplayContent(
+            for: literalCell, header: false, storage: storage
+        )
+        let code = harness.layout.tableDisplayContent(
+            for: codeCell, header: false, storage: storage
+        )
+
+        XCTAssertEqual(literal.string, "A | B")
+        XCTAssertEqual(code.string, "x | y")
+        XCTAssertEqual(EditableMarkdownTable.visibleText(fromMarkdown: "`x \\| y`"),
+                       "x | y")
+        let codeFont = code.attribute(.font, at: 0,
+                                      effectiveRange: nil) as? NSFont
+        XCTAssertTrue(codeFont?.isFixedPitch == true)
+        XCTAssertNotNil(code.attribute(.backgroundColor, at: 0, effectiveRange: nil))
     }
 
     func testCellEditParticipatesInUndoAndRedo() {

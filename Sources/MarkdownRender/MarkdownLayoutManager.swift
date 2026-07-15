@@ -535,6 +535,108 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         }
     }
 
+    /// Build the attributed text painted inside a rich table cell. Markdown
+    /// delimiters and punctuation escapes are source plumbing, while the
+    /// attributes they protect (code, emphasis, links) remain visible.
+    func tableDisplayContent(for cell: TableCell, header: Bool,
+                             storage: NSTextStorage) -> NSAttributedString {
+        let sourceRange = NSIntersectionRange(
+            cell.range, NSRange(location: 0, length: storage.length)
+        )
+        let content = NSMutableAttributedString(
+            attributedString: sourceRange.length > 0
+                ? storage.attributedSubstring(from: sourceRange)
+                : NSAttributedString(string: "")
+        )
+
+        var hidden: [NSRange] = []
+        if content.length > 0 {
+            content.enumerateAttribute(.vireoMarker,
+                                       in: NSRange(location: 0, length: content.length)) {
+                value, range, _ in
+                if value != nil { hidden.append(range) }
+            }
+            for range in hidden.reversed() { content.deleteCharacters(in: range) }
+        }
+
+        // swift-markdown's source range for inline code at a GFM cell boundary
+        // can stop immediately before the closing backtick run. The opening
+        // delimiter is still tagged above, while the closing run is left just
+        // outside the fixed-pitch/background span. Remove that source-only run
+        // without touching literal backticks inside code.
+        let markedUp = content.string as NSString
+        var closingCodeDelimiters: [NSRange] = []
+        var delimiterIndex = 0
+        while delimiterIndex < markedUp.length {
+            guard markedUp.character(at: delimiterIndex) == 0x60 else {
+                delimiterIndex += 1
+                continue
+            }
+            var delimiterEnd = delimiterIndex + 1
+            while delimiterEnd < markedUp.length,
+                  markedUp.character(at: delimiterEnd) == 0x60 {
+                delimiterEnd += 1
+            }
+            let previousIsCode = delimiterIndex > 0
+                && content.attribute(.backgroundColor, at: delimiterIndex - 1,
+                                     effectiveRange: nil) != nil
+            let delimiterIsCode = content.attribute(.backgroundColor,
+                                                    at: delimiterIndex,
+                                                    effectiveRange: nil) != nil
+            if previousIsCode && !delimiterIsCode {
+                closingCodeDelimiters.append(
+                    NSRange(location: delimiterIndex,
+                            length: delimiterEnd - delimiterIndex)
+                )
+            }
+            delimiterIndex = delimiterEnd
+        }
+        for range in closingCodeDelimiters.reversed() {
+            content.deleteCharacters(in: range)
+        }
+
+        // CommonMark escapes punctuation with a source-only backslash. This
+        // matters most for `\|`, which keeps a literal pipe inside a GFM cell,
+        // including inside inline code spans.
+        let escapable = Set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~".utf16)
+        let visible = content.string as NSString
+        var escapeRanges: [NSRange] = []
+        var index = 0
+        while index + 1 < visible.length {
+            if visible.character(at: index) == 0x5C,
+               escapable.contains(visible.character(at: index + 1)) {
+                escapeRanges.append(NSRange(location: index, length: 1))
+                index += 2
+            } else {
+                index += 1
+            }
+        }
+        for range in escapeRanges.reversed() { content.deleteCharacters(in: range) }
+
+        let full = NSRange(location: 0, length: content.length)
+        guard full.length > 0 else { return content }
+        content.addAttribute(.foregroundColor, value: NSColor.labelColor, range: full)
+        content.enumerateAttribute(.vireoLink, in: full) { value, range, _ in
+            if value != nil {
+                content.addAttribute(.foregroundColor, value: NSColor.linkColor,
+                                     range: range)
+            }
+        }
+        if content.attribute(.font, at: 0, effectiveRange: nil) == nil {
+            content.addAttribute(.font, value: header ? tableHeaderFont : tableFont,
+                                 range: full)
+        }
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        switch cell.alignment {
+        case .center: paragraph.alignment = .center
+        case .right: paragraph.alignment = .right
+        default: paragraph.alignment = .left
+        }
+        content.addAttribute(.paragraphStyle, value: paragraph, range: full)
+        return content
+    }
+
     private func drawTable(_ info: TableInfo, atCharIndex charIndex: Int, origin: NSPoint, storage: NSTextStorage) {
         guard charIndex < numberOfGlyphs else { return }
         let glyph = glyphIndexForCharacter(at: charIndex)
@@ -549,50 +651,6 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let cols = info.columnCount
         guard cols > 0 else { return }
 
-        func renderedContent(_ cell: TableCell, header: Bool) -> NSAttributedString {
-            let sourceRange = NSIntersectionRange(
-                cell.range, NSRange(location: 0, length: storage.length)
-            )
-            let content = NSMutableAttributedString(
-                attributedString: sourceRange.length > 0
-                    ? storage.attributedSubstring(from: sourceRange)
-                    : NSAttributedString(string: "")
-            )
-            // Inline Markdown is source plumbing, not measured or drawn text.
-            var hidden: [NSRange] = []
-            if content.length > 0 {
-                content.enumerateAttribute(.vireoMarker,
-                                           in: NSRange(location: 0, length: content.length)) {
-                    value, range, _ in
-                    if value != nil { hidden.append(range) }
-                }
-                for range in hidden.reversed() { content.deleteCharacters(in: range) }
-            }
-
-            let full = NSRange(location: 0, length: content.length)
-            guard full.length > 0 else { return content }
-            content.addAttribute(.foregroundColor, value: NSColor.labelColor, range: full)
-            content.enumerateAttribute(.vireoLink, in: full) { value, range, _ in
-                if value != nil {
-                    content.addAttribute(.foregroundColor, value: NSColor.linkColor,
-                                         range: range)
-                }
-            }
-            if content.attribute(.font, at: 0, effectiveRange: nil) == nil {
-                content.addAttribute(.font, value: header ? tableHeaderFont : tableFont,
-                                     range: full)
-            }
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.lineBreakMode = .byTruncatingTail
-            switch cell.alignment {
-            case .center: paragraph.alignment = .center
-            case .right: paragraph.alignment = .right
-            default: paragraph.alignment = .left
-            }
-            content.addAttribute(.paragraphStyle, value: paragraph, range: full)
-            return content
-        }
-
         // Measure what users see, not hidden link destinations/delimiters.
         var cellContents: [TableCellID: NSAttributedString] = [:]
         var widths = [CGFloat](repeating: 0, count: cols)
@@ -601,7 +659,8 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
             for cell in row.cells where cell.column < cols {
                 let id = TableCellID(tableAnchor: info.anchor, row: rowIndex,
                                      column: cell.column)
-                let content = renderedContent(cell, header: row.isHeader)
+                let content = tableDisplayContent(for: cell, header: row.isHeader,
+                                                  storage: storage)
                 cellContents[id] = content
                 let width = min(maxColumnWidth, ceil(content.size().width) + pad * 2)
                 widths[cell.column] = max(widths[cell.column], width)
