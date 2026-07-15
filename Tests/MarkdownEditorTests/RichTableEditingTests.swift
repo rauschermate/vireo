@@ -137,10 +137,13 @@ final class RichTableEditingTests: XCTestCase {
         XCTAssertGreaterThan(scroll.contentWidth, scroll.viewportRect.width)
         XCTAssertEqual(try XCTUnwrap(harness.layout.tableRects[0]).width,
                        scroll.viewportRect.width, accuracy: 0.5)
-        XCTAssertEqual(
-            harness.textView.subviews.compactMap { $0 as? TableHorizontalScroller }.count,
-            1
+        let scroller = try XCTUnwrap(
+            harness.textView.subviews.compactMap { $0 as? TableHorizontalScroller }.first
         )
+        XCTAssertGreaterThan(scroller.rect(for: .knobSlot).width,
+                             scroller.rect(for: .knobSlot).height)
+        XCTAssertGreaterThan(scroller.rect(for: .knob).width, 24,
+                             "wide-table overflow needs a draggable horizontal thumb")
     }
 
     func testHorizontalScrollMovesCellsAndClampsToContent() throws {

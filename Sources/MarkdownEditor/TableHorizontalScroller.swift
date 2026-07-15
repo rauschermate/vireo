@@ -14,8 +14,11 @@ final class TableHorizontalScroller: NSScroller {
 
     init(tableAnchor: Int) {
         self.tableAnchor = tableAnchor
-        super.init(frame: .zero)
-        scrollerStyle = .overlay
+        // A non-zero wide initial frame establishes horizontal orientation;
+        // the persistent native style keeps overflow discoverable even before
+        // the first trackpad gesture.
+        super.init(frame: NSRect(x: 0, y: 0, width: 100, height: 12))
+        scrollerStyle = .legacy
         controlSize = .small
         target = self
         action = #selector(valueChanged(_:))
