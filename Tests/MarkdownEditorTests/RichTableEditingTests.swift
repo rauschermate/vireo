@@ -96,6 +96,23 @@ final class RichTableEditingTests: XCTestCase {
         )
     }
 
+    func testFocusedCellEditorSurvivesBackingSelectionUpdate() throws {
+        let harness = Harness(source: source)
+        harness.controller.automaticallyFocusTableEditors = true
+        let id = TableCellID(tableAnchor: 0, row: 1, column: 1)
+        let geometry = try XCTUnwrap(harness.layout.geometry(for: id))
+
+        harness.controller.beginTableCellEditing(geometry)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.03))
+
+        XCTAssertEqual(harness.controller.activeTableCellID, id)
+        XCTAssertEqual(
+            harness.textView.subviews.compactMap { $0 as? TableCellEditorOverlay }.count,
+            1,
+            "the field must not commit itself while its backing range is selected"
+        )
+    }
+
     func testCellHitGeometryDoesNotDriftWithDrawingOrigin() throws {
         let harness = Harness(source: source)
         let id = TableCellID(tableAnchor: 0, row: 1, column: 0)

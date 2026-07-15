@@ -39,6 +39,8 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
     private let menuButton = NSButton()
     private let menuState: TableMenuState
     private var isFinishing = false
+    private var hasBegunEditing = false
+    private var isActivatingEditor = false
 
     var onCommit: ((String, TableCellNavigation) -> Void)?
     var onCancel: (() -> Void)?
@@ -109,13 +111,24 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
     }
 
     func beginEditing(selectAll: Bool) {
-        guard let window else { return }
-        window.makeFirstResponder(field)
-        if selectAll {
-            field.selectText(nil)
-        } else if let editor = field.currentEditor() {
-            editor.selectedRange = NSRange(location: (field.stringValue as NSString).length,
-                                           length: 0)
+        // A table click arrives while NSTextView is still processing its own
+        // mouse-down. Moving the field editor synchronously can be undone by
+        // that event, producing an immediate end-editing callback. Activate on
+        // the next run-loop turn, after the text view has finished tracking.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window, superview != nil, !isFinishing else { return }
+            isActivatingEditor = true
+            let accepted = window.makeFirstResponder(field)
+            if accepted, let editor = field.currentEditor() {
+                hasBegunEditing = true
+                let length = (field.stringValue as NSString).length
+                editor.selectedRange = selectAll
+                    ? NSRange(location: 0, length: length)
+                    : NSRange(location: length, length: 0)
+            } else {
+                hasBegunEditing = false
+            }
+            isActivatingEditor = false
         }
     }
 
@@ -134,7 +147,7 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
     }
 
     func controlTextDidEndEditing(_ obj: Notification) {
-        guard !isFinishing else { return }
+        guard hasBegunEditing, !isActivatingEditor, !isFinishing else { return }
         isFinishing = true
         onCommit?(field.stringValue, .finish)
     }

@@ -430,6 +430,17 @@ public final class EditorController: ObservableObject {
               let visible = model.visibleText(row: geometry.id.row, column: geometry.id.column)
         else { return }
 
+        // Update the backing selection before mounting the field. AppKit can
+        // emit an end-editing notification while the text view changes its
+        // selection; if the new field already exists, that callback tears it
+        // down in the same mouse event that created it.
+        if table.rows.indices.contains(geometry.id.row),
+           let cell = table.rows[geometry.id.row].cells.first(where: {
+               $0.column == geometry.id.column
+           }) {
+            tv.setSelectedRange(cell.range)
+        }
+
         toolbar.hide()
         let state = TableMenuState(rowCount: model.rowCount,
                                    columnCount: model.columnCount,
@@ -451,13 +462,6 @@ public final class EditorController: ObservableObject {
         }
         tableCellEditor = editor
         tv.addSubview(editor)
-
-        if table.rows.indices.contains(geometry.id.row),
-           let cell = table.rows[geometry.id.row].cells.first(where: {
-               $0.column == geometry.id.column
-           }) {
-            tv.setSelectedRange(cell.range)
-        }
         if automaticallyFocusTableEditors {
             editor.beginEditing(selectAll: selectAll)
         }
