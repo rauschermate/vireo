@@ -61,6 +61,33 @@ final class RichTableEditingTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(harness.layout.geometry(for: first)!.rect.width, 72)
     }
 
+    func testClickingRenderedCellMountsItsEditor() throws {
+        let harness = Harness(source: source)
+        let id = TableCellID(tableAnchor: 0, row: 1, column: 0)
+        let geometry = try XCTUnwrap(harness.layout.geometry(for: id))
+        let pointInView = NSPoint(x: geometry.rect.midX, y: geometry.rect.midY)
+        let pointInWindow = harness.textView.convert(pointInView, to: nil)
+        let event = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: pointInWindow,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: harness.window.windowNumber,
+            context: nil,
+            eventNumber: 1,
+            clickCount: 1,
+            pressure: 1
+        ))
+
+        harness.textView.mouseDown(with: event)
+
+        XCTAssertEqual(harness.controller.activeTableCellID, id)
+        XCTAssertEqual(
+            harness.textView.subviews.compactMap { $0 as? TableCellEditorOverlay }.count,
+            1
+        )
+    }
+
     func testCellEditorCommitsVisibleTextAndTabMovesToNextCell() {
         let harness = Harness(source: source)
         let id = TableCellID(tableAnchor: 0, row: 1, column: 0)
