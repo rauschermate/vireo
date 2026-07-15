@@ -106,6 +106,29 @@ final class RichTableEditingTests: XCTestCase {
                        "editing must never target the hidden separator row")
     }
 
+    func testCellEditParticipatesInUndoAndRedo() {
+        let harness = Harness(source: source)
+        let original = harness.textView.string
+        let id = TableCellID(tableAnchor: 0, row: 1, column: 0)
+        harness.controller.beginTableCellEditing(harness.layout.geometry(for: id)!)
+        let overlay = harness.textView.subviews.compactMap { $0 as? TableCellEditorOverlay }.first!
+        let field = overlay.subviews.compactMap { $0 as? NSTextField }.first!
+        field.stringValue = "Grace"
+        XCTAssertTrue(overlay.control(field, textView: NSTextView(),
+                                      doCommandBy: #selector(NSResponder.insertTab(_:))))
+        harness.settle()
+
+        XCTAssertTrue(harness.textView.undoManager?.canUndo == true)
+        harness.textView.undoManager?.undo()
+        harness.settle()
+        XCTAssertEqual(harness.textView.string, original)
+
+        XCTAssertTrue(harness.textView.undoManager?.canRedo == true)
+        harness.textView.undoManager?.redo()
+        harness.settle()
+        XCTAssertTrue(harness.textView.string.contains("| Grace | Engineer |"))
+    }
+
     func testTabFromLastCellAppendsBodyRow() {
         let harness = Harness(source: source)
         let id = TableCellID(tableAnchor: 0, row: 1, column: 1)
