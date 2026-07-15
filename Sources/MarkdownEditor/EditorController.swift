@@ -348,6 +348,10 @@ public final class EditorController: ObservableObject {
     var isTableInteractionActive: Bool {
         tableCellEditor != nil || pendingTableCellID != nil
     }
+    var isFormattingToolbarPresented: Bool { toolbar.isPresented }
+    var formattingToolbarContext: FloatingToolbar.Context? {
+        toolbar.presentedContext
+    }
 
     /// Mount a native single-line editor over the drawn cell. The table itself
     /// remains rendered, so source pipes and the separator row never appear.
@@ -364,7 +368,8 @@ public final class EditorController: ObservableObject {
                 current.beginEditing(selectAll: selectAll)
                 return
             }
-            commitTableCell(current.currentText, navigation: .finish,
+            commitTableCell(current.currentText, markdown: current.currentMarkdown,
+                            navigation: .finish,
                             expectedID: current.cellID)
         }
         installTableCellEditor(visibleGeometry, selectAll: selectAll)
@@ -426,7 +431,8 @@ public final class EditorController: ObservableObject {
     func routeTableNavigation(_ navigation: TableCellNavigation,
                               fromSourceLocation location: Int) -> Bool {
         if let editor = tableCellEditor {
-            commitTableCell(editor.currentText, navigation: navigation,
+            commitTableCell(editor.currentText, markdown: editor.currentMarkdown,
+                            navigation: navigation,
                             expectedID: editor.cellID)
             return true
         }
@@ -445,7 +451,8 @@ public final class EditorController: ObservableObject {
               let tv = textView,
               let table = parsed.tables.first(where: { $0.anchor == geometry.id.tableAnchor }),
               let model = EditableMarkdownTable(table: table, source: tv.string),
-              let visible = model.visibleText(row: geometry.id.row, column: geometry.id.column)
+              let markdown = model.rawText(row: geometry.id.row,
+                                           column: geometry.id.column)
         else { return }
 
         // Park a collapsed backing caret before mounting the field. Selecting
@@ -465,11 +472,12 @@ public final class EditorController: ObservableObject {
                                    columnCount: model.columnCount,
                                    alignment: geometry.alignment)
         let editor = TableCellEditorOverlay(geometry: tableGeometryInView(geometry, textView: tv),
-                                            text: visible,
+                                            markdown: markdown,
                                             state: state, theme: theme)
         editor.onCommit = { [weak self, weak editor] text, navigation in
             guard let self, let editor else { return }
-            self.commitTableCell(text, navigation: navigation, expectedID: editor.cellID)
+            self.commitTableCell(text, markdown: editor.currentMarkdown,
+                                 navigation: navigation, expectedID: editor.cellID)
         }
         editor.onCancel = { [weak self, weak editor] in
             guard let self, let editor else { return }
@@ -477,7 +485,13 @@ public final class EditorController: ObservableObject {
         }
         editor.onAction = { [weak self, weak editor] text, action in
             guard let self, let editor else { return }
-            self.applyTableAction(action, text: text, id: editor.cellID)
+            self.applyTableAction(action, text: text, markdown: editor.currentMarkdown,
+                                  id: editor.cellID)
+        }
+        editor.onSelectionChange = { [weak self, weak editor] rect, selected, active in
+            guard let self, let editor, self.tableCellEditor === editor else { return }
+            self.toolbar.update(selectionRect: rect, hasSelection: selected,
+                                active: active, context: .tableCell)
         }
         tableCellEditor = editor
         tv.addSubview(editor)
@@ -566,7 +580,8 @@ public final class EditorController: ObservableObject {
         // button can escape the table viewport. Commit before the redraw. This
         // mirrors leaving a spreadsheet cell and preserves the edited text.
         if let editor = tableCellEditor, editor.cellID.tableAnchor == anchor {
-            commitTableCell(editor.currentText, navigation: .finish,
+            commitTableCell(editor.currentText, markdown: editor.currentMarkdown,
+                            navigation: .finish,
                             expectedID: editor.cellID)
             textView?.window?.makeFirstResponder(nil)
         }
@@ -591,7 +606,8 @@ public final class EditorController: ObservableObject {
         textView?.window?.makeFirstResponder(textView)
     }
 
-    private func commitTableCell(_ text: String, navigation: TableCellNavigation,
+    private func commitTableCell(_ text: String, markdown: String,
+                                 navigation: TableCellNavigation,
                                  expectedID id: TableCellID) {
         guard let tv = textView,
               tableCellEditor?.cellID == id,
@@ -608,8 +624,8 @@ public final class EditorController: ObservableObject {
         var nextID: TableCellID?
 
         if needsNewRow {
-            if model.visibleText(row: id.row, column: id.column) != text {
-                model.replaceVisibleText(text, row: id.row, column: id.column)
+            if model.rawText(row: id.row, column: id.column) != markdown {
+                model.replaceMarkdown(markdown, row: id.row, column: id.column)
             }
             model.insertRow(at: model.rowCount)
             replaceTable(table, with: model.markdownSource())
@@ -617,7 +633,8 @@ public final class EditorController: ObservableObject {
             nextID = TableCellID(tableAnchor: id.tableAnchor,
                                  row: model.rowCount - 1, column: column)
         } else {
-            replaceCellIfNeeded(text, id: id, table: table, model: model)
+            replaceCellIfNeeded(text, markdown: markdown, id: id,
+                                table: table, model: model)
             switch navigation {
             case .finish: nextID = nil
             case .next:
@@ -646,28 +663,34 @@ public final class EditorController: ObservableObject {
         else { tv.window?.makeFirstResponder(tv) }
     }
 
-    private func replaceCellIfNeeded(_ visibleText: String, id: TableCellID,
+    private func replaceCellIfNeeded(_ visibleText: String, markdown: String,
+                                     id: TableCellID,
                                      table: TableInfo, model: EditableMarkdownTable) {
-        guard model.visibleText(row: id.row, column: id.column) != visibleText,
-              table.rows.indices.contains(id.row),
+        let original = model.rawText(row: id.row, column: id.column) ?? ""
+        let replacement = EditableMarkdownTable.visibleText(fromMarkdown: markdown) == visibleText
+            ? markdown
+            : EditableMarkdownTable.updating(markdown: markdown,
+                                              toVisibleText: visibleText)
+        guard original != replacement, table.rows.indices.contains(id.row),
               let cell = table.rows[id.row].cells.first(where: {
                   $0.column == id.column
               }) else { return }
-        let raw = model.rawText(row: id.row, column: id.column) ?? ""
-        replaceSource(in: cell.range,
-                      with: EditableMarkdownTable.updating(markdown: raw,
-                                                           toVisibleText: visibleText))
+        replaceSource(in: cell.range, with: replacement)
     }
 
-    private func applyTableAction(_ action: TableEditAction, text: String, id: TableCellID) {
+    private func applyTableAction(_ action: TableEditAction, text: String,
+                                  markdown: String, id: TableCellID) {
         guard let table = parsed.tables.first(where: { $0.anchor == id.tableAnchor }),
               var model = EditableMarkdownTable(table: table, source: textView?.string ?? "")
         else { return }
         tableCellEditor?.finishWithoutCallback()
         tableCellEditor = nil
 
-        if model.visibleText(row: id.row, column: id.column) != text {
-            model.replaceVisibleText(text, row: id.row, column: id.column)
+        let replacement = EditableMarkdownTable.visibleText(fromMarkdown: markdown) == text
+            ? markdown
+            : EditableMarkdownTable.updating(markdown: markdown, toVisibleText: text)
+        if model.rawText(row: id.row, column: id.column) != replacement {
+            model.replaceMarkdown(replacement, row: id.row, column: id.column)
         }
 
         var target = id
@@ -994,16 +1017,56 @@ public final class EditorController: ObservableObject {
     // All caret math uses NSString/UTF-16 lengths to match NSRange semantics
     // (String.count is Characters and misplaces the caret around emoji).
 
-    public func toggleBold() { wrapSelection("**", "**") }
-    public func toggleItalic() { wrapSelection("*", "*") }
-    public func toggleStrikethrough() { wrapSelection("~~", "~~") }
-    public func toggleInlineCode() { wrapSelection("`", "`") }
-    public func toggleQuote() { prefixLine("> ") }
-    public func toggleBulletList() { prefixLine("- ") }
+    public func toggleBold() {
+        if let tableCellEditor {
+            tableCellEditor.toggleInlineFormat(.bold)
+            return
+        }
+        guard !isTableInteractionActive else { return }
+        wrapSelection("**", "**")
+    }
+
+    public func toggleItalic() {
+        if let tableCellEditor {
+            tableCellEditor.toggleInlineFormat(.italic)
+            return
+        }
+        guard !isTableInteractionActive else { return }
+        wrapSelection("*", "*")
+    }
+
+    public func toggleStrikethrough() {
+        if let tableCellEditor {
+            tableCellEditor.toggleInlineFormat(.strikethrough)
+            return
+        }
+        guard !isTableInteractionActive else { return }
+        wrapSelection("~~", "~~")
+    }
+
+    public func toggleInlineCode() {
+        if let tableCellEditor {
+            tableCellEditor.toggleInlineFormat(.code)
+            return
+        }
+        guard !isTableInteractionActive else { return }
+        wrapSelection("`", "`")
+    }
+
+    public func toggleQuote() {
+        guard !isTableInteractionActive else { return }
+        prefixLine("> ")
+    }
+
+    public func toggleBulletList() {
+        guard !isTableInteractionActive else { return }
+        prefixLine("- ")
+    }
 
     /// Set the line's heading level; applying the current level toggles back
     /// to body text, and a different level replaces the existing one.
     public func makeHeading(_ level: Int) {
+        guard !isTableInteractionActive else { return }
         guard let tv = textView, let storage = tv.textStorage else { return }
         let sel = tv.selectedRange()
         let ns = storage.string as NSString
@@ -1042,6 +1105,7 @@ public final class EditorController: ObservableObject {
     }
 
     public func insertLink() {
+        guard !isTableInteractionActive else { return }
         guard let tv = textView, let storage = tv.textStorage, tv.window != nil else { return }
         let selection = tv.selectedRange()
         let existing = link(at: selection)

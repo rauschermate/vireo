@@ -278,6 +278,49 @@ final class RichTableEditingTests: XCTestCase {
                           "the active cell must remain dark in dark mode")
     }
 
+    func testCellSelectionToolbarAndShortcutsCommitInlineFormatting() throws {
+        let harness = Harness(source: source)
+        harness.controller.automaticallyFocusTableEditors = true
+        let id = TableCellID(tableAnchor: 0, row: 1, column: 0)
+        harness.controller.beginTableCellEditing(
+            try XCTUnwrap(harness.layout.geometry(for: id))
+        )
+        RunLoop.main.run(until: Date().addingTimeInterval(0.06))
+        let overlay = try XCTUnwrap(
+            harness.textView.subviews.compactMap { $0 as? TableCellEditorOverlay }.first
+        )
+        let field = try XCTUnwrap(
+            overlay.subviews.compactMap { $0 as? NSTextField }.first
+        )
+        let fieldEditor = try XCTUnwrap(field.currentEditor() as? NSTextView)
+        fieldEditor.selectedRange = NSRange(location: 0, length: 3)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+
+        XCTAssertTrue(harness.controller.isFormattingToolbarPresented)
+        XCTAssertEqual(harness.controller.formattingToolbarContext, .tableCell)
+
+        harness.controller.toggleBold()
+        harness.controller.toggleItalic()
+
+        XCTAssertEqual(field.stringValue, "Ada")
+        XCTAssertEqual(overlay.currentMarkdown, "***Ada***")
+        let font = try XCTUnwrap(
+            fieldEditor.textStorage?.attribute(.font, at: 0,
+                                               effectiveRange: nil) as? NSFont
+        )
+        XCTAssertTrue(font.fontDescriptor.symbolicTraits.contains(.bold))
+        XCTAssertTrue(font.fontDescriptor.symbolicTraits.contains(.italic))
+        XCTAssertTrue(overlay.control(
+            field, textView: fieldEditor,
+            doCommandBy: #selector(NSResponder.insertTab(_:))
+        ))
+        harness.settle()
+
+        XCTAssertTrue(harness.textView.string.contains("| ***Ada*** | Engineer |"))
+        XCTAssertEqual(harness.controller.activeTableCellID,
+                       TableCellID(tableAnchor: 0, row: 1, column: 1))
+    }
+
     func testTableDisplayHidesPipeEscapesAndCodeDelimiters() throws {
         let specialSource = """
         | Expression |

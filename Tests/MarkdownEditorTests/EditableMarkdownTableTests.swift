@@ -62,4 +62,39 @@ final class EditableMarkdownTableTests: XCTestCase {
         XCTAssertEqual(EditableMarkdownTable.updating(markdown: "**Name**",
                                                        toVisibleText: ""), "")
     }
+
+    func testInlineFormatToggleUsesVisibleCellRanges() {
+        let full = NSRange(location: 0, length: 4)
+        let bold = EditableMarkdownTable.toggling(
+            .bold, in: "Name", visibleRange: full
+        )
+        XCTAssertEqual(bold, "**Name**")
+        XCTAssertTrue(EditableMarkdownTable.activeFormats(
+            in: bold, visibleRange: full
+        ).bold)
+        XCTAssertEqual(EditableMarkdownTable.toggling(
+            .bold, in: bold, visibleRange: full
+        ), "Name")
+
+        let boldItalic = EditableMarkdownTable.toggling(
+            .italic, in: bold, visibleRange: full
+        )
+        XCTAssertEqual(boldItalic, "***Name***")
+        let active = EditableMarkdownTable.activeFormats(
+            in: boldItalic, visibleRange: full
+        )
+        XCTAssertTrue(active.bold)
+        XCTAssertTrue(active.italic)
+    }
+
+    func testInlineFormatMappingSkipsEscapedPipeSourceCharacter() {
+        let markdown = "A \\| B"
+        let formatted = EditableMarkdownTable.toggling(
+            .italic, in: markdown, visibleRange: NSRange(location: 4, length: 1)
+        )
+
+        XCTAssertEqual(formatted, "A \\| *B*")
+        XCTAssertEqual(EditableMarkdownTable.visibleText(fromMarkdown: formatted),
+                       "A | B")
+    }
 }

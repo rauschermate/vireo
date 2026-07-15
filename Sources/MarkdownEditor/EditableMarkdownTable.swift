@@ -1,6 +1,31 @@
 import Foundation
 import MarkdownEngine
 
+enum TableInlineFormat {
+    case bold
+    case italic
+    case strikethrough
+    case code
+
+    var delimiter: String {
+        switch self {
+        case .bold: return "**"
+        case .italic: return "*"
+        case .strikethrough: return "~~"
+        case .code: return "`"
+        }
+    }
+
+    func isActive(in run: InlineRun) -> Bool {
+        switch self {
+        case .bold: return run.bold
+        case .italic: return run.italic
+        case .strikethrough: return run.strikethrough
+        case .code: return run.code
+        }
+    }
+}
+
 /// Source-preserving editing model for one GFM table. Cell text remains raw
 /// Markdown internally so structural operations do not strip formatting from
 /// untouched cells; the UI asks `visibleText` for syntax-free field content.
@@ -45,6 +70,11 @@ public struct EditableMarkdownTable: Equatable {
         rows[row][column] = Self.updating(markdown: rows[row][column], toVisibleText: text)
     }
 
+    mutating func replaceMarkdown(_ markdown: String, row: Int, column: Int) {
+        guard rows.indices.contains(row), rows[row].indices.contains(column) else { return }
+        rows[row][column] = markdown
+    }
+
     public mutating func insertRow(at index: Int) {
         let insertion = min(max(1, index), rows.count)
         rows.insert(Array(repeating: "", count: columnCount), at: insertion)
@@ -84,13 +114,7 @@ public struct EditableMarkdownTable: Equatable {
 
     public static func visibleText(fromMarkdown markdown: String) -> String {
         let ns = markdown as NSString
-        let parsed = MarkdownParser().parse(markdown)
-        let result = NSMutableString(string: markdown)
-        for marker in parsed.markerRanges.sorted(by: { $0.location > $1.location }) {
-            let range = NSIntersectionRange(marker, NSRange(location: 0, length: ns.length))
-            if range.length > 0 { result.deleteCharacters(in: range) }
-        }
-        return unescapeMarkdownPunctuation(result as String)
+        return presentationIndex(for: markdown).visibleString(in: ns)
     }
 
     public static func markdownLiteral(forVisibleText text: String) -> String {
@@ -134,16 +158,15 @@ public struct EditableMarkdownTable: Equatable {
         let visibleStart = (oldPrefix as NSString).length
         let visibleEnd = visibleStart + (oldChanged as NSString).length
 
-        let raw = original as NSString
-        let markers = normalizedMarkers(MarkdownParser().parse(original).markerRanges,
-                                        sourceLength: raw.length)
+        let index = presentationIndex(for: original)
         let insertion = visibleStart == visibleEnd
         let startDownstream = !insertion || visibleStart == 0
-        let sourceStart = sourceOffset(forVisibleOffset: visibleStart, markers: markers,
-                                       sourceLength: raw.length, downstream: startDownstream)
-        let sourceEnd = insertion ? sourceStart : sourceOffset(
-            forVisibleOffset: visibleEnd, markers: markers,
-            sourceLength: raw.length, downstream: false
+        let sourceStart = index.sourceOffset(
+            forVisibleOffset: visibleStart,
+            affinity: startDownstream ? .downstream : .upstream
+        )
+        let sourceEnd = insertion ? sourceStart : index.sourceOffset(
+            forVisibleOffset: visibleEnd, affinity: .upstream
         )
         let result = NSMutableString(string: original)
         result.replaceCharacters(
@@ -153,40 +176,92 @@ public struct EditableMarkdownTable: Equatable {
         return result as String
     }
 
-    private static func normalizedMarkers(_ ranges: [NSRange], sourceLength: Int) -> [NSRange] {
-        let sorted = ranges.compactMap { range -> NSRange? in
-            let lower = min(max(0, range.location), sourceLength)
-            let upper = min(max(lower, range.upperBound), sourceLength)
-            return upper > lower ? NSRange(location: lower, length: upper - lower) : nil
-        }.sorted { $0.location < $1.location }
-        var result: [NSRange] = []
-        for range in sorted {
-            if let last = result.last, range.location <= last.upperBound {
-                result[result.count - 1] = NSRange(
-                    location: last.location,
-                    length: max(last.upperBound, range.upperBound) - last.location
-                )
-            } else {
-                result.append(range)
-            }
-        }
-        return result
+    static func visibleRange(forSourceRange range: NSRange,
+                             in markdown: String) -> NSRange {
+        presentationIndex(for: markdown).visibleRange(forSourceRange: range)
     }
 
-    private static func sourceOffset(forVisibleOffset offset: Int, markers: [NSRange],
-                                     sourceLength: Int, downstream: Bool) -> Int {
-        let visibleLength = sourceLength - markers.reduce(0) { $0 + $1.length }
-        let target = min(max(0, offset), visibleLength)
-        var hidden = 0
-        for marker in markers {
-            let visualBoundary = marker.location - hidden
-            if target < visualBoundary { return target + hidden }
-            if target == visualBoundary {
-                return downstream ? marker.upperBound : marker.location
-            }
-            hidden += marker.length
+    static func activeFormats(in markdown: String,
+                              visibleRange: NSRange) -> ActiveFormats {
+        let index = presentationIndex(for: markdown)
+        let selection = clampedVisibleRange(visibleRange, length: index.visibleLength)
+        let sourceRange = index.sourceRange(forVisibleRange: selection)
+        return ActiveFormats.at(sourceRange, in: MarkdownParser().parse(markdown))
+    }
+
+    static func toggling(_ format: TableInlineFormat, in markdown: String,
+                         visibleRange: NSRange) -> String {
+        let index = presentationIndex(for: markdown)
+        let selection = clampedVisibleRange(visibleRange, length: index.visibleLength)
+        guard selection.length > 0 else { return markdown }
+        let sourceRange = index.sourceRange(forVisibleRange: selection)
+        guard sourceRange.length > 0 else { return markdown }
+
+        let parsed = MarkdownParser().parse(markdown)
+        let isActive = parsed.inlineRuns.contains { run in
+            format.isActive(in: run)
+                && run.range.location <= sourceRange.location
+                && run.range.upperBound >= sourceRange.upperBound
         }
-        return min(sourceLength, target + hidden)
+        let delimiter = format.delimiter
+        let delimiterLength = (delimiter as NSString).length
+        let source = markdown as NSString
+        let directlyWrapped = sourceRange.location >= delimiterLength
+            && sourceRange.upperBound + delimiterLength <= source.length
+            && source.substring(with: NSRange(
+                location: sourceRange.location - delimiterLength,
+                length: delimiterLength
+            )) == delimiter
+            && source.substring(with: NSRange(
+                location: sourceRange.upperBound,
+                length: delimiterLength
+            )) == delimiter
+
+        let result = NSMutableString(string: markdown)
+        if isActive, directlyWrapped {
+            result.deleteCharacters(in: NSRange(location: sourceRange.upperBound,
+                                                length: delimiterLength))
+            result.deleteCharacters(in: NSRange(
+                location: sourceRange.location - delimiterLength,
+                length: delimiterLength
+            ))
+        } else {
+            // Wrapping turns a format on. Splitting an active run at both
+            // selection boundaries turns only that selected portion off.
+            result.insert(delimiter, at: sourceRange.upperBound)
+            result.insert(delimiter, at: sourceRange.location)
+        }
+        return result as String
+    }
+
+    private static let escapablePunctuation = Set(
+        "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~".utf16
+    )
+
+    private static func presentationIndex(for markdown: String) -> MarkerIndex {
+        let ns = markdown as NSString
+        var hidden = MarkdownParser().parse(markdown).markerRanges
+        var index = 0
+        while index + 1 < ns.length {
+            if ns.character(at: index) == 0x5C,
+               escapablePunctuation.contains(ns.character(at: index + 1)) {
+                hidden.append(NSRange(location: index, length: 1))
+                index += 2
+            } else {
+                index += 1
+            }
+        }
+        return MarkerIndex(ranges: hidden, sourceLength: ns.length)
+    }
+
+    private static func clampedVisibleRange(_ range: NSRange,
+                                            length: Int) -> NSRange {
+        guard range.location != NSNotFound else {
+            return NSRange(location: length, length: 0)
+        }
+        let lower = min(max(0, range.location), length)
+        let upper = min(max(lower, range.upperBound), length)
+        return NSRange(location: lower, length: upper - lower)
     }
 
     private static func line(cells: [String], columns: Int) -> String {
@@ -203,21 +278,4 @@ public struct EditableMarkdownTable: Equatable {
         }
     }
 
-    private static func unescapeMarkdownPunctuation(_ text: String) -> String {
-        let escapable = Set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
-        let characters = Array(text)
-        var output = ""
-        var index = 0
-        while index < characters.count {
-            if characters[index] == "\\", index + 1 < characters.count,
-               escapable.contains(characters[index + 1]) {
-                output.append(characters[index + 1])
-                index += 2
-            } else {
-                output.append(characters[index])
-                index += 1
-            }
-        }
-        return output
-    }
 }

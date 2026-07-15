@@ -6,8 +6,16 @@ import AppKit
 /// `EditorController` commands as the menu and keyboard shortcuts.
 @MainActor
 final class FloatingToolbar {
+    enum Context {
+        case document
+        case tableCell
+    }
+
     private var panel: NSPanel?
     private weak var controller: EditorController?
+    private var context: Context?
+    private(set) var isPresented = false
+    var presentedContext: Context? { context }
 
     init(controller: EditorController) {
         self.controller = controller
@@ -22,21 +30,42 @@ final class FloatingToolbar {
         var action: (EditorController) -> Void
     }
 
-    private let items: [Item] = [
-        Item(title: "H1", help: "Heading 1", isActive: { $0.headingLevel == 1 }) { $0.makeHeading(1) },
-        Item(title: "H2", help: "Heading 2", isActive: { $0.headingLevel == 2 }) { $0.makeHeading(2) },
-        Item(title: "H3", help: "Heading 3", separatorAfter: true,
-             isActive: { $0.headingLevel == 3 }) { $0.makeHeading(3) },
-        Item(symbol: "bold", help: "Bold", isActive: { $0.bold }) { $0.toggleBold() },
-        Item(symbol: "italic", help: "Italic", isActive: { $0.italic }) { $0.toggleItalic() },
-        Item(symbol: "strikethrough", help: "Strikethrough",
-             isActive: { $0.strikethrough }) { $0.toggleStrikethrough() },
-        Item(symbol: "chevron.left.forwardslash.chevron.right", help: "Inline Code",
-             separatorAfter: true, isActive: { $0.code }) { $0.toggleInlineCode() },
-        Item(symbol: "list.bullet", help: "List", isActive: { $0.list }) { $0.toggleBulletList() },
-        Item(symbol: "text.quote", help: "Quote", isActive: { $0.quote }) { $0.toggleQuote() },
-        Item(symbol: "link", help: "Link", isActive: { $0.link }) { $0.insertLink() },
-    ]
+    private var activeItems: [Item] = []
+
+    private func items(for context: Context) -> [Item] {
+        let inline = [
+            Item(symbol: "bold", help: "Bold",
+                 isActive: { $0.bold }) { $0.toggleBold() },
+            Item(symbol: "italic", help: "Italic",
+                 isActive: { $0.italic }) { $0.toggleItalic() },
+            Item(symbol: "strikethrough", help: "Strikethrough",
+                 isActive: { $0.strikethrough }) { $0.toggleStrikethrough() },
+            Item(symbol: "chevron.left.forwardslash.chevron.right",
+                 help: "Inline Code", isActive: { $0.code }) {
+                $0.toggleInlineCode()
+            },
+        ]
+        guard context == .document else { return inline }
+        return [
+            Item(title: "H1", help: "Heading 1",
+                 isActive: { $0.headingLevel == 1 }) { $0.makeHeading(1) },
+            Item(title: "H2", help: "Heading 2",
+                 isActive: { $0.headingLevel == 2 }) { $0.makeHeading(2) },
+            Item(title: "H3", help: "Heading 3", separatorAfter: true,
+                 isActive: { $0.headingLevel == 3 }) { $0.makeHeading(3) },
+        ] + inline.enumerated().map { index, item in
+            var item = item
+            if index == inline.count - 1 { item.separatorAfter = true }
+            return item
+        } + [
+            Item(symbol: "list.bullet", help: "List",
+                 isActive: { $0.list }) { $0.toggleBulletList() },
+            Item(symbol: "text.quote", help: "Quote",
+                 isActive: { $0.quote }) { $0.toggleQuote() },
+            Item(symbol: "link", help: "Link",
+                 isActive: { $0.link }) { $0.insertLink() },
+        ]
+    }
 
     private var buttons: [NSButton] = []
 
@@ -44,8 +73,17 @@ final class FloatingToolbar {
     private let symbolConfig = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
 
     /// Show above the given selection rect (screen coordinates), or hide if empty.
-    func update(selectionRect: NSRect?, hasSelection: Bool, active: ActiveFormats = ActiveFormats()) {
+    func update(selectionRect: NSRect?, hasSelection: Bool,
+                active: ActiveFormats = ActiveFormats(),
+                context: Context = .document) {
         guard hasSelection, let rect = selectionRect else { hide(); return }
+        if self.context != context {
+            panel?.orderOut(nil)
+            panel = nil
+            buttons.removeAll(keepingCapacity: true)
+            activeItems = items(for: context)
+            self.context = context
+        }
         let panel = panel ?? makePanel()
         self.panel = panel
         applyActiveStates(active)
@@ -54,12 +92,13 @@ final class FloatingToolbar {
         let y = rect.maxY + 8
         panel.setFrameOrigin(NSPoint(x: x, y: y))
         if !panel.isVisible { panel.orderFront(nil) }
+        isPresented = true
     }
 
     private func applyActiveStates(_ active: ActiveFormats) {
         for button in buttons {
-            guard items.indices.contains(button.tag) else { continue }
-            let item = items[button.tag]
+            guard activeItems.indices.contains(button.tag) else { continue }
+            let item = activeItems[button.tag]
             let isOn = item.isActive(active)
             button.contentTintColor = isOn ? .controlAccentColor : .labelColor
             if let title = item.title {
@@ -75,6 +114,7 @@ final class FloatingToolbar {
 
     func hide() {
         panel?.orderOut(nil)
+        isPresented = false
     }
 
     private func makePanel() -> NSPanel {
@@ -82,7 +122,7 @@ final class FloatingToolbar {
         stack.orientation = .horizontal
         stack.spacing = 3
         stack.edgeInsets = NSEdgeInsets(top: 6, left: 8, bottom: 6, right: 8)
-        for (index, item) in items.enumerated() {
+        for (index, item) in activeItems.enumerated() {
             let button = NSButton()
             if let symbol = item.symbol {
                 button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: item.help)?
@@ -154,7 +194,7 @@ final class FloatingToolbar {
     }
 
     @objc private func buttonTapped(_ sender: NSButton) {
-        guard let controller, items.indices.contains(sender.tag) else { return }
-        items[sender.tag].action(controller)
+        guard let controller, activeItems.indices.contains(sender.tag) else { return }
+        activeItems[sender.tag].action(controller)
     }
 }

@@ -38,22 +38,35 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
     private let field = NSTextField()
     private let menuButton = NSButton()
     private let menuState: TableMenuState
+    private let theme: Theme
+    private let baseFont: NSFont
+    private var markdownText: String
     private var isFinishing = false
     private var hasBegunEditing = false
     private var isActivatingEditor = false
+    private weak var observedEditor: NSTextView?
 
     var onCommit: ((String, TableCellNavigation) -> Void)?
     var onCancel: (() -> Void)?
     var onAction: ((String, TableEditAction) -> Void)?
+    var onSelectionChange: ((NSRect?, Bool, ActiveFormats) -> Void)?
     var currentText: String { field.stringValue }
+    var currentMarkdown: String {
+        syncMarkdownWithVisibleText()
+        return markdownText
+    }
 
     override var isFlipped: Bool { true }
 
-    init(geometry: TableCellGeometry, text: String, state: TableMenuState,
+    init(geometry: TableCellGeometry, markdown: String, state: TableMenuState,
          theme: Theme) {
+        let text = EditableMarkdownTable.visibleText(fromMarkdown: markdown)
         cellID = geometry.id
         originalText = text
         menuState = state
+        self.theme = theme
+        baseFont = geometry.isHeader ? theme.tableHeaderFont : theme.tableFont
+        markdownText = markdown
         super.init(frame: geometry.rect.insetBy(dx: 1, dy: 0))
 
         wantsLayer = true
@@ -62,7 +75,7 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
 
         field.stringValue = text
         field.placeholderString = "Empty cell"
-        field.font = geometry.isHeader ? theme.tableHeaderFont : theme.tableFont
+        field.font = baseFont
         field.isBordered = false
         field.drawsBackground = false
         field.focusRingType = .none
@@ -119,8 +132,8 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
             layer?.backgroundColor = NSColor.textBackgroundColor
                 .withAlphaComponent(0.98).cgColor
             layer?.borderColor = NSColor.controlAccentColor.cgColor
-            field.textColor = NSColor.labelColor
             menuButton.contentTintColor = NSColor.secondaryLabelColor
+            refreshFieldPresentation()
         }
     }
 
@@ -142,12 +155,15 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
             guard let self, let window, superview != nil, !isFinishing else { return }
             isActivatingEditor = true
             let accepted = window.makeFirstResponder(field)
-            if accepted, let editor = field.currentEditor() {
+            if accepted, let editor = field.currentEditor() as? NSTextView {
                 hasBegunEditing = true
                 let length = (field.stringValue as NSString).length
-                editor.selectedRange = selectAll
+                let selection = selectAll
                     ? NSRange(location: 0, length: length)
                     : NSRange(location: length, length: 0)
+                beginObservingSelection(in: editor)
+                refreshFieldPresentation(in: editor, preserving: selection)
+                publishSelection(from: editor)
             } else {
                 hasBegunEditing = false
             }
@@ -156,6 +172,137 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
                 requestEditorActivation(selectAll: selectAll, attempt: attempt + 1)
             }
         }
+    }
+
+    private func syncMarkdownWithVisibleText() {
+        markdownText = EditableMarkdownTable.updating(
+            markdown: markdownText, toVisibleText: field.stringValue
+        )
+    }
+
+    private func refreshFieldPresentation(in editor: NSTextView? = nil,
+                                          preserving explicitSelection: NSRange? = nil) {
+        syncMarkdownWithVisibleText()
+        let visible = field.stringValue
+        let full = NSRange(location: 0, length: (visible as NSString).length)
+        let presentation = NSMutableAttributedString(
+            string: visible,
+            attributes: [.font: baseFont, .foregroundColor: NSColor.labelColor]
+        )
+        let parsed = MarkdownParser().parse(markdownText)
+        for run in parsed.inlineRuns {
+            let visibleRun = NSIntersectionRange(
+                EditableMarkdownTable.visibleRange(forSourceRange: run.range,
+                                                   in: markdownText),
+                full
+            )
+            guard visibleRun.length > 0 else { continue }
+            if run.code {
+                presentation.addAttributes([
+                    .font: theme.codeFont,
+                    .foregroundColor: theme.codeColor,
+                    .backgroundColor: theme.codeBackground,
+                ], range: visibleRun)
+            } else if run.bold || run.italic {
+                var font = baseFont
+                if run.bold {
+                    font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+                }
+                if run.italic {
+                    font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
+                }
+                presentation.addAttribute(.font, value: font, range: visibleRun)
+            }
+            if run.strikethrough {
+                presentation.addAttribute(
+                    .strikethroughStyle,
+                    value: NSUnderlineStyle.single.rawValue,
+                    range: visibleRun
+                )
+            }
+            if run.link != nil {
+                presentation.addAttributes([
+                    .foregroundColor: NSColor.linkColor,
+                    .underlineStyle: NSUnderlineStyle.single.rawValue,
+                ], range: visibleRun)
+            }
+        }
+
+        if let editor = editor ?? (field.currentEditor() as? NSTextView) {
+            let selection = clampedSelection(
+                explicitSelection ?? editor.selectedRange, length: full.length
+            )
+            editor.textStorage?.setAttributedString(presentation)
+            editor.selectedRange = selection
+        } else {
+            field.attributedStringValue = presentation
+        }
+    }
+
+    private func clampedSelection(_ selection: NSRange, length: Int) -> NSRange {
+        guard selection.location != NSNotFound else {
+            return NSRange(location: length, length: 0)
+        }
+        let lower = min(max(0, selection.location), length)
+        let upper = min(max(lower, selection.upperBound), length)
+        return NSRange(location: lower, length: upper - lower)
+    }
+
+    private func beginObservingSelection(in editor: NSTextView) {
+        guard observedEditor !== editor else { return }
+        endObservingSelection()
+        observedEditor = editor
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(fieldEditorSelectionDidChange(_:)),
+            name: NSTextView.didChangeSelectionNotification,
+            object: editor
+        )
+    }
+
+    private func endObservingSelection() {
+        if let observedEditor {
+            NotificationCenter.default.removeObserver(
+                self,
+                name: NSTextView.didChangeSelectionNotification,
+                object: observedEditor
+            )
+        }
+        observedEditor = nil
+        onSelectionChange?(nil, false, ActiveFormats())
+    }
+
+    @objc private func fieldEditorSelectionDidChange(_ notification: Notification) {
+        guard !isFinishing,
+              let editor = notification.object as? NSTextView,
+              editor === observedEditor else { return }
+        publishSelection(from: editor)
+    }
+
+    private func publishSelection(from editor: NSTextView) {
+        let selection = editor.selectedRange
+        guard selection.length > 0 else {
+            onSelectionChange?(nil, false, ActiveFormats())
+            return
+        }
+        syncMarkdownWithVisibleText()
+        let rect = editor.firstRect(forCharacterRange: selection, actualRange: nil)
+        let active = EditableMarkdownTable.activeFormats(
+            in: markdownText, visibleRange: selection
+        )
+        onSelectionChange?(rect, true, active)
+    }
+
+    func toggleInlineFormat(_ format: TableInlineFormat) {
+        guard let editor = field.currentEditor() as? NSTextView else { return }
+        let selection = editor.selectedRange
+        guard selection.length > 0 else { return }
+        syncMarkdownWithVisibleText()
+        markdownText = EditableMarkdownTable.toggling(
+            format, in: markdownText, visibleRange: selection
+        )
+        refreshFieldPresentation(in: editor, preserving: selection)
+        publishSelection(from: editor)
     }
 
     func insertText(_ text: String) {
@@ -168,6 +315,7 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
 
     func finishWithoutCallback() {
         isFinishing = true
+        endObservingSelection()
         field.abortEditing()
         removeFromSuperview()
     }
@@ -175,6 +323,7 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
     func controlTextDidEndEditing(_ obj: Notification) {
         guard hasBegunEditing, !isActivatingEditor, !isFinishing else { return }
         isFinishing = true
+        endObservingSelection()
         onCommit?(field.stringValue, .finish)
     }
 
@@ -187,12 +336,14 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
         case #selector(NSResponder.insertNewline(_:)): navigation = .down
         case #selector(NSResponder.cancelOperation(_:)):
             isFinishing = true
+            endObservingSelection()
             onCancel?()
             return true
         default: navigation = nil
         }
         guard let navigation else { return false }
         isFinishing = true
+        endObservingSelection()
         onCommit?(field.stringValue, navigation)
         return true
     }
@@ -243,6 +394,7 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
     @objc private func runAction(_ sender: NSMenuItem) {
         guard let action = TableEditAction(rawValue: sender.tag) else { return }
         isFinishing = true
+        endObservingSelection()
         onAction?(field.stringValue, action)
     }
 }
