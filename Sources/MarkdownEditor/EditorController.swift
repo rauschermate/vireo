@@ -35,6 +35,7 @@ public final class EditorController: ObservableObject {
     private lazy var toolbar = FloatingToolbar(controller: self)
     private lazy var linkPopover = LinkPopover()
     private var tableCellEditor: TableCellEditorOverlay?
+    private var tableScrollers: [Int: TableHorizontalScroller] = [:]
     private var pendingTableActivation: DispatchWorkItem?
     private var pendingTableCellID: TableCellID?
     /// Disabled only by headless editor tests, whose NSWindow cannot become key.
@@ -303,6 +304,7 @@ public final class EditorController: ObservableObject {
                 var renderer = MarkdownRenderer(theme: theme, baseURL: baseURL,
                                                 imageLoader: imageLoader,
                                                 isDark: tv.isDark)
+                renderer.tableScrollerGutter = theme.tableScrollerGutter
                 renderer.collapsedAnchors = collapsedAnchors
                 renderer.originOffset = window.location
                 let sliceSource = (storage.string as NSString).substring(with: window)
@@ -327,6 +329,8 @@ public final class EditorController: ObservableObject {
         layoutManager?.beginTableGeometryPass()
         layoutManager?.tables = parsed.tables
         layoutManager?.tableRowHeight = theme.tableRowHeight
+        layoutManager?.tableScrollerGutter = theme.tableScrollerGutter
+        layoutManager?.tableHorizontalScrollingEnabled = true
         layoutManager?.tableFont = theme.tableFont
         layoutManager?.tableHeaderFont = theme.tableHeaderFont
         layoutManager?.imageMaxWidth = theme.contentMaxWidth
@@ -346,15 +350,21 @@ public final class EditorController: ObservableObject {
     /// remains rendered, so source pipes and the separator row never appear.
     func beginTableCellEditing(_ geometry: TableCellGeometry, selectAll: Bool = true) {
         guard let tv = textView else { return }
+        var visibleGeometry = geometry
+        if layoutManager?.revealTableCell(geometry.id) == true {
+            invalidateTable(anchor: geometry.id.tableAnchor)
+            tv.displayIfNeeded()
+            visibleGeometry = layoutManager?.geometry(for: geometry.id) ?? geometry
+        }
         if let current = tableCellEditor {
-            if current.cellID == geometry.id {
+            if current.cellID == visibleGeometry.id {
                 current.beginEditing(selectAll: selectAll)
                 return
             }
             commitTableCell(current.currentText, navigation: .finish,
                             expectedID: current.cellID)
         }
-        installTableCellEditor(geometry, selectAll: selectAll)
+        installTableCellEditor(visibleGeometry, selectAll: selectAll)
         tv.needsDisplay = true
     }
 
@@ -454,6 +464,7 @@ public final class EditorController: ObservableObject {
     }
 
     func tableGeometryDidChange() {
+        syncTableScrollers()
         if let editor = tableCellEditor, let tv = textView,
            let geometry = layoutManager?.geometry(for: editor.cellID) {
             editor.update(geometry: tableGeometryInView(geometry, textView: tv))
@@ -468,6 +479,69 @@ public final class EditorController: ObservableObject {
         converted.rect = geometry.rect.offsetBy(dx: textView.textContainerOrigin.x,
                                                 dy: textView.textContainerOrigin.y)
         return converted
+    }
+
+    private func syncTableScrollers() {
+        guard let tv = textView, let layout = layoutManager else { return }
+        let visible = layout.tableScrollGeometries.values.filter(\.isOverflowing)
+        let visibleAnchors = Set(visible.map(\.tableAnchor))
+
+        for anchor in Array(tableScrollers.keys) where !visibleAnchors.contains(anchor) {
+            tableScrollers.removeValue(forKey: anchor)?.removeFromSuperview()
+        }
+
+        let origin = tv.textContainerOrigin
+        let gutter = max(0, layout.tableScrollerGutter)
+        for geometry in visible {
+            let scroller: TableHorizontalScroller
+            if let existing = tableScrollers[geometry.tableAnchor] {
+                scroller = existing
+            } else {
+                scroller = TableHorizontalScroller(tableAnchor: geometry.tableAnchor)
+                scroller.onRequestOffset = { [weak self] offset in
+                    self?.setTableHorizontalOffset(offset, anchor: geometry.tableAnchor)
+                }
+                tableScrollers[geometry.tableAnchor] = scroller
+                tv.addSubview(scroller)
+            }
+            let height = max(10, gutter - 4)
+            let frame = NSRect(
+                x: origin.x + geometry.viewportRect.minX + 6,
+                y: origin.y + geometry.viewportRect.maxY - gutter + (gutter - height) / 2,
+                width: max(24, geometry.viewportRect.width - 12),
+                height: height
+            )
+            scroller.update(geometry: geometry, frame: frame)
+        }
+    }
+
+    @discardableResult
+    func scrollTableHorizontally(atContainerPoint point: NSPoint,
+                                 delta: CGFloat) -> Bool {
+        guard let layout = layoutManager,
+              let anchor = layout.overflowingTableAnchor(at: point),
+              let geometry = layout.tableScrollGeometry(for: anchor) else { return false }
+        setTableHorizontalOffset(geometry.offset + delta, anchor: anchor)
+        // Consume horizontal motion over an overflowing table even at either
+        // edge, so it never turns into an unrelated document interaction.
+        return true
+    }
+
+    private func setTableHorizontalOffset(_ offset: CGFloat, anchor: Int) {
+        guard let layout = layoutManager,
+              layout.setTableHorizontalOffset(offset, for: anchor) else { return }
+        invalidateTable(anchor: anchor)
+        syncTableScrollers()
+        if let editor = tableCellEditor, let tv = textView,
+           let geometry = layout.geometry(for: editor.cellID) {
+            editor.update(geometry: tableGeometryInView(geometry, textView: tv))
+        }
+    }
+
+    private func invalidateTable(anchor: Int) {
+        guard let tv = textView, let rect = layoutManager?.tableRects[anchor] else { return }
+        let origin = tv.textContainerOrigin
+        tv.setNeedsDisplay(rect.offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -2, dy: -2))
     }
 
     private func cancelTableCellEditing(expectedID: TableCellID) {
@@ -607,6 +681,10 @@ public final class EditorController: ObservableObject {
             guard let self, let tv = self.textView else { return }
             tv.needsDisplay = true
             tv.displayIfNeeded()
+            if self.layoutManager?.revealTableCell(id) == true {
+                self.invalidateTable(anchor: id.tableAnchor)
+                tv.displayIfNeeded()
+            }
             self.activatePendingTableCellIfPossible()
         }
         pendingTableActivation = work

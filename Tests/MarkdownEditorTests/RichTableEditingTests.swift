@@ -7,6 +7,11 @@ import MarkdownRender
 @MainActor
 final class RichTableEditingTests: XCTestCase {
     private let source = "| Name | Role |\n| --- | --- |\n| Ada | Engineer |\n"
+    private let wideSource = """
+    | Project milestone with a deliberately long name | Current delivery status and next action | Responsible team and primary owner | Notes from the latest cross-functional review |
+    | --- | --- | --- | --- |
+    | Native table editing and interaction polish | Preparing the final release candidate | Editor infrastructure — Maya and Nico | Validate horizontal navigation on both trackpads and mice |
+    """
 
     @MainActor
     private final class Harness {
@@ -103,6 +108,59 @@ final class RichTableEditingTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(harness.layout.geometry(for: id)).rect,
                        canonical.rect,
                        "hit geometry must stay in text-container coordinates")
+    }
+
+    func testWideTableGetsLocalHorizontalScrollerAndStableViewport() throws {
+        let harness = Harness(source: wideSource)
+        let scroll = try XCTUnwrap(harness.layout.tableScrollGeometry(for: 0))
+
+        XCTAssertTrue(scroll.isOverflowing)
+        XCTAssertGreaterThan(scroll.contentWidth, scroll.viewportRect.width)
+        XCTAssertEqual(try XCTUnwrap(harness.layout.tableRects[0]).width,
+                       scroll.viewportRect.width, accuracy: 0.5)
+        XCTAssertEqual(
+            harness.textView.subviews.compactMap { $0 as? TableHorizontalScroller }.count,
+            1
+        )
+    }
+
+    func testHorizontalScrollMovesCellsAndClampsToContent() throws {
+        let harness = Harness(source: wideSource)
+        let id = TableCellID(tableAnchor: 0, row: 1, column: 3)
+        let before = try XCTUnwrap(harness.layout.geometry(for: id)).rect
+        let scroll = try XCTUnwrap(harness.layout.tableScrollGeometry(for: 0))
+
+        XCTAssertTrue(harness.layout.setTableHorizontalOffset(scroll.maxOffset + 500,
+                                                              for: 0))
+
+        let after = try XCTUnwrap(harness.layout.geometry(for: id)).rect
+        XCTAssertLessThan(after.minX, before.minX)
+        XCTAssertEqual(try XCTUnwrap(harness.layout.tableScrollGeometry(for: 0)).offset,
+                       scroll.maxOffset, accuracy: 0.5)
+    }
+
+    func testKeyboardRevealScrollsLastColumnIntoViewport() throws {
+        let harness = Harness(source: wideSource)
+        let id = TableCellID(tableAnchor: 0, row: 1, column: 3)
+        let viewport = try XCTUnwrap(
+            harness.layout.tableScrollGeometry(for: 0)?.viewportRect
+        )
+
+        XCTAssertTrue(harness.layout.revealTableCell(id))
+
+        let revealed = try XCTUnwrap(harness.layout.geometry(for: id)).rect
+        XCTAssertLessThanOrEqual(revealed.maxX, viewport.maxX + 0.5)
+        XCTAssertGreaterThanOrEqual(revealed.minX, viewport.minX - 0.5)
+    }
+
+    func testHiddenLinkDestinationDoesNotMakeTableOverflow() throws {
+        let destination = "https://example.com/" + String(repeating: "very-long-path-", count: 40)
+        let linked = "| Label | State |\n| --- | --- |\n| [Docs](\(destination)) | Ready |\n"
+        let harness = Harness(source: linked)
+        let scroll = try XCTUnwrap(harness.layout.tableScrollGeometry(for: 0))
+
+        XCTAssertFalse(scroll.isOverflowing)
+        XCTAssertEqual(scroll.contentWidth, scroll.viewportRect.width, accuracy: 0.5)
     }
 
     func testCellEditorCommitsVisibleTextAndTabMovesToNextCell() {

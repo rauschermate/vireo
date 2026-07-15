@@ -156,6 +156,27 @@ public final class MarkdownTextView: NSTextView {
         super.keyDown(with: event)
     }
 
+    public override func scrollWheel(with event: NSEvent) {
+        let shifted = event.modifierFlags.contains(.shift)
+        let horizontal = event.scrollingDeltaX
+        let raw = abs(horizontal) > 0.1 ? horizontal
+            : (shifted ? event.scrollingDeltaY : 0)
+        let hasHorizontalIntent = abs(horizontal) >= abs(event.scrollingDeltaY) || shifted
+        if hasHorizontalIntent, abs(raw) > 0.1 {
+            var delta = event.isDirectionInvertedFromDevice ? raw : -raw
+            if !event.hasPreciseScrollingDeltas { delta *= 32 }
+            let point = convert(event.locationInWindow, from: nil)
+            let origin = textContainerOrigin
+            let containerPoint = NSPoint(x: point.x - origin.x,
+                                         y: point.y - origin.y)
+            if controller?.scrollTableHorizontally(atContainerPoint: containerPoint,
+                                                   delta: delta) == true {
+                return
+            }
+        }
+        super.scrollWheel(with: event)
+    }
+
     public override func didChangeText() {
         selectImage(atAnchor: nil)
         super.didChangeText()

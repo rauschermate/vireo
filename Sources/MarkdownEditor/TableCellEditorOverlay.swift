@@ -52,7 +52,7 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
         cellID = geometry.id
         originalText = text
         menuState = state
-        super.init(frame: geometry.rect.insetBy(dx: 1, dy: 1))
+        super.init(frame: geometry.rect.insetBy(dx: 1, dy: 0))
 
         wantsLayer = true
         layer?.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(0.98).cgColor
@@ -95,7 +95,7 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
 
     override func layout() {
         super.layout()
-        let buttonWidth: CGFloat = 28
+        let buttonWidth: CGFloat = 40
         field.frame = NSRect(x: 8, y: 2,
                              width: max(20, bounds.width - buttonWidth - 10),
                              height: max(20, bounds.height - 4))
@@ -104,7 +104,7 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
     }
 
     func update(geometry: TableCellGeometry) {
-        frame = geometry.rect.insetBy(dx: 1, dy: 1)
+        frame = geometry.rect.insetBy(dx: 1, dy: 0)
         needsLayout = true
     }
 

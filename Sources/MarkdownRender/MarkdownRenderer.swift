@@ -14,6 +14,9 @@ public struct MarkdownRenderer {
     /// When rendering a slice of the document, the slice's absolute start —
     /// lets position-carrying attributes (tables) stay in document coordinates.
     public var originOffset: Int = 0
+    /// Extra height reserved beneath the final visible table row for an editor
+    /// scroller. Quick Look/snapshots keep the default zero value.
+    public var tableScrollerGutter: CGFloat = 0
     /// List items whose subtrees are hidden (absolute anchor positions).
     public var collapsedAnchors: Set<Int> = []
 
@@ -291,6 +294,23 @@ public struct MarkdownRenderer {
             collapsed.minimumLineHeight = 0.01
             collapsed.maximumLineHeight = 0.01
             text.addAttribute(.paragraphStyle, value: collapsed, range: sep)
+        }
+
+        if tableScrollerGutter > 0,
+           let lastCell = table.rows.last?.cells.first,
+           lastCell.range.location < text.length {
+            let source = text.string as NSString
+            let lastLine = source.lineRange(
+                for: NSRange(location: lastCell.range.location, length: 0)
+            )
+            let visibleLastLine = NSIntersectionRange(lastLine, r)
+            if visibleLastLine.length > 0 {
+                let withScroller = NSMutableParagraphStyle()
+                withScroller.minimumLineHeight = rh + tableScrollerGutter
+                withScroller.maximumLineHeight = rh + tableScrollerGutter
+                text.addAttribute(.paragraphStyle, value: withScroller,
+                                  range: visibleLastLine)
+            }
         }
 
         if table.anchor < text.length {
