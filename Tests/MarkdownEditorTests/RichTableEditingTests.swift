@@ -278,6 +278,37 @@ final class RichTableEditingTests: XCTestCase {
                           "the active cell must remain dark in dark mode")
     }
 
+    func testCellEditorPreservesColumnAlignmentWhileEditing() throws {
+        let alignedSource = """
+        | Item | Status | Owner |
+        | --- | :---: | ---: |
+        | Work | In review | Sam |
+        """
+        let harness = Harness(source: alignedSource)
+        harness.controller.automaticallyFocusTableEditors = true
+        let id = TableCellID(tableAnchor: 0, row: 1, column: 1)
+        harness.controller.beginTableCellEditing(
+            try XCTUnwrap(harness.layout.geometry(for: id))
+        )
+        RunLoop.main.run(until: Date().addingTimeInterval(0.06))
+        let overlay = try XCTUnwrap(
+            harness.textView.subviews.compactMap { $0 as? TableCellEditorOverlay }.first
+        )
+        let field = try XCTUnwrap(
+            overlay.subviews.compactMap { $0 as? NSTextField }.first
+        )
+        let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
+        let paragraph = try XCTUnwrap(
+            editor.textStorage?.attribute(.paragraphStyle, at: 0,
+                                          effectiveRange: nil) as? NSParagraphStyle
+        )
+
+        XCTAssertEqual(field.alignment, .center)
+        XCTAssertEqual(editor.alignment, .center)
+        XCTAssertEqual(editor.defaultParagraphStyle?.alignment, .center)
+        XCTAssertEqual(paragraph.alignment, .center)
+    }
+
     func testCellSelectionToolbarAndShortcutsCommitInlineFormatting() throws {
         let harness = Harness(source: source)
         harness.controller.automaticallyFocusTableEditors = true

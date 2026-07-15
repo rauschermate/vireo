@@ -197,9 +197,16 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
         syncMarkdownWithVisibleText()
         let visible = field.stringValue
         let full = NSRange(location: 0, length: (visible as NSString).length)
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = field.alignment
+        paragraphStyle.lineBreakMode = .byTruncatingTail
         let presentation = NSMutableAttributedString(
             string: visible,
-            attributes: [.font: baseFont, .foregroundColor: NSColor.labelColor]
+            attributes: [
+                .font: baseFont,
+                .foregroundColor: NSColor.labelColor,
+                .paragraphStyle: paragraphStyle,
+            ]
         )
         let parsed = MarkdownParser().parse(markdownText)
         for run in parsed.inlineRuns {
@@ -245,6 +252,9 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
                 explicitSelection ?? editor.selectedRange, length: full.length
             )
             editor.textStorage?.setAttributedString(presentation)
+            editor.defaultParagraphStyle = paragraphStyle
+            editor.alignment = field.alignment
+            editor.typingAttributes[.paragraphStyle] = paragraphStyle
             editor.selectedRange = selection
         } else {
             field.attributedStringValue = presentation
