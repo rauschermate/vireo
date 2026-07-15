@@ -215,4 +215,23 @@ final class WindowDelegateProxy: NSObject, NSWindowDelegate {
             original.windowDidResize?(notification)
         }
     }
+
+    /// SwiftUI's window-level Undo command does not automatically discover an
+    /// undo manager owned by an NSTextView inside NSViewRepresentable. Bridge
+    /// the first responder's native manager to the window so Edit > Undo and
+    /// Command-Z target the same per-document history as direct text editing.
+    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
+        if let textView = window.firstResponder as? NSTextView,
+           let manager = textView.undoManager {
+            return manager
+        }
+        if let manager = AppState.shared.activeDocument?.editorSession.textView.undoManager {
+            return manager
+        }
+        if let original,
+           original.responds(to: #selector(NSWindowDelegate.windowWillReturnUndoManager(_:))) {
+            return original.windowWillReturnUndoManager?(window)
+        }
+        return nil
+    }
 }

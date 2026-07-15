@@ -444,10 +444,52 @@ public final class MarkdownTextView: NSTextView {
         normalizeSelection(affinity: affinity)
     }
 
-    public override func moveRight(_ sender: Any?) { move(.downstream) { super.moveRight(sender) } }
-    public override func moveForward(_ sender: Any?) { move(.downstream) { super.moveForward(sender) } }
-    public override func moveLeft(_ sender: Any?) { move(.upstream) { super.moveLeft(sender) } }
-    public override func moveBackward(_ sender: Any?) { move(.upstream) { super.moveBackward(sender) } }
+    /// TextKit can treat a zero-width delimiter glyph as a line-edge stop when
+    /// an unmodified arrow starts exactly on that collapsed boundary. Move the
+    /// one adjacent visible grapheme ourselves only at that boundary; all
+    /// other positions stay on AppKit's native bidi-aware movement path.
+    @discardableResult
+    private func moveAcrossCollapsedMarker(_ affinity: MarkerAffinity) -> Bool {
+        guard selectedRange().length == 0, let storage = textStorage, let controller else {
+            return false
+        }
+        let index = controller.markerIndex
+        let caret = selectedRange().location
+        let visible = index.visibleOffset(forSourceOffset: caret)
+        guard index.sourceOffset(forVisibleOffset: visible, affinity: .upstream)
+                != index.sourceOffset(forVisibleOffset: visible, affinity: .downstream) else {
+            return false
+        }
+
+        let source = storage.string as NSString
+        let target: Int?
+        switch affinity {
+        case .upstream:
+            target = index.previousVisibleCharacter(before: caret, in: source)?.location
+        case .downstream:
+            target = index.nextVisibleCharacter(after: caret, in: source)?.upperBound
+        case .nearest:
+            target = nil
+        }
+        guard let target else { return false }
+        let proposed = NSRange(location: target, length: 0)
+        setSelectedRange(controller.normalizedSelection(proposed, affinity: affinity))
+        scrollRangeToVisible(selectedRange())
+        return true
+    }
+
+    public override func moveRight(_ sender: Any?) {
+        if !moveAcrossCollapsedMarker(.downstream) { move(.downstream) { super.moveRight(sender) } }
+    }
+    public override func moveForward(_ sender: Any?) {
+        if !moveAcrossCollapsedMarker(.downstream) { move(.downstream) { super.moveForward(sender) } }
+    }
+    public override func moveLeft(_ sender: Any?) {
+        if !moveAcrossCollapsedMarker(.upstream) { move(.upstream) { super.moveLeft(sender) } }
+    }
+    public override func moveBackward(_ sender: Any?) {
+        if !moveAcrossCollapsedMarker(.upstream) { move(.upstream) { super.moveBackward(sender) } }
+    }
     public override func moveWordRight(_ sender: Any?) { move(.downstream) { super.moveWordRight(sender) } }
     public override func moveWordForward(_ sender: Any?) { move(.downstream) { super.moveWordForward(sender) } }
     public override func moveWordLeft(_ sender: Any?) { move(.upstream) { super.moveWordLeft(sender) } }

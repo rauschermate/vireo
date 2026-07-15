@@ -132,6 +132,19 @@ final class MarkerInteractionTests: XCTestCase {
         )
         XCTAssertEqual(textView.insertionRect(for: fallback).minX,
                        afterItalicContent.minX, accuracy: 0.5)
+
+        // The next unmodified Left Arrow crosses the collapsed closing
+        // delimiter. This is the boundary that differs from Shift/Option-Left
+        // in a live NSTextView.
+        textView.moveLeft(nil)
+        XCTAssertEqual(
+            controller.markerIndex.visibleOffset(
+                forSourceOffset: textView.selectedRange().location),
+            controller.markerIndex.visibleOffset(
+                forSourceOffset: italic.location + 1)
+        )
+        XCTAssertEqual(textView.insertionRect(for: fallback).minX,
+                       beforeItalicContent.minX, accuracy: 0.5)
     }
 
     func testAtomicFormattedAndEmojiDeletionParticipatesInUndo() {
