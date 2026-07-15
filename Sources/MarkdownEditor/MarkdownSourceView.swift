@@ -59,5 +59,14 @@ public struct MarkdownSourceView: NSViewRepresentable {
         public func textViewDidChangeSelection(_ notification: Notification) {
             controller.selectionChanged()
         }
+
+        /// Mouse drags, Find, services and accessibility can change selection
+        /// without invoking a key command on MarkdownTextView. Route those
+        /// paths through the same atomic marker policy as keyboard movement.
+        public func textView(_ textView: NSTextView,
+                             willChangeSelectionFromCharacterRange oldRange: NSRange,
+                             toCharacterRange newRange: NSRange) -> NSRange {
+            controller.normalizedSelection(newRange, previous: oldRange)
+        }
     }
 }

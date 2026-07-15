@@ -7,6 +7,7 @@ struct VireoApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @ObservedObject private var state = AppState.shared
     @ObservedObject private var prefs = Preferences.shared
+    @ObservedObject private var editorUndo = EditorUndoCommandState.shared
 
     var body: some Scene {
         Window("Vireo", id: "main") {
@@ -29,6 +30,17 @@ struct VireoApp: App {
         // Vireo ▸ Check for Updates… — sits right under "About Vireo".
         CommandGroup(after: .appInfo) {
             Button("Check for Updates…") { state.updater.checkForUpdates() }
+        }
+        // SwiftUI cannot infer the undo manager inside our NSViewRepresentable
+        // editor. Keep the native Edit menu and shortcuts, but drive them from
+        // the active document's persistent NSTextView history.
+        CommandGroup(replacing: .undoRedo) {
+            Button(editorUndo.undoTitle) { editorUndo.undo() }
+                .keyboardShortcut("z", modifiers: [.command])
+                .disabled(!editorUndo.canUndo)
+            Button(editorUndo.redoTitle) { editorUndo.redo() }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+                .disabled(!editorUndo.canRedo)
         }
         CommandGroup(replacing: .newItem) {
             Button("New File") { state.createNewFile() }.keyboardShortcut("n")

@@ -81,6 +81,7 @@ public final class EditorSession {
         self.scrollView = scroll
 
         attachController()
+        controller.bootstrapMarkerIndex(sourceLength: storage.length)
         installObservers()
     }
 
