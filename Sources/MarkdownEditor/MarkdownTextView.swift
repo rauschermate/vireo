@@ -200,28 +200,19 @@ public final class MarkdownTextView: NSTextView {
         super.drawInsertionPoint(in: corrected, color: color, turnedOn: flag)
     }
 
-    private func insertionRect(for rect: NSRect) -> NSRect {
+    /// Return the visually correct caret rectangle for the current source
+    /// selection. Internal so marker-boundary geometry stays regression-tested.
+    func insertionRect(for rect: NSRect) -> NSRect {
         var r = rect
-
-        // Directly after hidden marker glyphs (a fresh "3. " / "- [ ] " line)
-        // AppKit anchors the caret to the last *real* glyph — the previous
-        // line's newline. Recompute from the glyph at the caret instead — but
-        // only when that glyph is already laid out, so this never *forces*
-        // layout (it runs from setNeedsDisplay, which may pass
-        // avoidAdditionalLayout). An unlaid caret isn't on screen anyway; it
-        // relocates on the next draw once layout reaches it.
         let caret = selectedRange().location
-        if let storage = textStorage, let lm = layoutManager,
-           caret > 0, caret < storage.length,
-           caret < lm.firstUnlaidCharacterIndex(),
-           storage.attribute(.vireoMarker, at: caret - 1, effectiveRange: nil) != nil {
-            let glyph = lm.glyphIndexForCharacter(at: caret)
-            if glyph < lm.numberOfGlyphs {
-                let lineRect = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
-                r = NSRect(x: lineRect.minX + lm.location(forGlyphAt: glyph).x + textContainerInset.width,
-                           y: lineRect.minY + textContainerInset.height,
-                           width: rect.width, height: lineRect.height)
-            }
+
+        // A hidden marker collapses multiple source offsets onto one visual
+        // boundary. TextKit's default caret rect can then borrow the null
+        // glyph's geometry, appearing low or at the end of the line. Anchor it
+        // to the next visible glyph (or the previous glyph at document end)
+        // and derive its vertical position from that line's actual baseline.
+        if let boundary = markerBoundaryInsertionRect(caret: caret, width: rect.width) {
+            return boundary
         }
 
         var font = typingAttributes[.font] as? NSFont
@@ -235,6 +226,50 @@ public final class MarkdownTextView: NSTextView {
         r.origin.y += r.height - height
         r.size.height = height
         return r
+    }
+
+    private func markerBoundaryInsertionRect(caret: Int, width: CGFloat) -> NSRect? {
+        guard let storage = textStorage, let lm = layoutManager,
+              let container = textContainer, let controller,
+              controller.markerIndex.sourceLength == storage.length else { return nil }
+
+        let index = controller.markerIndex
+        let visual = index.visibleOffset(forSourceOffset: caret)
+        let upstream = index.sourceOffset(forVisibleOffset: visual, affinity: .upstream)
+        let downstream = index.sourceOffset(forVisibleOffset: visual, affinity: .downstream)
+        guard upstream != downstream else { return nil }
+
+        let source = storage.string as NSString
+        let next = index.nextVisibleCharacter(after: downstream, in: source)
+        let previous = index.previousVisibleCharacter(before: upstream, in: source)
+        guard let anchorRange = next ?? previous,
+              anchorRange.location < lm.firstUnlaidCharacterIndex() else { return nil }
+
+        let glyphRange = lm.glyphRange(forCharacterRange: anchorRange,
+                                       actualCharacterRange: nil)
+        guard glyphRange.length > 0 else { return nil }
+        let glyph = next == nil ? glyphRange.upperBound - 1 : glyphRange.location
+        guard glyph < lm.numberOfGlyphs else { return nil }
+
+        let lineRect = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let glyphLocation = lm.location(forGlyphAt: glyph)
+        let origin = textContainerOrigin
+        let x: CGFloat
+        if next != nil {
+            x = origin.x + lineRect.minX + glyphLocation.x
+        } else {
+            x = origin.x + lm.boundingRect(forGlyphRange: glyphRange, in: container).maxX
+        }
+
+        let fontIndex = min(anchorRange.location, max(0, storage.length - 1))
+        let font = (storage.attribute(.font, at: fontIndex,
+                                      effectiveRange: nil) as? NSFont)
+            ?? (typingAttributes[.font] as? NSFont)
+            ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let height = ceil(font.ascender - font.descender) + 2
+        let baseline = origin.y + lineRect.minY + glyphLocation.y
+        return NSRect(x: x, y: baseline - font.ascender - 1,
+                      width: max(1, width), height: height)
     }
 
     /// The system invalidates the caret's *uncorrected* rect on every blink.
@@ -543,10 +578,10 @@ public final class MarkdownTextView: NSTextView {
     private func deleteVisibleRange(_ range: NSRange) {
         guard let storage = textStorage, let controller else { return }
         let deletion = controller.markerIndex.balancedDeletionRange(range)
-        guard deletion.length > 0,
-              shouldChangeText(in: deletion, replacementString: "") else { return }
-        storage.replaceCharacters(in: deletion, with: "")
-        didChangeText()
+        guard deletion.length > 0 else { return }
+        // NSTextView owns undo registration. Going through its editing path
+        // keeps atomic syntax deletion indistinguishable from native typing.
+        super.insertText("", replacementRange: deletion)
         setSelectedRange(NSRange(location: min(deletion.location, storage.length), length: 0))
     }
 

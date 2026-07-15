@@ -74,6 +74,85 @@ final class MarkerInteractionTests: XCTestCase {
         let match = (client.string as NSString).range(of: "bold")
         client.replaceCharacters(in: match, with: "strong")
         XCTAssertEqual(textView.string, "A **strong** word")
+        XCTAssertTrue(textView.undoManager?.canUndo == true)
+        textView.undoManager?.undo()
+        XCTAssertEqual(textView.string, "A **bold** word")
+        withExtendedLifetime(controller) {}
+    }
+
+    func testCaretGeometryStaysStableAcrossInlineMarkerBoundaries() {
+        let source = "A **B** C and D *E* F."
+        let (controller, textView) = makeEditor(source)
+        textView.frame = NSRect(x: 0, y: 0, width: 600, height: 120)
+        textView.textContainer?.containerSize = NSSize(width: 560, height: 120)
+        textView.layoutManager?.ensureLayout(for: textView.textContainer!)
+        textView.sizeToFit()
+        textView.layoutManager?.ensureLayout(for: textView.textContainer!)
+
+        let ns = source as NSString
+        let bold = ns.range(of: "**B**")
+        let italic = ns.range(of: "*E*")
+        let fallback = NSRect(x: 999, y: 999, width: 1, height: 80)
+        func caretRect(_ location: Int) -> NSRect {
+            textView.setSelectedRange(NSRange(location: location, length: 0))
+            return textView.insertionRect(for: fallback)
+        }
+
+        let beforeBoldSource = caretRect(bold.location)
+        let beforeBoldContent = caretRect(bold.location + 2)
+        let afterBoldContent = caretRect(bold.location + 3)
+        let afterBoldSource = caretRect(bold.upperBound)
+        XCTAssertEqual(beforeBoldSource.minX, beforeBoldContent.minX, accuracy: 0.5)
+        XCTAssertEqual(afterBoldContent.minX, afterBoldSource.minX, accuracy: 0.5)
+        XCTAssertLessThan(beforeBoldContent.minX, afterBoldContent.minX)
+
+        let beforeItalicSource = caretRect(italic.location)
+        let beforeItalicContent = caretRect(italic.location + 1)
+        let afterItalicContent = caretRect(italic.location + 2)
+        let afterItalicSource = caretRect(italic.upperBound)
+        XCTAssertEqual(beforeItalicSource.minX, beforeItalicContent.minX, accuracy: 0.5)
+        XCTAssertEqual(afterItalicContent.minX, afterItalicSource.minX, accuracy: 0.5)
+        XCTAssertLessThan(beforeItalicContent.minX, afterItalicContent.minX)
+
+        for rect in [beforeBoldSource, beforeBoldContent, afterBoldContent,
+                     afterBoldSource, beforeItalicSource, beforeItalicContent,
+                     afterItalicContent, afterItalicSource] {
+            XCTAssertEqual(rect.minY, beforeBoldSource.minY, accuracy: 0.5)
+            XCTAssertNotEqual(rect.minX, fallback.minX)
+        }
+
+        let beforeF = ns.range(of: "F.").location
+        textView.setSelectedRange(NSRange(location: beforeF, length: 0))
+        textView.moveLeft(nil)
+        XCTAssertEqual(
+            controller.markerIndex.visibleOffset(
+                forSourceOffset: textView.selectedRange().location),
+            controller.markerIndex.visibleOffset(
+                forSourceOffset: italic.location + 2)
+        )
+        XCTAssertEqual(textView.insertionRect(for: fallback).minX,
+                       afterItalicContent.minX, accuracy: 0.5)
+    }
+
+    func testAtomicFormattedAndEmojiDeletionParticipatesInUndo() {
+        let source = "**X** 👩🏽‍💻"
+        let (controller, textView) = makeEditor(source)
+
+        let formatted = (source as NSString).range(of: "**X**")
+        textView.setSelectedRange(NSRange(location: formatted.upperBound, length: 0))
+        textView.deleteBackward(nil)
+        XCTAssertEqual(textView.string, " 👩🏽‍💻")
+        XCTAssertTrue(textView.undoManager?.canUndo == true)
+        textView.undoManager?.undo()
+        XCTAssertEqual(textView.string, source)
+
+        textView.setSelectedRange(NSRange(location: (textView.string as NSString).length,
+                                          length: 0))
+        textView.deleteBackward(nil)
+        XCTAssertEqual(textView.string, "**X** ")
+        XCTAssertTrue(textView.undoManager?.canUndo == true)
+        textView.undoManager?.undo()
+        XCTAssertEqual(textView.string, source)
         withExtendedLifetime(controller) {}
     }
 

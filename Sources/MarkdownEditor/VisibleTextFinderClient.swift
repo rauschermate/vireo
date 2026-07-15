@@ -48,9 +48,9 @@ final class VisibleTextFinderClient: NSObject, @preconcurrency NSTextFinderClien
     func replaceCharacters(in range: NSRange, with string: String) {
         guard let textView, let storage = textView.textStorage else { return }
         let sourceRange = index.sourceRange(forVisibleRange: range)
-        guard textView.shouldChangeText(in: sourceRange, replacementString: string) else { return }
-        storage.replaceCharacters(in: sourceRange, with: string)
-        textView.didChangeText()
+        // Use NSTextView's edit path so Replace participates in the document's
+        // persistent undo manager and emits exactly one change notification.
+        textView.insertText(string, replacementRange: sourceRange)
         let caret = sourceRange.location + (string as NSString).length
         textView.setSelectedRange(NSRange(location: min(caret, storage.length), length: 0))
     }
@@ -67,6 +67,20 @@ final class VisibleTextFinderClient: NSObject, @preconcurrency NSTextFinderClien
         guard !screenRect.isEmpty else { return nil }
         let windowRect = textView.window?.convertFromScreen(screenRect) ?? screenRect
         return [NSValue(rect: textView.convert(windowRect, from: nil))]
+    }
+
+    /// The system draws the yellow find indicator above the content view. It
+    /// needs the matched glyphs redrawn into that overlay; falling back to the
+    /// whole text view leaves an opaque rectangle that covers the word.
+    func drawCharacters(in range: NSRange, forContentView view: NSView) {
+        guard let textView, view === textView,
+              let layoutManager = textView.layoutManager else { return }
+        let sourceRange = index.sourceRange(forVisibleRange: range)
+        let glyphRange = layoutManager.glyphRange(forCharacterRange: sourceRange,
+                                                  actualCharacterRange: nil)
+        guard glyphRange.length > 0 else { return }
+        layoutManager.drawGlyphs(forGlyphRange: glyphRange,
+                                 at: textView.textContainerOrigin)
     }
 
     var visibleCharacterRanges: [NSValue] {
