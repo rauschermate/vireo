@@ -51,7 +51,10 @@ public final class MarkdownTextView: NSTextView {
         if event.clickCount <= 2,
            let layout = layoutManager as? MarkdownLayoutManager {
             let point = convert(event.locationInWindow, from: nil)
-            if let cell = layout.tableCell(at: point) {
+            let origin = textContainerOrigin
+            let containerPoint = NSPoint(x: point.x - origin.x,
+                                         y: point.y - origin.y)
+            if let cell = layout.tableCell(at: containerPoint) {
                 controller?.beginTableCellEditing(cell, selectAll: event.clickCount == 1)
                 return
             }

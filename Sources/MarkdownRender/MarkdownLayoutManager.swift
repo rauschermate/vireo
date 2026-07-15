@@ -54,9 +54,11 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     public var tableRowHeight: CGFloat = 40
     public var tableFont: NSFont = .systemFont(ofSize: 15)
     public var tableHeaderFont: NSFont = .systemFont(ofSize: 15, weight: .semibold)
-    /// Cell frames from the current draw pass, in text-view coordinates. The
-    /// editor uses these for direct cell hit testing and its native overlay.
+    /// Cell frames from the current draw pass, in text-container coordinates.
+    /// Keeping these independent of `drawGlyphs(... at:)` is essential because
+    /// AppKit can translate that origin for partial/scrolled drawing passes.
     public private(set) var tableCellGeometries: [TableCellID: TableCellGeometry] = [:]
+    /// Table bounds in text-container coordinates, keyed by source anchor.
     public private(set) var tableRects: [Int: NSRect] = [:]
 
     public func beginTableGeometryPass() {
@@ -456,8 +458,10 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         guard glyph < numberOfGlyphs else { return }
         let lineRect = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
         let src = storage.string as NSString
-        let top = origin.y + lineRect.minY
-        let left = origin.x + lineRect.minX
+        // Cache all interaction geometry in stable text-container coordinates;
+        // add the transient drawing origin only when painting pixels.
+        let top = lineRect.minY
+        let left = lineRect.minX
         let pad: CGFloat = 10
         let rh = tableRowHeight
         let cols = info.columnCount
@@ -505,20 +509,21 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         // Header background.
         NSColor.secondaryLabelColor.withAlphaComponent(0.10)
             .setFill()
-        NSRect(x: left, y: top, width: totalW, height: rh).fill()
+        NSRect(x: origin.x + left, y: origin.y + top,
+               width: totalW, height: rh).fill()
 
         // Grid lines.
         let grid = NSBezierPath()
         grid.lineWidth = 1
         for r in 0...rowCount {
-            let y = top + CGFloat(r) * rh
-            grid.move(to: NSPoint(x: left, y: y))
-            grid.line(to: NSPoint(x: right, y: y))
+            let y = origin.y + top + CGFloat(r) * rh
+            grid.move(to: NSPoint(x: origin.x + left, y: y))
+            grid.line(to: NSPoint(x: origin.x + right, y: y))
         }
         for i in 0...cols {
-            let x = i < xs.count ? xs[i] : right
-            grid.move(to: NSPoint(x: x, y: top))
-            grid.line(to: NSPoint(x: x, y: top + tableH))
+            let x = origin.x + (i < xs.count ? xs[i] : right)
+            grid.move(to: NSPoint(x: x, y: origin.y + top))
+            grid.line(to: NSPoint(x: x, y: origin.y + top + tableH))
         }
         NSColor.separatorColor.setStroke()
         grid.stroke()
@@ -591,8 +596,8 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
                     options: [.usesLineFragmentOrigin]
                 )
                 let contentHeight = min(rh, max(1, ceil(measured.height)))
-                let drawRect = NSRect(x: cellRect.minX + pad,
-                                      y: cellRect.midY - contentHeight / 2,
+                let drawRect = NSRect(x: origin.x + cellRect.minX + pad,
+                                      y: origin.y + cellRect.midY - contentHeight / 2,
                                       width: max(1, cellRect.width - pad * 2),
                                       height: contentHeight)
                 content.draw(with: drawRect,

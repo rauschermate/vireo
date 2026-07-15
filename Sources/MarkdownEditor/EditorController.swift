@@ -424,7 +424,8 @@ public final class EditorController: ObservableObject {
         let state = TableMenuState(rowCount: model.rowCount,
                                    columnCount: model.columnCount,
                                    alignment: geometry.alignment)
-        let editor = TableCellEditorOverlay(geometry: geometry, text: visible,
+        let editor = TableCellEditorOverlay(geometry: tableGeometryInView(geometry, textView: tv),
+                                            text: visible,
                                             state: state, theme: theme)
         editor.onCommit = { [weak self, weak editor] text, navigation in
             guard let self, let editor else { return }
@@ -453,12 +454,20 @@ public final class EditorController: ObservableObject {
     }
 
     func tableGeometryDidChange() {
-        if let editor = tableCellEditor,
+        if let editor = tableCellEditor, let tv = textView,
            let geometry = layoutManager?.geometry(for: editor.cellID) {
-            editor.update(geometry: geometry)
+            editor.update(geometry: tableGeometryInView(geometry, textView: tv))
         } else {
             activatePendingTableCellIfPossible()
         }
+    }
+
+    private func tableGeometryInView(_ geometry: TableCellGeometry,
+                                     textView: MarkdownTextView) -> TableCellGeometry {
+        var converted = geometry
+        converted.rect = geometry.rect.offsetBy(dx: textView.textContainerOrigin.x,
+                                                dy: textView.textContainerOrigin.y)
+        return converted
     }
 
     private func cancelTableCellEditing(expectedID: TableCellID) {

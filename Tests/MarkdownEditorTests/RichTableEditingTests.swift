@@ -41,11 +41,12 @@ final class RichTableEditingTests: XCTestCase {
             drawTableGeometry()
         }
 
-        private func drawTableGeometry() {
+        func drawTableGeometry(at origin: NSPoint? = nil) {
             let canvas = NSImage(size: NSSize(width: 760, height: max(500, textView.frame.height)))
             canvas.lockFocus()
             let glyphs = layout.glyphRange(for: textView.textContainer!)
-            layout.drawGlyphs(forGlyphRange: glyphs, at: textView.textContainerOrigin)
+            layout.drawGlyphs(forGlyphRange: glyphs,
+                              at: origin ?? textView.textContainerOrigin)
             canvas.unlockFocus()
             controller.tableGeometryDidChange()
         }
@@ -65,7 +66,9 @@ final class RichTableEditingTests: XCTestCase {
         let harness = Harness(source: source)
         let id = TableCellID(tableAnchor: 0, row: 1, column: 0)
         let geometry = try XCTUnwrap(harness.layout.geometry(for: id))
-        let pointInView = NSPoint(x: geometry.rect.midX, y: geometry.rect.midY)
+        let origin = harness.textView.textContainerOrigin
+        let pointInView = NSPoint(x: origin.x + geometry.rect.midX,
+                                  y: origin.y + geometry.rect.midY)
         let pointInWindow = harness.textView.convert(pointInView, to: nil)
         let event = try XCTUnwrap(NSEvent.mouseEvent(
             with: .leftMouseDown,
@@ -86,6 +89,20 @@ final class RichTableEditingTests: XCTestCase {
             harness.textView.subviews.compactMap { $0 as? TableCellEditorOverlay }.count,
             1
         )
+    }
+
+    func testCellHitGeometryDoesNotDriftWithDrawingOrigin() throws {
+        let harness = Harness(source: source)
+        let id = TableCellID(tableAnchor: 0, row: 1, column: 0)
+        let canonical = try XCTUnwrap(harness.layout.geometry(for: id))
+        let origin = harness.textView.textContainerOrigin
+
+        harness.layout.beginTableGeometryPass()
+        harness.drawTableGeometry(at: NSPoint(x: origin.x + 137, y: origin.y + 83))
+
+        XCTAssertEqual(try XCTUnwrap(harness.layout.geometry(for: id)).rect,
+                       canonical.rect,
+                       "hit geometry must stay in text-container coordinates")
     }
 
     func testCellEditorCommitsVisibleTextAndTabMovesToNextCell() {
