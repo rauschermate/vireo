@@ -34,9 +34,12 @@ public final class EditorController: ObservableObject {
     private var transientParagraphRange: NSRange?
     private lazy var toolbar = FloatingToolbar(controller: self)
     private lazy var linkPopover = LinkPopover()
-    /// Table whose source is revealed because the caret is inside it
-    /// (identified by absolute anchor — stable across incremental edits).
-    private var revealedTableAnchor: Int?
+    private var tableCellEditor: TableCellEditorOverlay?
+    private var tableScrollers: [Int: TableHorizontalScroller] = [:]
+    private var pendingTableActivation: DispatchWorkItem?
+    private var pendingTableCellID: TableCellID?
+    /// Disabled only by headless editor tests, whose NSWindow cannot become key.
+    var automaticallyFocusTableEditors = true
     /// Collapsed list items (absolute anchors) and the hover target.
     private var collapsedAnchors: Set<Int> = []
     private var lastSourceLength = 0
@@ -55,8 +58,7 @@ public final class EditorController: ObservableObject {
                                   sourceLength: sourceLength)
     }
 
-    /// Show/hide the floating format toolbar and reveal/re-hide table source
-    /// as the selection moves.
+    /// Show/hide the floating format toolbar as the selection moves.
     public func selectionChanged() {
         guard let tv = textView else { return }
         let sel = tv.selectedRange()
@@ -69,20 +71,6 @@ public final class EditorController: ObservableObject {
            (sel.location < paragraph.location || sel.location >= paragraph.upperBound) {
             clearTransientMarkerPresentation(dirty: paragraph)
         }
-
-        // Reveal the raw source of the table the caret sits in (if any) —
-        // restyling only the affected table ranges, not the whole document.
-        let anchor = parsed.tables.first { NSLocationInRange(sel.location, $0.range) }?.anchor
-        if anchor != revealedTableAnchor {
-            let previous = revealedTableAnchor
-            revealedTableAnchor = anchor
-            for a in [previous, anchor].compactMap({ $0 }) {
-                if let range = parsed.tables.first(where: { $0.anchor == a })?.range {
-                    applyStyles(dirty: range)
-                }
-            }
-        }
-
         // Caret geometry on empty lines follows typingAttributes — keep them
         // in sync with wherever the caret just moved to.
         refreshTypingAttributes()
@@ -316,7 +304,7 @@ public final class EditorController: ObservableObject {
                 var renderer = MarkdownRenderer(theme: theme, baseURL: baseURL,
                                                 imageLoader: imageLoader,
                                                 isDark: tv.isDark)
-                renderer.revealTableAnchor = revealedTableAnchor
+                renderer.tableScrollerGutter = theme.tableScrollerGutter
                 renderer.collapsedAnchors = collapsedAnchors
                 renderer.originOffset = window.location
                 let sliceSource = (storage.string as NSString).substring(with: window)
@@ -338,8 +326,11 @@ public final class EditorController: ObservableObject {
 
         layoutManager?.markerColor = theme.secondaryColor
         layoutManager?.bulletFont = theme.bodyFont
+        layoutManager?.beginTableGeometryPass()
         layoutManager?.tables = parsed.tables
         layoutManager?.tableRowHeight = theme.tableRowHeight
+        layoutManager?.tableScrollerGutter = theme.tableScrollerGutter
+        layoutManager?.tableHorizontalScrollingEnabled = true
         layoutManager?.tableFont = theme.tableFont
         layoutManager?.tableHeaderFont = theme.tableHeaderFont
         layoutManager?.imageMaxWidth = theme.contentMaxWidth
@@ -349,6 +340,431 @@ public final class EditorController: ObservableObject {
         layoutManager?.collapsedAnchors = collapsedAnchors
         refreshTypingAttributes()
         tv.needsDisplay = true
+    }
+
+    // MARK: Rich table editing
+
+    var activeTableCellID: TableCellID? { tableCellEditor?.cellID }
+    var isTableInteractionActive: Bool {
+        tableCellEditor != nil || pendingTableCellID != nil
+    }
+    var isFormattingToolbarPresented: Bool { toolbar.isPresented }
+    var formattingToolbarContext: FloatingToolbar.Context? {
+        toolbar.presentedContext
+    }
+    var formattingToolbarItemHelp: [String] { toolbar.presentedItemHelp }
+
+    /// Mount a native single-line editor over the drawn cell. The table itself
+    /// remains rendered, so source pipes and the separator row never appear.
+    func beginTableCellEditing(_ geometry: TableCellGeometry, selectAll: Bool = true) {
+        guard let tv = textView else { return }
+        var visibleGeometry = geometry
+        if layoutManager?.revealTableCell(geometry.id) == true {
+            invalidateTable(anchor: geometry.id.tableAnchor)
+            tv.displayIfNeeded()
+            visibleGeometry = layoutManager?.geometry(for: geometry.id) ?? geometry
+        }
+        if let current = tableCellEditor {
+            if current.cellID == visibleGeometry.id {
+                current.beginEditing(selectAll: selectAll)
+                return
+            }
+            commitTableCell(current.currentText, markdown: current.currentMarkdown,
+                            navigation: .finish,
+                            expectedID: current.cellID)
+        }
+        installTableCellEditor(visibleGeometry, selectAll: selectAll)
+        tv.needsDisplay = true
+    }
+
+    /// Keyboard movement and services operate in source offsets. Map any such
+    /// landing point to the nearest real cell, skipping the separator row.
+    @discardableResult
+    func beginTableCellEditing(atSourceLocation location: Int,
+                               selectAll: Bool = false) -> Bool {
+        guard tableCellEditor == nil,
+              let tv = textView,
+              let table = parsed.tables.first(where: {
+                  location >= $0.range.location && location <= $0.range.upperBound
+              }) else { return tableCellEditor != nil }
+
+        let ns = tv.string as NSString
+        let sourceLine = ns.lineRange(for: NSRange(location: min(location, ns.length), length: 0))
+        let cellsOnLine = table.rows.enumerated().flatMap { rowIndex, row in
+            row.cells.map { (rowIndex, $0) }
+        }.filter { _, cell in
+            NSIntersectionRange(cell.range, sourceLine).length > 0
+                || (cell.range.length == 0 && NSLocationInRange(cell.range.location, sourceLine))
+        }
+        let candidates: [(Int, TableCell)]
+        if !cellsOnLine.isEmpty {
+            candidates = cellsOnLine
+        } else if let separator = table.separatorRange,
+                  NSLocationInRange(location, separator), table.rows.count > 1 {
+            candidates = table.rows[1].cells.map { (1, $0) }
+        } else {
+            candidates = table.rows.enumerated().flatMap { rowIndex, row in
+                row.cells.map { (rowIndex, $0) }
+            }
+        }
+        guard let nearest = candidates.min(by: { lhs, rhs in
+            distance(from: location, to: lhs.1.range) < distance(from: location, to: rhs.1.range)
+        }) else { return false }
+        let id = TableCellID(tableAnchor: table.anchor, row: nearest.0,
+                             column: nearest.1.column)
+        if let geometry = layoutManager?.geometry(for: id) {
+            beginTableCellEditing(geometry, selectAll: selectAll)
+        } else {
+            pendingTableCellID = id
+            textView?.needsDisplay = true
+        }
+        return true
+    }
+
+    func insertTextIntoActiveTableCell(_ text: String) {
+        tableCellEditor?.insertText(text)
+    }
+
+    /// Keep Tab/Shift-Tab/Return inside the rendered table even if AppKit
+    /// briefly hands first-responder status back to the backing text view while
+    /// the next native field is being mounted.
+    @discardableResult
+    func routeTableNavigation(_ navigation: TableCellNavigation,
+                              fromSourceLocation location: Int) -> Bool {
+        if let editor = tableCellEditor {
+            commitTableCell(editor.currentText, markdown: editor.currentMarkdown,
+                            navigation: navigation,
+                            expectedID: editor.cellID)
+            return true
+        }
+        if pendingTableCellID != nil { return true }
+        return beginTableCellEditing(atSourceLocation: location, selectAll: true)
+    }
+
+    private func distance(from location: Int, to range: NSRange) -> Int {
+        if location < range.location { return range.location - location }
+        if location > range.upperBound { return location - range.upperBound }
+        return 0
+    }
+
+    private func installTableCellEditor(_ geometry: TableCellGeometry, selectAll: Bool) {
+        guard tableCellEditor == nil,
+              let tv = textView,
+              let table = parsed.tables.first(where: { $0.anchor == geometry.id.tableAnchor }),
+              let model = EditableMarkdownTable(table: table, source: tv.string),
+              let markdown = model.rawText(row: geometry.id.row,
+                                           column: geometry.id.column)
+        else { return }
+
+        // Park a collapsed backing caret before mounting the field. Selecting
+        // the raw source range would paint an unrelated sliver elsewhere in
+        // the rendered row; the overlay owns the visible text selection.
+        // Doing this first also avoids an AppKit end-editing callback tearing
+        // down a newly mounted field in the same mouse event that created it.
+        if table.rows.indices.contains(geometry.id.row),
+           let cell = table.rows[geometry.id.row].cells.first(where: {
+               $0.column == geometry.id.column
+           }) {
+            tv.setSelectedRange(NSRange(location: cell.range.location, length: 0))
+        }
+
+        toolbar.hide()
+        let state = TableMenuState(rowCount: model.rowCount,
+                                   columnCount: model.columnCount,
+                                   alignment: geometry.alignment)
+        let editor = TableCellEditorOverlay(geometry: tableGeometryInView(geometry, textView: tv),
+                                            markdown: markdown,
+                                            state: state, theme: theme)
+        editor.onCommit = { [weak self, weak editor] text, navigation in
+            guard let self, let editor else { return }
+            self.commitTableCell(text, markdown: editor.currentMarkdown,
+                                 navigation: navigation, expectedID: editor.cellID)
+        }
+        editor.onCancel = { [weak self, weak editor] in
+            guard let self, let editor else { return }
+            self.cancelTableCellEditing(expectedID: editor.cellID)
+        }
+        editor.onAction = { [weak self, weak editor] text, action in
+            guard let self, let editor else { return }
+            self.applyTableAction(action, text: text, markdown: editor.currentMarkdown,
+                                  id: editor.cellID)
+        }
+        editor.onSelectionChange = { [weak self, weak editor] rect, selected, active in
+            guard let self, let editor, self.tableCellEditor === editor else { return }
+            self.toolbar.update(selectionRect: rect, hasSelection: selected,
+                                active: active, context: .tableCell)
+        }
+        tableCellEditor = editor
+        tv.addSubview(editor)
+        if automaticallyFocusTableEditors {
+            editor.beginEditing(selectAll: selectAll)
+        }
+    }
+
+    func tableGeometryDidChange() {
+        syncTableScrollers()
+        if let editor = tableCellEditor, let tv = textView,
+           let geometry = layoutManager?.geometry(for: editor.cellID) {
+            editor.update(geometry: tableGeometryInView(geometry, textView: tv))
+        } else {
+            activatePendingTableCellIfPossible()
+        }
+    }
+
+    private func tableGeometryInView(_ geometry: TableCellGeometry,
+                                     textView: MarkdownTextView) -> TableCellGeometry {
+        var converted = geometry
+        converted.rect = geometry.rect.offsetBy(dx: textView.textContainerOrigin.x,
+                                                dy: textView.textContainerOrigin.y)
+        return converted
+    }
+
+    private func syncTableScrollers() {
+        guard let tv = textView, let layout = layoutManager else { return }
+        let visible = layout.tableScrollGeometries.values.filter(\.isOverflowing)
+        let visibleAnchors = Set(visible.map(\.tableAnchor))
+
+        for anchor in Array(tableScrollers.keys) where !visibleAnchors.contains(anchor) {
+            tableScrollers.removeValue(forKey: anchor)?.removeFromSuperview()
+        }
+
+        let origin = tv.textContainerOrigin
+        let gutter = max(0, layout.tableScrollerGutter)
+        for geometry in visible {
+            let scroller: TableHorizontalScroller
+            if let existing = tableScrollers[geometry.tableAnchor] {
+                scroller = existing
+            } else {
+                scroller = TableHorizontalScroller(tableAnchor: geometry.tableAnchor)
+                scroller.onRequestOffset = { [weak self] offset in
+                    self?.setTableHorizontalOffset(offset, anchor: geometry.tableAnchor)
+                }
+                tableScrollers[geometry.tableAnchor] = scroller
+                tv.addSubview(scroller)
+            }
+            let height = max(10, gutter - 4)
+            let frame = NSRect(
+                x: origin.x + geometry.viewportRect.minX + 6,
+                y: origin.y + geometry.viewportRect.maxY - gutter + (gutter - height) / 2,
+                width: max(24, geometry.viewportRect.width - 12),
+                height: height
+            )
+            scroller.update(geometry: geometry, frame: frame)
+        }
+    }
+
+    @discardableResult
+    func scrollTableHorizontally(atContainerPoint point: NSPoint,
+                                 delta: CGFloat) -> Bool {
+        guard let layout = layoutManager,
+              let anchor = layout.overflowingTableAnchor(at: point),
+              let geometry = layout.tableScrollGeometry(for: anchor) else { return false }
+        setTableHorizontalOffset(geometry.offset + delta, anchor: anchor)
+        // Consume horizontal motion over an overflowing table even at either
+        // edge, so it never turns into an unrelated document interaction.
+        return true
+    }
+
+    private func setTableHorizontalOffset(_ offset: CGFloat, anchor: Int) {
+        guard let layout = layoutManager,
+              let geometry = layout.tableScrollGeometry(for: anchor) else { return }
+        let target = min(max(0, offset), geometry.maxOffset)
+        guard abs(target - geometry.offset) > 0.25 else { return }
+
+        // Record the new offset before committing: the synchronous restyle
+        // clears transient geometry, but preserves the table's offset for the
+        // next draw pass. Nothing paints until this event returns, so users
+        // only see the stable rendered grid at its new position.
+        guard layout.setTableHorizontalOffset(target, for: anchor) else { return }
+
+        // A half-visible native field is visually ambiguous and its action
+        // button can escape the table viewport. Commit before the redraw. This
+        // mirrors leaving a spreadsheet cell and preserves the edited text.
+        if let editor = tableCellEditor, editor.cellID.tableAnchor == anchor {
+            commitTableCell(editor.currentText, markdown: editor.currentMarkdown,
+                            navigation: .finish,
+                            expectedID: editor.cellID)
+            textView?.window?.makeFirstResponder(nil)
+        }
+
+        invalidateTable(anchor: anchor)
+        syncTableScrollers()
+    }
+
+    private func invalidateTable(anchor: Int) {
+        guard let tv = textView, let rect = layoutManager?.tableRects[anchor] else { return }
+        let origin = tv.textContainerOrigin
+        tv.setNeedsDisplay(rect.offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -2, dy: -2))
+    }
+
+    private func cancelTableCellEditing(expectedID: TableCellID) {
+        guard tableCellEditor?.cellID == expectedID else { return }
+        pendingTableActivation?.cancel()
+        pendingTableActivation = nil
+        pendingTableCellID = nil
+        tableCellEditor?.finishWithoutCallback()
+        tableCellEditor = nil
+        textView?.window?.makeFirstResponder(textView)
+    }
+
+    private func commitTableCell(_ text: String, markdown: String,
+                                 navigation: TableCellNavigation,
+                                 expectedID id: TableCellID) {
+        guard let tv = textView,
+              tableCellEditor?.cellID == id,
+              let table = parsed.tables.first(where: { $0.anchor == id.tableAnchor }),
+              var model = EditableMarkdownTable(table: table, source: tv.string)
+        else { return }
+
+        tableCellEditor?.finishWithoutCallback()
+        tableCellEditor = nil
+
+        let needsNewRow = (navigation == .next
+            && id.row == model.rowCount - 1 && id.column == model.columnCount - 1)
+            || (navigation == .down && id.row == model.rowCount - 1)
+        var nextID: TableCellID?
+
+        if needsNewRow {
+            if model.rawText(row: id.row, column: id.column) != markdown {
+                model.replaceMarkdown(markdown, row: id.row, column: id.column)
+            }
+            model.insertRow(at: model.rowCount)
+            replaceTable(table, with: model.markdownSource())
+            let column = navigation == .next ? 0 : id.column
+            nextID = TableCellID(tableAnchor: id.tableAnchor,
+                                 row: model.rowCount - 1, column: column)
+        } else {
+            replaceCellIfNeeded(text, markdown: markdown, id: id,
+                                table: table, model: model)
+            switch navigation {
+            case .finish: nextID = nil
+            case .next:
+                let flat = id.row * model.columnCount + id.column + 1
+                nextID = TableCellID(tableAnchor: id.tableAnchor,
+                                     row: flat / model.columnCount,
+                                     column: flat % model.columnCount)
+            case .previous:
+                let flat = max(0, id.row * model.columnCount + id.column - 1)
+                nextID = TableCellID(tableAnchor: id.tableAnchor,
+                                     row: flat / model.columnCount,
+                                     column: flat % model.columnCount)
+            case .down:
+                nextID = TableCellID(tableAnchor: id.tableAnchor,
+                                     row: min(model.rowCount - 1, id.row + 1),
+                                     column: id.column)
+            }
+        }
+
+        if let nextID {
+            // Avoid exposing a backing-source caret during the short restyle /
+            // geometry pass before the next native field becomes available.
+            tv.window?.makeFirstResponder(nil)
+            scheduleTableActivation(nextID)
+        }
+        else { tv.window?.makeFirstResponder(tv) }
+    }
+
+    private func replaceCellIfNeeded(_ visibleText: String, markdown: String,
+                                     id: TableCellID,
+                                     table: TableInfo, model: EditableMarkdownTable) {
+        let original = model.rawText(row: id.row, column: id.column) ?? ""
+        let replacement = EditableMarkdownTable.visibleText(fromMarkdown: markdown) == visibleText
+            ? markdown
+            : EditableMarkdownTable.updating(markdown: markdown,
+                                              toVisibleText: visibleText)
+        guard original != replacement, table.rows.indices.contains(id.row),
+              let cell = table.rows[id.row].cells.first(where: {
+                  $0.column == id.column
+              }) else { return }
+        replaceSource(in: cell.range, with: replacement)
+    }
+
+    private func applyTableAction(_ action: TableEditAction, text: String,
+                                  markdown: String, id: TableCellID) {
+        guard let table = parsed.tables.first(where: { $0.anchor == id.tableAnchor }),
+              var model = EditableMarkdownTable(table: table, source: textView?.string ?? "")
+        else { return }
+        tableCellEditor?.finishWithoutCallback()
+        tableCellEditor = nil
+
+        let replacement = EditableMarkdownTable.visibleText(fromMarkdown: markdown) == text
+            ? markdown
+            : EditableMarkdownTable.updating(markdown: markdown, toVisibleText: text)
+        if model.rawText(row: id.row, column: id.column) != replacement {
+            model.replaceMarkdown(replacement, row: id.row, column: id.column)
+        }
+
+        var target = id
+        switch action {
+        case .insertRowAbove:
+            let row = max(1, id.row)
+            model.insertRow(at: row)
+            target.row = row
+        case .insertRowBelow:
+            let row = min(model.rowCount, id.row + 1)
+            model.insertRow(at: row)
+            target.row = row
+        case .deleteRow:
+            model.removeRow(at: id.row)
+            target.row = min(max(1, id.row), model.rowCount - 1)
+        case .insertColumnLeft:
+            model.insertColumn(at: id.column)
+        case .insertColumnRight:
+            model.insertColumn(at: id.column + 1)
+            target.column += 1
+        case .deleteColumn:
+            model.removeColumn(at: id.column)
+            target.column = min(id.column, model.columnCount - 1)
+        case .alignLeft: model.setAlignment(.left, column: id.column)
+        case .alignCenter: model.setAlignment(.center, column: id.column)
+        case .alignRight: model.setAlignment(.right, column: id.column)
+        case .deleteTable:
+            replaceTable(table, with: "")
+            textView?.window?.makeFirstResponder(textView)
+            return
+        }
+
+        replaceTable(table, with: model.markdownSource())
+        textView?.window?.makeFirstResponder(nil)
+        scheduleTableActivation(target)
+    }
+
+    private func replaceTable(_ table: TableInfo, with source: String) {
+        replaceSource(in: table.range, with: source)
+    }
+
+    private func replaceSource(in range: NSRange, with replacement: String) {
+        guard let tv = textView, let storage = tv.textStorage,
+              tv.shouldChangeText(in: range, replacementString: replacement) else { return }
+        storage.replaceCharacters(in: range, with: replacement)
+        tv.didChangeText()
+        if tv.delegate == nil { scheduleRestyle() }
+    }
+
+    private func scheduleTableActivation(_ id: TableCellID) {
+        pendingTableActivation?.cancel()
+        pendingTableCellID = id
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, let tv = self.textView else { return }
+            tv.needsDisplay = true
+            tv.displayIfNeeded()
+            if self.layoutManager?.revealTableCell(id) == true {
+                self.invalidateTable(anchor: id.tableAnchor)
+                tv.displayIfNeeded()
+            }
+            self.activatePendingTableCellIfPossible()
+        }
+        pendingTableActivation = work
+        DispatchQueue.main.async(execute: work)
+    }
+
+    private func activatePendingTableCellIfPossible() {
+        guard tableCellEditor == nil,
+              let id = pendingTableCellID,
+              let geometry = layoutManager?.geometry(for: id) else { return }
+        pendingTableCellID = nil
+        pendingTableActivation = nil
+        installTableCellEditor(geometry, selectAll: true)
     }
 
     private func mergeStyleWindows(_ ranges: [NSRange]) -> [NSRange] {
@@ -602,16 +1018,56 @@ public final class EditorController: ObservableObject {
     // All caret math uses NSString/UTF-16 lengths to match NSRange semantics
     // (String.count is Characters and misplaces the caret around emoji).
 
-    public func toggleBold() { wrapSelection("**", "**") }
-    public func toggleItalic() { wrapSelection("*", "*") }
-    public func toggleStrikethrough() { wrapSelection("~~", "~~") }
-    public func toggleInlineCode() { wrapSelection("`", "`") }
-    public func toggleQuote() { prefixLine("> ") }
-    public func toggleBulletList() { prefixLine("- ") }
+    public func toggleBold() {
+        if let tableCellEditor {
+            tableCellEditor.toggleInlineFormat(.bold)
+            return
+        }
+        guard !isTableInteractionActive else { return }
+        wrapSelection("**", "**")
+    }
+
+    public func toggleItalic() {
+        if let tableCellEditor {
+            tableCellEditor.toggleInlineFormat(.italic)
+            return
+        }
+        guard !isTableInteractionActive else { return }
+        wrapSelection("*", "*")
+    }
+
+    public func toggleStrikethrough() {
+        if let tableCellEditor {
+            tableCellEditor.toggleInlineFormat(.strikethrough)
+            return
+        }
+        guard !isTableInteractionActive else { return }
+        wrapSelection("~~", "~~")
+    }
+
+    public func toggleInlineCode() {
+        if let tableCellEditor {
+            tableCellEditor.toggleInlineFormat(.code)
+            return
+        }
+        guard !isTableInteractionActive else { return }
+        wrapSelection("`", "`")
+    }
+
+    public func toggleQuote() {
+        guard !isTableInteractionActive else { return }
+        prefixLine("> ")
+    }
+
+    public func toggleBulletList() {
+        guard !isTableInteractionActive else { return }
+        prefixLine("- ")
+    }
 
     /// Set the line's heading level; applying the current level toggles back
     /// to body text, and a different level replaces the existing one.
     public func makeHeading(_ level: Int) {
+        guard !isTableInteractionActive else { return }
         guard let tv = textView, let storage = tv.textStorage else { return }
         let sel = tv.selectedRange()
         let ns = storage.string as NSString
@@ -650,6 +1106,12 @@ public final class EditorController: ObservableObject {
     }
 
     public func insertLink() {
+        if let tableCellEditor {
+            toolbar.hide()
+            tableCellEditor.editLink(using: linkPopover)
+            return
+        }
+        guard !isTableInteractionActive else { return }
         guard let tv = textView, let storage = tv.textStorage, tv.window != nil else { return }
         let selection = tv.selectedRange()
         let existing = link(at: selection)

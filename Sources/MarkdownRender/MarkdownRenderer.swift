@@ -11,12 +11,12 @@ public struct MarkdownRenderer {
     public var baseURL: URL?
     public weak var imageLoader: ImageLoader?
     public var isDark: Bool
-    /// Table whose raw source is shown for editing (caret inside it) instead
-    /// of the drawn grid, identified by its absolute anchor position.
-    public var revealTableAnchor: Int?
     /// When rendering a slice of the document, the slice's absolute start —
     /// lets position-carrying attributes (tables) stay in document coordinates.
     public var originOffset: Int = 0
+    /// Extra height reserved beneath the final visible table row for an editor
+    /// scroller. Quick Look/snapshots keep the default zero value.
+    public var tableScrollerGutter: CGFloat = 0
     /// List items whose subtrees are hidden (absolute anchor positions).
     public var collapsedAnchors: Set<Int> = []
 
@@ -172,8 +172,11 @@ public struct MarkdownRenderer {
             p.paragraphSpacing = theme.baseSize * 0.15
             text.addAttribute(.paragraphStyle, value: p, range: r)
 
-        case .tableRow:
-            text.addAttributes([.font: theme.codeFont, .foregroundColor: theme.secondaryColor], range: r)
+        case .tableRow(let isHeader):
+            text.addAttributes([
+                .font: isHeader ? theme.tableHeaderFont : theme.tableFont,
+                .foregroundColor: theme.textColor,
+            ], range: r)
 
         case .thematicBreak:
             let p = NSMutableParagraphStyle()
@@ -276,20 +279,6 @@ public struct MarkdownRenderer {
         let r = NSIntersectionRange(table.range, full)
         guard r.length > 0 else { return }
 
-        // Caret inside this table → reveal the raw source for editing (the
-        // transparent-text grid would otherwise take invisible keystrokes).
-        if originOffset + table.anchor == revealTableAnchor {
-            let p = NSMutableParagraphStyle()
-            p.lineHeightMultiple = 1.2
-            text.addAttributes([
-                .font: theme.codeFont,
-                .foregroundColor: theme.codeColor,
-                .backgroundColor: theme.codeBackground,
-                .paragraphStyle: p,
-            ], range: r)
-            return // no transparency, no anchor → no grid drawn
-        }
-
         // Make the raw source transparent (keeps line fragments — and thus their
         // reserved height — alive, unlike null glyphs) and give each row `rh`.
         let rh = theme.tableRowHeight
@@ -305,6 +294,23 @@ public struct MarkdownRenderer {
             collapsed.minimumLineHeight = 0.01
             collapsed.maximumLineHeight = 0.01
             text.addAttribute(.paragraphStyle, value: collapsed, range: sep)
+        }
+
+        if tableScrollerGutter > 0,
+           let lastCell = table.rows.last?.cells.first,
+           lastCell.range.location < text.length {
+            let source = text.string as NSString
+            let lastLine = source.lineRange(
+                for: NSRange(location: lastCell.range.location, length: 0)
+            )
+            let visibleLastLine = NSIntersectionRange(lastLine, r)
+            if visibleLastLine.length > 0 {
+                let withScroller = NSMutableParagraphStyle()
+                withScroller.minimumLineHeight = rh + tableScrollerGutter
+                withScroller.maximumLineHeight = rh + tableScrollerGutter
+                text.addAttribute(.paragraphStyle, value: withScroller,
+                                  range: visibleLastLine)
+            }
         }
 
         if table.anchor < text.length {

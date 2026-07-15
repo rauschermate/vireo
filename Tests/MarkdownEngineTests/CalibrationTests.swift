@@ -91,6 +91,28 @@ extension ParserTests {
         XCTAssertEqual(t.rows[0].cells.map { (src as NSString).substring(with: $0.range) }, ["A", "B"])
         XCTAssertEqual(t.rows[1].cells.map { (src as NSString).substring(with: $0.range) }, ["1", "2"])
     }
+
+    func testTableCellsCarryInlineStylesAndHiddenMarkers() {
+        let src = "| **Name** | [Site](https://example.com) |\n|---|---|\n| Ada | Web |"
+        let parsed = MarkdownParser().parse(src)
+        let bold = (src as NSString).range(of: "Name")
+        let link = (src as NSString).range(of: "Site")
+        XCTAssertTrue(parsed.inlineRuns.contains { $0.bold && $0.range == bold })
+        XCTAssertTrue(parsed.inlineRuns.contains { $0.link == "https://example.com" && $0.range == link })
+        XCTAssertTrue(parsed.markerRanges.contains { $0.location == bold.location - 2 })
+        XCTAssertTrue(parsed.markerRanges.contains { $0.location == link.location - 1 })
+    }
+
+    func testEmptyTableCellsDoNotOwnStructuralPipes() {
+        let src = "| A | B |\n|---|---|\n|  |  |"
+        let table = MarkdownParser().parse(src).tables[0]
+        let cells = table.rows[1].cells
+
+        XCTAssertEqual(cells.count, 2)
+        XCTAssertEqual(cells.map(\.range.length), [0, 0])
+        XCTAssertEqual(cells.map { (src as NSString).substring(with: $0.range) },
+                       ["", ""])
+    }
 }
 
 extension ParserTests {

@@ -1,6 +1,52 @@
 import AppKit
 import MarkdownEngine
 
+public struct TableCellID: Hashable, Sendable {
+    public var tableAnchor: Int
+    public var row: Int
+    public var column: Int
+
+    public init(tableAnchor: Int, row: Int, column: Int) {
+        self.tableAnchor = tableAnchor
+        self.row = row
+        self.column = column
+    }
+}
+
+public struct TableCellGeometry: Sendable {
+    public var id: TableCellID
+    public var rect: NSRect
+    public var isHeader: Bool
+    public var alignment: TableAlignment
+
+    public init(id: TableCellID, rect: NSRect, isHeader: Bool,
+                alignment: TableAlignment) {
+        self.id = id
+        self.rect = rect
+        self.isHeader = isHeader
+        self.alignment = alignment
+    }
+}
+
+public struct TableScrollGeometry: Sendable {
+    public var tableAnchor: Int
+    /// The visible table window, in text-container coordinates.
+    public var viewportRect: NSRect
+    public var contentWidth: CGFloat
+    public var offset: CGFloat
+
+    public var maxOffset: CGFloat { max(0, contentWidth - viewportRect.width) }
+    public var isOverflowing: Bool { maxOffset > 0.5 }
+
+    public init(tableAnchor: Int, viewportRect: NSRect,
+                contentWidth: CGFloat, offset: CGFloat) {
+        self.tableAnchor = tableAnchor
+        self.viewportRect = viewportRect
+        self.contentWidth = contentWidth
+        self.offset = offset
+    }
+}
+
 /// TextKit-1 layout manager that realises the hidden-syntax look:
 ///  • syntax-marker glyphs (`.vireoMarker`) are turned into null glyphs — present
 ///    in the backing store, zero-width and invisible on screen;
@@ -23,10 +69,93 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     public var selectedImageAnchor: Int?
 
     // Table drawing config (set on each restyle).
-    public var tables: [TableInfo] = []
+    public var tables: [TableInfo] = [] {
+        didSet {
+            let anchors = Set(tables.map(\.anchor))
+            tableHorizontalOffsets = tableHorizontalOffsets.filter { anchors.contains($0.key) }
+        }
+    }
     public var tableRowHeight: CGFloat = 40
+    public var tableScrollerGutter: CGFloat = 0
     public var tableFont: NSFont = .systemFont(ofSize: 15)
     public var tableHeaderFont: NSFont = .systemFont(ofSize: 15, weight: .semibold)
+    /// Editor surfaces enable this; static snapshots and Quick Look retain the
+    /// compact fit-to-column rendering used before rich table interaction.
+    public var tableHorizontalScrollingEnabled = false
+    /// Cell frames from the current draw pass, in text-container coordinates.
+    /// Keeping these independent of `drawGlyphs(... at:)` is essential because
+    /// AppKit can translate that origin for partial/scrolled drawing passes.
+    public private(set) var tableCellGeometries: [TableCellID: TableCellGeometry] = [:]
+    /// Table bounds in text-container coordinates, keyed by source anchor.
+    public private(set) var tableRects: [Int: NSRect] = [:]
+    public private(set) var tableScrollGeometries: [Int: TableScrollGeometry] = [:]
+    private var tableHorizontalOffsets: [Int: CGFloat] = [:]
+
+    public func beginTableGeometryPass() {
+        tableCellGeometries.removeAll(keepingCapacity: true)
+        tableRects.removeAll(keepingCapacity: true)
+        tableScrollGeometries.removeAll(keepingCapacity: true)
+    }
+
+    public func tableCell(at point: NSPoint) -> TableCellGeometry? {
+        tableCellGeometries.values.first { $0.rect.contains(point) }
+    }
+
+    public func geometry(for id: TableCellID) -> TableCellGeometry? {
+        tableCellGeometries[id]
+    }
+
+    public func tableScrollGeometry(for anchor: Int) -> TableScrollGeometry? {
+        tableScrollGeometries[anchor]
+    }
+
+    public func overflowingTableAnchor(at point: NSPoint) -> Int? {
+        tableScrollGeometries.values.first {
+            $0.isOverflowing && $0.viewportRect.contains(point)
+        }?.tableAnchor
+    }
+
+    /// Positive offsets reveal content farther to the right. Cell hit frames
+    /// move immediately so interaction remains correct before the redraw lands.
+    @discardableResult
+    public func setTableHorizontalOffset(_ proposed: CGFloat, for anchor: Int) -> Bool {
+        guard var scroll = tableScrollGeometries[anchor], scroll.isOverflowing else {
+            return false
+        }
+        let next = min(max(0, proposed), scroll.maxOffset)
+        guard abs(next - scroll.offset) > 0.25 else { return false }
+        let shift = scroll.offset - next
+        scroll.offset = next
+        tableScrollGeometries[anchor] = scroll
+        tableHorizontalOffsets[anchor] = next
+        let ids = tableCellGeometries.keys.filter { $0.tableAnchor == anchor }
+        for id in ids {
+            guard var geometry = tableCellGeometries[id] else { continue }
+            geometry.rect = geometry.rect.offsetBy(dx: shift, dy: 0)
+            tableCellGeometries[id] = geometry
+        }
+        return true
+    }
+
+    /// Bring a keyboard-navigated cell fully into the table viewport whenever
+    /// its width allows it; oversized cells align to their leading edge.
+    @discardableResult
+    public func revealTableCell(_ id: TableCellID, padding: CGFloat = 8) -> Bool {
+        guard let cell = tableCellGeometries[id],
+              let scroll = tableScrollGeometries[id.tableAnchor],
+              scroll.isOverflowing else { return false }
+        let visibleMin = scroll.viewportRect.minX + padding
+        let visibleMax = scroll.viewportRect.maxX - padding
+        var proposed = scroll.offset
+        if cell.rect.width >= visibleMax - visibleMin {
+            proposed += cell.rect.minX - visibleMin
+        } else if cell.rect.minX < visibleMin {
+            proposed -= visibleMin - cell.rect.minX
+        } else if cell.rect.maxX > visibleMax {
+            proposed += cell.rect.maxX - visibleMax
+        }
+        return setTableHorizontalOffset(proposed, for: id.tableAnchor)
+    }
 
     // List/heading collapse and hover state (set on each restyle / mouse move).
     public var listMarkers: [ListMarker] = []
@@ -406,62 +535,203 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         }
     }
 
+    /// Build the attributed text painted inside a rich table cell. Markdown
+    /// delimiters and punctuation escapes are source plumbing, while the
+    /// attributes they protect (code, emphasis, links) remain visible.
+    func tableDisplayContent(for cell: TableCell, header: Bool,
+                             storage: NSTextStorage) -> NSAttributedString {
+        let sourceRange = NSIntersectionRange(
+            cell.range, NSRange(location: 0, length: storage.length)
+        )
+        let content = NSMutableAttributedString(
+            attributedString: sourceRange.length > 0
+                ? storage.attributedSubstring(from: sourceRange)
+                : NSAttributedString(string: "")
+        )
+
+        var hidden: [NSRange] = []
+        if content.length > 0 {
+            content.enumerateAttribute(.vireoMarker,
+                                       in: NSRange(location: 0, length: content.length)) {
+                value, range, _ in
+                if value != nil { hidden.append(range) }
+            }
+            for range in hidden.reversed() { content.deleteCharacters(in: range) }
+        }
+
+        // swift-markdown's source range for inline code at a GFM cell boundary
+        // can stop immediately before the closing backtick run. The opening
+        // delimiter is still tagged above, while the closing run is left just
+        // outside the fixed-pitch/background span. Remove that source-only run
+        // without touching literal backticks inside code.
+        let markedUp = content.string as NSString
+        var closingCodeDelimiters: [NSRange] = []
+        var delimiterIndex = 0
+        while delimiterIndex < markedUp.length {
+            guard markedUp.character(at: delimiterIndex) == 0x60 else {
+                delimiterIndex += 1
+                continue
+            }
+            var delimiterEnd = delimiterIndex + 1
+            while delimiterEnd < markedUp.length,
+                  markedUp.character(at: delimiterEnd) == 0x60 {
+                delimiterEnd += 1
+            }
+            let previousIsCode = delimiterIndex > 0
+                && content.attribute(.backgroundColor, at: delimiterIndex - 1,
+                                     effectiveRange: nil) != nil
+            let delimiterIsCode = content.attribute(.backgroundColor,
+                                                    at: delimiterIndex,
+                                                    effectiveRange: nil) != nil
+            if previousIsCode && !delimiterIsCode {
+                closingCodeDelimiters.append(
+                    NSRange(location: delimiterIndex,
+                            length: delimiterEnd - delimiterIndex)
+                )
+            }
+            delimiterIndex = delimiterEnd
+        }
+        for range in closingCodeDelimiters.reversed() {
+            content.deleteCharacters(in: range)
+        }
+
+        // CommonMark escapes punctuation with a source-only backslash. This
+        // matters most for `\|`, which keeps a literal pipe inside a GFM cell,
+        // including inside inline code spans.
+        let escapable = Set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~".utf16)
+        let visible = content.string as NSString
+        var escapeRanges: [NSRange] = []
+        var index = 0
+        while index + 1 < visible.length {
+            if visible.character(at: index) == 0x5C,
+               escapable.contains(visible.character(at: index + 1)) {
+                escapeRanges.append(NSRange(location: index, length: 1))
+                index += 2
+            } else {
+                index += 1
+            }
+        }
+        for range in escapeRanges.reversed() { content.deleteCharacters(in: range) }
+
+        let full = NSRange(location: 0, length: content.length)
+        guard full.length > 0 else { return content }
+        content.addAttribute(.foregroundColor, value: NSColor.labelColor, range: full)
+        content.enumerateAttribute(.vireoLink, in: full) { value, range, _ in
+            if value != nil {
+                content.addAttribute(.foregroundColor, value: NSColor.linkColor,
+                                     range: range)
+            }
+        }
+        if content.attribute(.font, at: 0, effectiveRange: nil) == nil {
+            content.addAttribute(.font, value: header ? tableHeaderFont : tableFont,
+                                 range: full)
+        }
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        switch cell.alignment {
+        case .center: paragraph.alignment = .center
+        case .right: paragraph.alignment = .right
+        default: paragraph.alignment = .left
+        }
+        content.addAttribute(.paragraphStyle, value: paragraph, range: full)
+        return content
+    }
+
     private func drawTable(_ info: TableInfo, atCharIndex charIndex: Int, origin: NSPoint, storage: NSTextStorage) {
         guard charIndex < numberOfGlyphs else { return }
         let glyph = glyphIndexForCharacter(at: charIndex)
         guard glyph < numberOfGlyphs else { return }
         let lineRect = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
-        let src = storage.string as NSString
-        let top = origin.y + lineRect.minY
-        let left = origin.x + lineRect.minX
+        // Cache all interaction geometry in stable text-container coordinates;
+        // add the transient drawing origin only when painting pixels.
+        let top = lineRect.minY
+        let left = lineRect.minX
         let pad: CGFloat = 10
         let rh = tableRowHeight
         let cols = info.columnCount
         guard cols > 0 else { return }
 
-        func cellText(_ cell: TableCell) -> String {
-            let r = NSIntersectionRange(cell.range, NSRange(location: 0, length: src.length))
-            return r.length > 0 ? src.substring(with: r) : ""
-        }
-        func attrs(header: Bool) -> [NSAttributedString.Key: Any] {
-            [.font: header ? tableHeaderFont : tableFont, .foregroundColor: NSColor.labelColor]
-        }
-
-        // Column widths from the widest cell per column.
+        // Measure what users see, not hidden link destinations/delimiters.
+        var cellContents: [TableCellID: NSAttributedString] = [:]
         var widths = [CGFloat](repeating: 0, count: cols)
-        for row in info.rows {
+        let maxColumnWidth = max(280, min(480, lineRect.width * 0.8))
+        for (rowIndex, row) in info.rows.enumerated() {
             for cell in row.cells where cell.column < cols {
-                let w = (cellText(cell) as NSString).size(withAttributes: attrs(header: row.isHeader)).width
-                widths[cell.column] = max(widths[cell.column], w)
+                let id = TableCellID(tableAnchor: info.anchor, row: rowIndex,
+                                     column: cell.column)
+                let content = tableDisplayContent(for: cell, header: row.isHeader,
+                                                  storage: storage)
+                cellContents[id] = content
+                let width = min(maxColumnWidth, ceil(content.size().width) + pad * 2)
+                widths[cell.column] = max(widths[cell.column], width)
             }
         }
-        let colW = widths.map { $0 + pad * 2 }
+        var colW = widths.map { max(72, $0) }
+        let available = max(72, lineRect.width)
+        let desired = colW.reduce(0, +)
+        if desired < available {
+            let extra = (available - desired) / CGFloat(cols)
+            colW = colW.map { $0 + extra }
+        } else if desired > available, !tableHorizontalScrollingEnabled {
+            let minimumTotal = CGFloat(cols) * 72
+            if minimumTotal < available {
+                let scale = (available - minimumTotal) / max(1, desired - minimumTotal)
+                colW = colW.map { 72 + ($0 - 72) * scale }
+            }
+        }
         let totalW = colW.reduce(0, +)
         let rowCount = info.rows.count
-        let tableH = CGFloat(rowCount) * rh
+        let rowAreaHeight = CGFloat(rowCount) * rh
+        let tableH = rowAreaHeight
+            + (tableHorizontalScrollingEnabled ? tableScrollerGutter : 0)
+        let maxOffset = tableHorizontalScrollingEnabled ? max(0, totalW - available) : 0
+        let offset = min(max(0, tableHorizontalOffsets[info.anchor] ?? 0), maxOffset)
+        if maxOffset > 0.5 {
+            tableHorizontalOffsets[info.anchor] = offset
+        } else {
+            tableHorizontalOffsets[info.anchor] = nil
+        }
 
         var xs = [CGFloat]()
-        var acc = left
+        var acc = left - offset
         for w in colW { xs.append(acc); acc += w }
-        let right = left + totalW
+        let right = left - offset + totalW
+        let viewport = NSRect(x: left, y: top, width: available, height: tableH)
+        tableRects[info.anchor] = viewport
+        if tableHorizontalScrollingEnabled {
+            tableScrollGeometries[info.anchor] = TableScrollGeometry(
+                tableAnchor: info.anchor,
+                viewportRect: viewport,
+                contentWidth: totalW,
+                offset: offset
+            )
+        }
+
+        // Wide tables scroll inside the reading column; they must never paint
+        // over neighboring prose or the surrounding chrome.
+        NSGraphicsContext.saveGraphicsState()
+        let clip = viewport.offsetBy(dx: origin.x, dy: origin.y)
+        NSBezierPath(rect: clip).addClip()
+        defer { NSGraphicsContext.restoreGraphicsState() }
 
         // Header background.
         NSColor.secondaryLabelColor.withAlphaComponent(0.10)
             .setFill()
-        NSRect(x: left, y: top, width: totalW, height: rh).fill()
+        NSRect(x: origin.x + left - offset, y: origin.y + top,
+               width: totalW, height: rh).fill()
 
         // Grid lines.
         let grid = NSBezierPath()
         grid.lineWidth = 1
         for r in 0...rowCount {
-            let y = top + CGFloat(r) * rh
-            grid.move(to: NSPoint(x: left, y: y))
-            grid.line(to: NSPoint(x: right, y: y))
+            let y = origin.y + top + CGFloat(r) * rh
+            grid.move(to: NSPoint(x: origin.x + left - offset, y: y))
+            grid.line(to: NSPoint(x: origin.x + right, y: y))
         }
         for i in 0...cols {
-            let x = i < xs.count ? xs[i] : right
-            grid.move(to: NSPoint(x: x, y: top))
-            grid.line(to: NSPoint(x: x, y: top + tableH))
+            let x = origin.x + (i < xs.count ? xs[i] : right)
+            grid.move(to: NSPoint(x: x, y: origin.y + top))
+            grid.line(to: NSPoint(x: x, y: origin.y + top + rowAreaHeight))
         }
         NSColor.separatorColor.setStroke()
         grid.stroke()
@@ -470,19 +740,29 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         for (rIdx, row) in info.rows.enumerated() {
             let y = top + CGFloat(rIdx) * rh
             for cell in row.cells where cell.column < cols {
-                let s = cellText(cell) as NSString
-                let a = attrs(header: row.isHeader)
-                let size = s.size(withAttributes: a)
                 let cellX = xs[cell.column]
                 let cellWidth = colW[cell.column]
-                var tx = cellX + pad
-                switch cell.alignment {
-                case .center: tx = cellX + (cellWidth - size.width) / 2
-                case .right: tx = cellX + cellWidth - pad - size.width
-                default: break
-                }
-                let ty = y + (rh - size.height) / 2
-                s.draw(at: NSPoint(x: tx, y: ty), withAttributes: a)
+                let cellRect = NSRect(x: cellX, y: y, width: cellWidth, height: rh)
+                let id = TableCellID(tableAnchor: info.anchor, row: rIdx,
+                                     column: cell.column)
+                tableCellGeometries[id] = TableCellGeometry(
+                    id: id, rect: cellRect, isHeader: row.isHeader,
+                    alignment: cell.alignment
+                )
+
+                let content = cellContents[id] ?? NSAttributedString(string: "")
+                let measured = content.boundingRect(
+                    with: NSSize(width: max(1, cellRect.width - pad * 2), height: rh),
+                    options: [.usesLineFragmentOrigin]
+                )
+                let contentHeight = min(rh, max(1, ceil(measured.height)))
+                let drawRect = NSRect(x: origin.x + cellRect.minX + pad,
+                                      y: origin.y + cellRect.midY - contentHeight / 2,
+                                      width: max(1, cellRect.width - pad * 2),
+                                      height: contentHeight)
+                content.draw(with: drawRect,
+                             options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                             context: nil)
             }
         }
     }

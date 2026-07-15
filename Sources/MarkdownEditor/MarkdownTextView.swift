@@ -19,6 +19,11 @@ public final class MarkdownTextView: NSTextView {
         effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     }
 
+    public override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        controller?.tableGeometryDidChange()
+    }
+
     public override func mouseDown(with event: NSEvent) {
         // A rendered image behaves like a native selectable object: one click
         // gives it focus without exposing or placing the caret inside its
@@ -40,6 +45,19 @@ public final class MarkdownTextView: NSTextView {
         if event.clickCount == 1, let anchor = checkboxAnchor(at: event) {
             controller?.toggleTask(atAnchor: anchor)
             return
+        }
+        // Tables remain rendered during editing. A click enters the drawn cell
+        // through one lightweight native overlay instead of exposing raw pipes.
+        if event.clickCount <= 2,
+           let layout = layoutManager as? MarkdownLayoutManager {
+            let point = convert(event.locationInWindow, from: nil)
+            let origin = textContainerOrigin
+            let containerPoint = NSPoint(x: point.x - origin.x,
+                                         y: point.y - origin.y)
+            if let cell = layout.tableCell(at: containerPoint) {
+                controller?.beginTableCellEditing(cell, selectAll: event.clickCount == 1)
+                return
+            }
         }
         // ⌘-click follows links (editor convention); a plain click must still
         // place the caret so link text stays editable.
@@ -138,6 +156,27 @@ public final class MarkdownTextView: NSTextView {
         super.keyDown(with: event)
     }
 
+    public override func scrollWheel(with event: NSEvent) {
+        let shifted = event.modifierFlags.contains(.shift)
+        let horizontal = event.scrollingDeltaX
+        let raw = abs(horizontal) > 0.1 ? horizontal
+            : (shifted ? event.scrollingDeltaY : 0)
+        let hasHorizontalIntent = abs(horizontal) >= abs(event.scrollingDeltaY) || shifted
+        if hasHorizontalIntent, abs(raw) > 0.1 {
+            var delta = event.isDirectionInvertedFromDevice ? raw : -raw
+            if !event.hasPreciseScrollingDeltas { delta *= 32 }
+            let point = convert(event.locationInWindow, from: nil)
+            let origin = textContainerOrigin
+            let containerPoint = NSPoint(x: point.x - origin.x,
+                                         y: point.y - origin.y)
+            if controller?.scrollTableHorizontally(atContainerPoint: containerPoint,
+                                                   delta: delta) == true {
+                return
+            }
+        }
+        super.scrollWheel(with: event)
+    }
+
     public override func didChangeText() {
         selectImage(atAnchor: nil)
         super.didChangeText()
@@ -194,7 +233,8 @@ public final class MarkdownTextView: NSTextView {
     private var lastDrawnCaretRect: NSRect?
 
     public override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
-        guard selectedImageAnchor == nil else { return }
+        guard selectedImageAnchor == nil,
+              controller?.isTableInteractionActive != true else { return }
         let corrected = insertionRect(for: rect)
         lastDrawnCaretRect = corrected
         super.drawInsertionPoint(in: corrected, color: color, turnedOn: flag)
@@ -479,29 +519,55 @@ public final class MarkdownTextView: NSTextView {
     }
 
     public override func moveRight(_ sender: Any?) {
-        if !moveAcrossCollapsedMarker(.downstream) { move(.downstream) { super.moveRight(sender) } }
+        if !moveAcrossCollapsedMarker(.downstream) {
+            move(.downstream) { super.moveRight(sender) }
+        }
+        activateTableCellAtCaret()
     }
+
     public override func moveForward(_ sender: Any?) {
-        if !moveAcrossCollapsedMarker(.downstream) { move(.downstream) { super.moveForward(sender) } }
+        if !moveAcrossCollapsedMarker(.downstream) {
+            move(.downstream) { super.moveForward(sender) }
+        }
+        activateTableCellAtCaret()
     }
+
     public override func moveLeft(_ sender: Any?) {
-        if !moveAcrossCollapsedMarker(.upstream) { move(.upstream) { super.moveLeft(sender) } }
+        if !moveAcrossCollapsedMarker(.upstream) {
+            move(.upstream) { super.moveLeft(sender) }
+        }
+        activateTableCellAtCaret()
     }
+
     public override func moveBackward(_ sender: Any?) {
-        if !moveAcrossCollapsedMarker(.upstream) { move(.upstream) { super.moveBackward(sender) } }
+        if !moveAcrossCollapsedMarker(.upstream) {
+            move(.upstream) { super.moveBackward(sender) }
+        }
+        activateTableCellAtCaret()
     }
-    public override func moveWordRight(_ sender: Any?) { move(.downstream) { super.moveWordRight(sender) } }
-    public override func moveWordForward(_ sender: Any?) { move(.downstream) { super.moveWordForward(sender) } }
-    public override func moveWordLeft(_ sender: Any?) { move(.upstream) { super.moveWordLeft(sender) } }
-    public override func moveWordBackward(_ sender: Any?) { move(.upstream) { super.moveWordBackward(sender) } }
-    public override func moveToEndOfLine(_ sender: Any?) { move(.upstream) { super.moveToEndOfLine(sender) } }
-    public override func moveToRightEndOfLine(_ sender: Any?) { move(.upstream) { super.moveToRightEndOfLine(sender) } }
-    public override func moveToBeginningOfLine(_ sender: Any?) { move(.downstream) { super.moveToBeginningOfLine(sender) } }
-    public override func moveToLeftEndOfLine(_ sender: Any?) { move(.downstream) { super.moveToLeftEndOfLine(sender) } }
-    public override func moveToEndOfParagraph(_ sender: Any?) { move(.upstream) { super.moveToEndOfParagraph(sender) } }
-    public override func moveToBeginningOfParagraph(_ sender: Any?) { move(.downstream) { super.moveToBeginningOfParagraph(sender) } }
-    public override func moveUp(_ sender: Any?) { move(.nearest) { super.moveUp(sender) } }
-    public override func moveDown(_ sender: Any?) { move(.nearest) { super.moveDown(sender) } }
+
+    private func moveAndActivate(_ affinity: MarkerAffinity, _ operation: () -> Void) {
+        move(affinity, operation)
+        activateTableCellAtCaret()
+    }
+
+    public override func moveWordRight(_ sender: Any?) { moveAndActivate(.downstream) { super.moveWordRight(sender) } }
+    public override func moveWordForward(_ sender: Any?) { moveAndActivate(.downstream) { super.moveWordForward(sender) } }
+    public override func moveWordLeft(_ sender: Any?) { moveAndActivate(.upstream) { super.moveWordLeft(sender) } }
+    public override func moveWordBackward(_ sender: Any?) { moveAndActivate(.upstream) { super.moveWordBackward(sender) } }
+    public override func moveToEndOfLine(_ sender: Any?) { moveAndActivate(.upstream) { super.moveToEndOfLine(sender) } }
+    public override func moveToRightEndOfLine(_ sender: Any?) { moveAndActivate(.upstream) { super.moveToRightEndOfLine(sender) } }
+    public override func moveToBeginningOfLine(_ sender: Any?) { moveAndActivate(.downstream) { super.moveToBeginningOfLine(sender) } }
+    public override func moveToLeftEndOfLine(_ sender: Any?) { moveAndActivate(.downstream) { super.moveToLeftEndOfLine(sender) } }
+    public override func moveToEndOfParagraph(_ sender: Any?) { moveAndActivate(.upstream) { super.moveToEndOfParagraph(sender) } }
+    public override func moveToBeginningOfParagraph(_ sender: Any?) { moveAndActivate(.downstream) { super.moveToBeginningOfParagraph(sender) } }
+    public override func moveUp(_ sender: Any?) { moveAndActivate(.nearest) { super.moveUp(sender) } }
+    public override func moveDown(_ sender: Any?) { moveAndActivate(.nearest) { super.moveDown(sender) } }
+
+    private func activateTableCellAtCaret() {
+        guard selectedRange().length == 0 else { return }
+        controller?.beginTableCellEditing(atSourceLocation: selectedRange().location)
+    }
 
     public override func moveRightAndModifySelection(_ sender: Any?) { move(.downstream) { super.moveRightAndModifySelection(sender) } }
     public override func moveForwardAndModifySelection(_ sender: Any?) { move(.downstream) { super.moveForwardAndModifySelection(sender) } }
@@ -521,6 +587,13 @@ public final class MarkdownTextView: NSTextView {
     public override func moveDownAndModifySelection(_ sender: Any?) { move(.nearest) { super.moveDownAndModifySelection(sender) } }
 
     public override func insertText(_ string: Any, replacementRange: NSRange) {
+        if replacementRange.location == NSNotFound, !hasMarkedText(),
+           controller?.beginTableCellEditing(atSourceLocation: selectedRange().location,
+                                             selectAll: selectedRange().length > 0) == true {
+            let plain = (string as? NSAttributedString)?.string ?? (string as? String) ?? ""
+            controller?.insertTextIntoActiveTableCell(plain)
+            return
+        }
         // A vertical arrow, service or accessibility action may have left the
         // insertion point inside a hidden marker. Canonicalize before editing.
         if replacementRange.location == NSNotFound, !hasMarkedText() {
@@ -659,6 +732,9 @@ public final class MarkdownTextView: NSTextView {
     // MARK: Enter — list continuation and hidden-marker hygiene
 
     public override func insertNewline(_ sender: Any?) {
+        if controller?.routeTableNavigation(
+            .down, fromSourceLocation: selectedRange().location
+        ) == true { return }
         // Step past hidden closing markers *first* — otherwise a list item
         // ending in bold/link would get the continuation inserted between the
         // text and its closing `**`, splitting the construct.
@@ -735,11 +811,17 @@ public final class MarkdownTextView: NSTextView {
     // MARK: Tab — list indent / outdent
 
     public override func insertTab(_ sender: Any?) {
+        if controller?.routeTableNavigation(
+            .next, fromSourceLocation: selectedRange().location
+        ) == true { return }
         if adjustListIndent(outdent: false) { return }
         super.insertTab(sender)
     }
 
     public override func insertBacktab(_ sender: Any?) {
+        if controller?.routeTableNavigation(
+            .previous, fromSourceLocation: selectedRange().location
+        ) == true { return }
         if adjustListIndent(outdent: true) { return }
         super.insertBacktab(sender)
     }

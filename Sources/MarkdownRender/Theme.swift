@@ -59,6 +59,9 @@ public struct Theme: Sendable {
     public var tableFont: NSFont { .systemFont(ofSize: baseSize * 0.95, weight: .regular) }
     public var tableHeaderFont: NSFont { .systemFont(ofSize: baseSize * 0.95, weight: .semibold) }
     public var tableRowHeight: CGFloat { ceil(baseSize * 1.35) + 16 }
+    /// Reserved below editor tables for the native horizontal scroller. Static
+    /// renderers leave this disabled and keep their previous compact spacing.
+    public var tableScrollerGutter: CGFloat { 16 }
     public var boldFont: NSFont { .systemFont(ofSize: baseSize, weight: .semibold) }
     public var italicFont: NSFont { Self.italic(of: bodyFont) }
     public var boldItalicFont: NSFont { Self.italic(of: boldFont) }
