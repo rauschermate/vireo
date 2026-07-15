@@ -233,7 +233,8 @@ public final class MarkdownTextView: NSTextView {
     private var lastDrawnCaretRect: NSRect?
 
     public override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
-        guard selectedImageAnchor == nil else { return }
+        guard selectedImageAnchor == nil,
+              controller?.isTableInteractionActive != true else { return }
         let corrected = insertionRect(for: rect)
         lastDrawnCaretRect = corrected
         super.drawInsertionPoint(in: corrected, color: color, turnedOn: flag)
@@ -731,6 +732,9 @@ public final class MarkdownTextView: NSTextView {
     // MARK: Enter — list continuation and hidden-marker hygiene
 
     public override func insertNewline(_ sender: Any?) {
+        if controller?.routeTableNavigation(
+            .down, fromSourceLocation: selectedRange().location
+        ) == true { return }
         // Step past hidden closing markers *first* — otherwise a list item
         // ending in bold/link would get the continuation inserted between the
         // text and its closing `**`, splitting the construct.
@@ -807,11 +811,17 @@ public final class MarkdownTextView: NSTextView {
     // MARK: Tab — list indent / outdent
 
     public override func insertTab(_ sender: Any?) {
+        if controller?.routeTableNavigation(
+            .next, fromSourceLocation: selectedRange().location
+        ) == true { return }
         if adjustListIndent(outdent: false) { return }
         super.insertTab(sender)
     }
 
     public override func insertBacktab(_ sender: Any?) {
+        if controller?.routeTableNavigation(
+            .previous, fromSourceLocation: selectedRange().location
+        ) == true { return }
         if adjustListIndent(outdent: true) { return }
         super.insertBacktab(sender)
     }

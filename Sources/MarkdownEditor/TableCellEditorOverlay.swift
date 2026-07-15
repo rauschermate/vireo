@@ -57,8 +57,6 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
         super.init(frame: geometry.rect.insetBy(dx: 1, dy: 0))
 
         wantsLayer = true
-        layer?.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(0.98).cgColor
-        layer?.borderColor = NSColor.controlAccentColor.cgColor
         layer?.borderWidth = 2
         layer?.cornerRadius = 4
 
@@ -91,6 +89,7 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
         menuButton.action = #selector(showActions(_:))
         menuButton.toolTip = "Table cell actions"
         addSubview(menuButton)
+        updateAppearanceColors()
     }
 
     required init?(coder: NSCoder) { nil }
@@ -105,6 +104,26 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
                                   width: buttonWidth, height: bounds.height)
     }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateAppearanceColors()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateAppearanceColors()
+    }
+
+    private func updateAppearanceColors() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NSColor.textBackgroundColor
+                .withAlphaComponent(0.98).cgColor
+            layer?.borderColor = NSColor.controlAccentColor.cgColor
+            field.textColor = NSColor.labelColor
+            menuButton.contentTintColor = NSColor.secondaryLabelColor
+        }
+    }
+
     func update(geometry: TableCellGeometry) {
         frame = geometry.rect.insetBy(dx: 1, dy: 0)
         needsLayout = true
@@ -115,6 +134,10 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
         // mouse-down. Moving the field editor synchronously can be undone by
         // that event, producing an immediate end-editing callback. Activate on
         // the next run-loop turn, after the text view has finished tracking.
+        requestEditorActivation(selectAll: selectAll, attempt: 0)
+    }
+
+    private func requestEditorActivation(selectAll: Bool, attempt: Int) {
         DispatchQueue.main.async { [weak self] in
             guard let self, let window, superview != nil, !isFinishing else { return }
             isActivatingEditor = true
@@ -129,6 +152,9 @@ final class TableCellEditorOverlay: NSView, NSTextFieldDelegate {
                 hasBegunEditing = false
             }
             isActivatingEditor = false
+            if !hasBegunEditing, attempt < 2 {
+                requestEditorActivation(selectAll: selectAll, attempt: attempt + 1)
+            }
         }
     }
 

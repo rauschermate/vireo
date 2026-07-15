@@ -345,6 +345,9 @@ public final class EditorController: ObservableObject {
     // MARK: Rich table editing
 
     var activeTableCellID: TableCellID? { tableCellEditor?.cellID }
+    var isTableInteractionActive: Bool {
+        tableCellEditor != nil || pendingTableCellID != nil
+    }
 
     /// Mount a native single-line editor over the drawn cell. The table itself
     /// remains rendered, so source pipes and the separator row never appear.
@@ -414,6 +417,21 @@ public final class EditorController: ObservableObject {
 
     func insertTextIntoActiveTableCell(_ text: String) {
         tableCellEditor?.insertText(text)
+    }
+
+    /// Keep Tab/Shift-Tab/Return inside the rendered table even if AppKit
+    /// briefly hands first-responder status back to the backing text view while
+    /// the next native field is being mounted.
+    @discardableResult
+    func routeTableNavigation(_ navigation: TableCellNavigation,
+                              fromSourceLocation location: Int) -> Bool {
+        if let editor = tableCellEditor {
+            commitTableCell(editor.currentText, navigation: navigation,
+                            expectedID: editor.cellID)
+            return true
+        }
+        if pendingTableCellID != nil { return true }
+        return beginTableCellEditing(atSourceLocation: location, selectAll: true)
     }
 
     private func distance(from location: Int, to range: NSRange) -> Int {
@@ -534,13 +552,27 @@ public final class EditorController: ObservableObject {
 
     private func setTableHorizontalOffset(_ offset: CGFloat, anchor: Int) {
         guard let layout = layoutManager,
-              layout.setTableHorizontalOffset(offset, for: anchor) else { return }
+              let geometry = layout.tableScrollGeometry(for: anchor) else { return }
+        let target = min(max(0, offset), geometry.maxOffset)
+        guard abs(target - geometry.offset) > 0.25 else { return }
+
+        // Record the new offset before committing: the synchronous restyle
+        // clears transient geometry, but preserves the table's offset for the
+        // next draw pass. Nothing paints until this event returns, so users
+        // only see the stable rendered grid at its new position.
+        guard layout.setTableHorizontalOffset(target, for: anchor) else { return }
+
+        // A half-visible native field is visually ambiguous and its action
+        // button can escape the table viewport. Commit before the redraw. This
+        // mirrors leaving a spreadsheet cell and preserves the edited text.
+        if let editor = tableCellEditor, editor.cellID.tableAnchor == anchor {
+            commitTableCell(editor.currentText, navigation: .finish,
+                            expectedID: editor.cellID)
+            textView?.window?.makeFirstResponder(nil)
+        }
+
         invalidateTable(anchor: anchor)
         syncTableScrollers()
-        if let editor = tableCellEditor, let tv = textView,
-           let geometry = layout.geometry(for: editor.cellID) {
-            editor.update(geometry: tableGeometryInView(geometry, textView: tv))
-        }
     }
 
     private func invalidateTable(anchor: Int) {
@@ -605,7 +637,12 @@ public final class EditorController: ObservableObject {
             }
         }
 
-        if let nextID { scheduleTableActivation(nextID) }
+        if let nextID {
+            // Avoid exposing a backing-source caret during the short restyle /
+            // geometry pass before the next native field becomes available.
+            tv.window?.makeFirstResponder(nil)
+            scheduleTableActivation(nextID)
+        }
         else { tv.window?.makeFirstResponder(tv) }
     }
 
@@ -664,6 +701,7 @@ public final class EditorController: ObservableObject {
         }
 
         replaceTable(table, with: model.markdownSource())
+        textView?.window?.makeFirstResponder(nil)
         scheduleTableActivation(target)
     }
 
