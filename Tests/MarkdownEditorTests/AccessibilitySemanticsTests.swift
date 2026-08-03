@@ -142,12 +142,15 @@ final class AccessibilitySemanticsTests: XCTestCase {
 
     func testHeadingDisclosureActivatesFromItsHoverLineAndLeadingMargin() throws {
         let harness = makeHarness()
+        XCTAssertTrue(harness.window.acceptsMouseMovedEvents,
+                      "the live window must deliver hover events to disclosure controls")
         let layout = try XCTUnwrap(harness.textView.layoutManager
             as? MarkdownLayoutManager)
         let heading = try XCTUnwrap(harness.controller.parsed.headings.first {
             $0.subtreeRange != nil
         })
         let hoverRect = try XCTUnwrap(layout.collapseHoverRects[heading.anchor])
+        let beforeHover = renderedPixels(of: harness.textView)
         let pointInView = NSPoint(x: hoverRect.minX + 2, y: hoverRect.midY)
         let pointInWindow = harness.textView.convert(pointInView, to: nil)
         let event = try XCTUnwrap(NSEvent.mouseEvent(
@@ -165,7 +168,14 @@ final class AccessibilitySemanticsTests: XCTestCase {
         harness.textView.mouseMoved(with: event)
 
         XCTAssertEqual(layout.hoveredAnchor, heading.anchor)
-        XCTAssertNotNil(layout.chevronRects[heading.anchor])
+        let chevron = try XCTUnwrap(layout.chevronRects[heading.anchor])
+        XCTAssertTrue(hoverRect.minY...hoverRect.maxY ~= chevron.midY,
+                      "heading chevron \(chevron) must be vertically centered in \(hoverRect)")
+        XCTAssertTrue(harness.textView.bounds.intersects(chevron),
+                      "heading chevron \(chevron) must intersect view bounds \(harness.textView.bounds)")
+        let afterHover = renderedPixels(of: harness.textView)
+        XCTAssertNotEqual(beforeHover, afterHover,
+                          "hovering a collapsible heading must visibly paint its disclosure")
     }
 
     private func makeHarness() -> (controller: EditorController,
@@ -199,6 +209,13 @@ final class AccessibilitySemanticsTests: XCTestCase {
         layout.drawGlyphs(forGlyphRange: glyphs,
                           at: textView.textContainerOrigin)
         canvas.unlockFocus()
+    }
+
+    private func renderedPixels(of textView: MarkdownTextView) -> Data {
+        let bitmap = textView.bitmapImageRepForCachingDisplay(in: textView.bounds)!
+        textView.cacheDisplay(in: textView.bounds, to: bitmap)
+        return Data(bytes: bitmap.bitmapData!,
+                    count: bitmap.bytesPerRow * bitmap.pixelsHigh)
     }
 
     private func customChildren(of textView: MarkdownTextView)

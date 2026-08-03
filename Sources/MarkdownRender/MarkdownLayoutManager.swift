@@ -751,7 +751,6 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     /// same interaction as list items, sized to the heading's own font.
     private func drawHeadingAdornments(anchor: Int, origin: NSPoint, storage: NSTextStorage) {
         let collapsed = collapsedAnchors.contains(anchor)
-        let hovered = hoveredAnchor == anchor
         chevronRects[anchor] = nil
         dotsRects[anchor] = nil
         collapseHoverRects[anchor] = nil
@@ -776,21 +775,37 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         // to find their vertical center.
         let center = NSPoint(x: textX - 17, y: baseline - font.capHeight / 2)
         chevronRects[anchor] = minimumHitRect(centeredAt: center)
-        guard collapsed || hovered else { return }
-        drawDisclosureChevron(at: center, collapsed: collapsed)
+        guard collapsed else { return }
 
         // `…` after the collapsed heading's text; click to expand.
-        if collapsed {
-            let used = lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
-            let dots = "…" as NSString
-            let attrs: [NSAttributedString.Key: Any] = [.font: font,
-                                                        .foregroundColor: NSColor.tertiaryLabelColor]
-            let size = dots.size(withAttributes: attrs)
-            let at = NSPoint(x: origin.x + used.maxX + 8, y: baseline - font.ascender)
-            dots.draw(at: at, withAttributes: attrs)
-            let visual = NSRect(x: at.x - 4, y: at.y,
-                                width: size.width + 12, height: size.height)
-            dotsRects[anchor] = minimumHitRect(containing: visual)
+        let used = lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
+        let dots = "…" as NSString
+        let attrs: [NSAttributedString.Key: Any] = [.font: font,
+                                                    .foregroundColor: NSColor.tertiaryLabelColor]
+        let size = dots.size(withAttributes: attrs)
+        let at = NSPoint(x: origin.x + used.maxX + 8, y: baseline - font.ascender)
+        dots.draw(at: at, withAttributes: attrs)
+        let visual = NSRect(x: at.x - 4, y: at.y,
+                            width: size.width + 12, height: size.height)
+        dotsRects[anchor] = minimumHitRect(containing: visual)
+    }
+
+    /// Paint heading disclosures after TextKit finishes drawing glyphs. A
+    /// heading icon lives to the left of its first glyph, so drawing it from
+    /// `drawGlyphs` can be clipped even though its hit target is valid. List
+    /// disclosures remain inside their marker runs and use the same renderer
+    /// directly from the glyph pass.
+    public func drawHeadingDisclosureOverlays(in dirtyRect: NSRect) {
+        for heading in headingMarks where heading.subtreeRange != nil {
+            let anchor = heading.anchor
+            let collapsed = collapsedAnchors.contains(anchor)
+            guard collapsed || hoveredAnchor == anchor,
+                  let rect = chevronRects[anchor],
+                  dirtyRect.intersects(rect) else { continue }
+            drawDisclosureChevron(
+                at: NSPoint(x: rect.midX, y: rect.midY),
+                collapsed: collapsed
+            )
         }
     }
 

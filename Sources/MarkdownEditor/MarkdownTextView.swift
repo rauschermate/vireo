@@ -24,7 +24,15 @@ public final class MarkdownTextView: NSTextView {
     }
 
     public override func draw(_ dirtyRect: NSRect) {
+        NSGraphicsContext.saveGraphicsState()
         super.draw(dirtyRect)
+        NSGraphicsContext.restoreGraphicsState()
+        // Heading disclosures sit in the leading margin, outside TextKit's
+        // glyph clip. Paint them at the view level so hover and collapsed
+        // states remain visible while still using the layout manager's shared
+        // list/heading disclosure renderer.
+        (layoutManager as? MarkdownLayoutManager)?
+            .drawHeadingDisclosureOverlays(in: dirtyRect)
         controller?.tableGeometryDidChange()
     }
 
@@ -382,6 +390,17 @@ public final class MarkdownTextView: NSTextView {
     }
 
     // MARK: List collapse — hover chevrons and click targets
+
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+
+        // NSTextView's window does not request mouse-moved events by default.
+        // Tracking areas alone are therefore insufficient in the live app:
+        // synthetic tests can call mouseMoved directly while an actual hover
+        // never reaches us. Disclosure affordances depend on continuous hover
+        // updates, so opt the containing editor window into those events.
+        window?.acceptsMouseMovedEvents = true
+    }
 
     public override func updateTrackingAreas() {
         super.updateTrackingAreas()
