@@ -277,6 +277,21 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
                     newProps[i] = .null
                     changed = true
                 }
+            } else if storage.attribute(.vireoSourceBlock, at: charIndex, effectiveRange: nil) != nil
+                        || storage.attribute(.vireoInlineHTML, at: charIndex, effectiveRange: nil) != nil {
+                // Keep one transparent glyph as geometry for the native
+                // replacement that drawGlyphs paints at this source position.
+                newProps[i] = props[i]
+            } else if storage.attribute(.vireoMetadata, at: charIndex, effectiveRange: nil) != nil {
+                // As with collapsed content, retain line endings so TextKit
+                // never sees one enormous logical line. Paragraph styles make
+                // all but the placeholder's first line effectively zero high.
+                if ns.character(at: charIndex) == 0x0A {
+                    newProps[i] = props[i]
+                } else {
+                    newProps[i] = .null
+                    changed = true
+                }
             } else if storage.attribute(.vireoMarker, at: charIndex, effectiveRange: nil) != nil {
                 newProps[i] = .null
                 changed = true
@@ -358,6 +373,102 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
                   !isCollapsedAway(range.location) else { return }
             drawTable(info, atCharIndex: range.location, origin: origin, storage: storage)
         }
+        storage.enumerateAttribute(.vireoSourceBlock, in: charRange) { value, range, _ in
+            guard let label = value as? String, !isCollapsedAway(range.location) else { return }
+            drawSourceBlock(label: label, atCharIndex: range.location, origin: origin)
+        }
+        storage.enumerateAttribute(.vireoInlineHTML, in: charRange) { value, range, _ in
+            guard let kind = value as? String, !isCollapsedAway(range.location) else { return }
+            drawInlineHTML(kind: kind, atCharIndex: range.location, origin: origin)
+        }
+    }
+
+    // MARK: Source-only placeholders
+
+    private func drawSourceBlock(label: String, atCharIndex charIndex: Int, origin: NSPoint) {
+        guard let storage = textStorage, charIndex < storage.length else { return }
+        let glyph = glyphIndexForCharacter(at: charIndex)
+        guard glyph < numberOfGlyphs else { return }
+        let line = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let location = location(forGlyphAt: glyph)
+        let font = NSFont.systemFont(ofSize: max(11, bulletFont.pointSize * 0.76), weight: .medium)
+        let iconName = label.contains("not rendered")
+            ? "chevron.left.forwardslash.chevron.right" : "info.circle"
+        let iconSize: CGFloat = 13
+        let gap: CGFloat = 6
+        let horizontal: CGFloat = 9
+        let height: CGFloat = 24
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        let textSize = (label as NSString).size(withAttributes: attrs)
+        let width = horizontal * 2 + iconSize + gap + textSize.width
+        let x = origin.x + line.minX + location.x
+        let y = origin.y + line.minY + (line.height - height) / 2
+        let rect = NSRect(x: x, y: y, width: width, height: height)
+
+        NSColor.controlBackgroundColor.withAlphaComponent(0.72).setFill()
+        let pill = NSBezierPath(roundedRect: rect, xRadius: height / 2, yRadius: height / 2)
+        pill.fill()
+        NSColor.separatorColor.withAlphaComponent(0.65).setStroke()
+        pill.lineWidth = 0.75
+        pill.stroke()
+
+        let symbolConfig = NSImage.SymbolConfiguration(pointSize: iconSize, weight: .medium)
+            .applying(.init(hierarchicalColor: .secondaryLabelColor))
+        if let icon = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(symbolConfig) {
+            let iconRect = NSRect(x: rect.minX + horizontal,
+                                  y: rect.midY - iconSize / 2,
+                                  width: iconSize, height: iconSize)
+            icon.draw(in: iconRect, from: .zero, operation: .sourceOver,
+                      fraction: 0.82, respectFlipped: true, hints: nil)
+        }
+        (label as NSString).draw(at: NSPoint(x: rect.minX + horizontal + iconSize + gap,
+                                             y: rect.midY - textSize.height / 2),
+                                 withAttributes: attrs)
+    }
+
+    private func drawInlineHTML(kind: String, atCharIndex charIndex: Int, origin: NSPoint) {
+        guard let storage = textStorage, charIndex < storage.length else { return }
+        let glyph = glyphIndexForCharacter(at: charIndex)
+        guard glyph < numberOfGlyphs else { return }
+        let line = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let location = location(forGlyphAt: glyph)
+        let x = origin.x + line.minX + location.x
+
+        if kind == "line-break" {
+            let font = NSFont.systemFont(ofSize: max(11, bulletFont.pointSize * 0.78), weight: .semibold)
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: NSColor.tertiaryLabelColor,
+            ]
+            let symbol = "↵" as NSString
+            let baseline = origin.y + line.minY + location.y
+            symbol.draw(at: NSPoint(x: x, y: baseline - font.ascender), withAttributes: attrs)
+            return
+        }
+
+        let font = NSFont.monospacedSystemFont(ofSize: 9, weight: .semibold)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        let symbol = "</>" as NSString
+        let size = symbol.size(withAttributes: attrs)
+        let height: CGFloat = 16
+        let rect = NSRect(x: x, y: origin.y + line.midY - height / 2,
+                          width: size.width + 7, height: height)
+        NSColor.controlBackgroundColor.withAlphaComponent(0.82).setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
+        NSColor.separatorColor.withAlphaComponent(0.55).setStroke()
+        let border = NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4)
+        border.lineWidth = 0.75
+        border.stroke()
+        symbol.draw(at: NSPoint(x: rect.midX - size.width / 2,
+                                y: rect.midY - size.height / 2),
+                    withAttributes: attrs)
     }
 
     // MARK: Text-only selection highlight

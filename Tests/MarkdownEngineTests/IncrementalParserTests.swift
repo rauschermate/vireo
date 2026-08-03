@@ -165,6 +165,29 @@ final class IncrementalParserTests: XCTestCase {
         XCTAssertTrue(update.parsed.toc.contains { $0.title == "New Sub" })
     }
 
+    func testLocalSliceStartingWithThematicBreakDoesNotInventFrontMatter() {
+        let source = """
+        Prefix one.
+
+        Prefix two.
+
+        ---
+        ordinary: content
+        ---
+
+        Editable paragraph.
+
+        Suffix one.
+
+        Suffix two.
+        """
+        let edited = source.replacingOccurrences(of: "Editable", with: "Edited")
+        let update = assertEquivalent(edited, base: source)
+
+        XCTAssertNotNil(update.dirtyRange)
+        XCTAssertTrue(update.parsed.sourceBlocks.isEmpty)
+    }
+
     // MARK: structural edits fall back to a full parse (and stay correct)
 
     func testOpeningFenceFallsBack() {

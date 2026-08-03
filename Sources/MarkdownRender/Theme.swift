@@ -23,6 +23,12 @@ public extension NSAttributedString.Key {
     static let vireoHeading = NSAttributedString.Key("vireoHeading")
     /// Char whose glyph is substituted with a typographic arrow → (NSNumber bool).
     static let vireoArrow = NSAttributedString.Key("vireoArrow")
+    /// Compact placeholder for metadata or browser-only HTML blocks (NSString).
+    static let vireoSourceBlock = NSAttributedString.Key("vireoSourceBlock")
+    /// Keeps newlines alive while source-only block characters are null-hidden.
+    static let vireoMetadata = NSAttributedString.Key("vireoMetadata")
+    /// Drawn replacement for an unsupported inline HTML tag / `<br>` (NSString).
+    static let vireoInlineHTML = NSAttributedString.Key("vireoInlineHTML")
 }
 
 /// Visual design tokens. A single `zoom` factor scales the whole type system
@@ -96,6 +102,11 @@ public struct Theme: Sendable {
     public var codeBackground: NSColor { Self.sharedCodeBackground }
     public var quoteBarColor: NSColor { .tertiaryLabelColor }
     public var ruleColor: NSColor { .separatorColor }
+    public var highlightColor: NSColor {
+        .init(name: nil) { $0.isDark
+            ? NSColor.systemYellow.withAlphaComponent(0.24)
+            : NSColor.systemYellow.withAlphaComponent(0.20) }
+    }
 }
 
 extension NSAppearance {

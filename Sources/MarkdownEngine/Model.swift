@@ -7,17 +7,59 @@ public struct InlineRun: Sendable, Equatable {
     public var italic: Bool
     public var code: Bool
     public var strikethrough: Bool
+    public var underline: Bool
+    public var highlight: Bool
     /// Link destination if this run is (part of) a link's visible text.
     public var link: String?
 
     public init(range: NSRange, bold: Bool = false, italic: Bool = false,
-                code: Bool = false, strikethrough: Bool = false, link: String? = nil) {
+                code: Bool = false, strikethrough: Bool = false,
+                underline: Bool = false, highlight: Bool = false,
+                link: String? = nil) {
         self.range = range
         self.bold = bold
         self.italic = italic
         self.code = code
         self.strikethrough = strikethrough
+        self.underline = underline
+        self.highlight = highlight
         self.link = link
+    }
+}
+
+public enum SourceBlockKind: Sendable, Equatable {
+    case metadata(label: String)
+    case unsupportedHTML(label: String)
+}
+
+/// Source-only material represented by a compact native placeholder rather
+/// than exposing plumbing or pretending browser-only content was rendered.
+public struct SourceBlockRun: Sendable, Equatable {
+    public var range: NSRange
+    public var anchor: Int
+    public var kind: SourceBlockKind
+
+    public init(range: NSRange, anchor: Int, kind: SourceBlockKind) {
+        self.range = range
+        self.anchor = anchor
+        self.kind = kind
+    }
+}
+
+public enum InlineHTMLKind: Sendable, Equatable {
+    case lineBreak
+    case unsupported(tag: String)
+}
+
+public struct InlineHTMLRun: Sendable, Equatable {
+    public var range: NSRange
+    public var anchor: Int
+    public var kind: InlineHTMLKind
+
+    public init(range: NSRange, anchor: Int, kind: InlineHTMLKind) {
+        self.range = range
+        self.anchor = anchor
+        self.kind = kind
     }
 }
 
@@ -188,13 +230,16 @@ public struct ParsedMarkdown: Sendable, Equatable {
     public var tables: [TableInfo]
     public var toc: [TOCEntry]
     public var headings: [HeadingMark]
+    public var sourceBlocks: [SourceBlockRun]
+    public var inlineHTML: [InlineHTMLRun]
 
     public init(markerRanges: [NSRange] = [], inlineRuns: [InlineRun] = [],
                 blockRuns: [BlockRun] = [], images: [ImageRun] = [],
                 links: [LinkRun] = [],
                 tasks: [TaskMark] = [], listMarkers: [ListMarker] = [],
                 tables: [TableInfo] = [], toc: [TOCEntry] = [],
-                headings: [HeadingMark] = []) {
+                headings: [HeadingMark] = [], sourceBlocks: [SourceBlockRun] = [],
+                inlineHTML: [InlineHTMLRun] = []) {
         self.markerRanges = markerRanges
         self.inlineRuns = inlineRuns
         self.blockRuns = blockRuns
@@ -205,6 +250,8 @@ public struct ParsedMarkdown: Sendable, Equatable {
         self.tables = tables
         self.toc = toc
         self.headings = headings
+        self.sourceBlocks = sourceBlocks
+        self.inlineHTML = inlineHTML
     }
 }
 
@@ -219,7 +266,8 @@ public extension ParsedMarkdown {
                 || (r.length == 0 && NSLocationInRange(r.location, window))
         }
         func shift(_ r: NSRange) -> NSRange { NSRange(location: r.location + d, length: r.length) }
-        /// Marker/inline/image/table ranges are source-ordered and do not
+        /// Marker/inline/image/table/source-treatment ranges are source-ordered
+        /// and do not
         /// overlap peers in their collection. Binary-searching their first
         /// possible intersection avoids filtering hundreds of thousands of
         /// unrelated runs for a one-paragraph edit.
@@ -289,6 +337,20 @@ public extension ParsedMarkdown {
                 x.anchor += d
                 if let s = x.subtreeRange { x.subtreeRange = shift(s) }
                 return x }
+        out.sourceBlocks = intersecting(sourceBlocks, range: { $0.range })
+            .filter { hits($0.range) }.map {
+            var x = $0
+            x.range = shift(x.range)
+            x.anchor += d
+            return x
+        }
+        out.inlineHTML = intersecting(inlineHTML, range: { $0.range })
+            .filter { hits($0.range) }.map {
+            var x = $0
+            x.range = shift(x.range)
+            x.anchor += d
+            return x
+        }
         return out
     }
 }

@@ -21,6 +21,27 @@ final class ParsedMarkdownSliceTests: XCTestCase {
         }
     }
 
+    func testIndexedSliceIncludesSourceTreatments() {
+        let source = """
+        ---
+        title: Test
+        ---
+
+        Before <span>inside</span><br> after.
+
+        <section>
+        Browser-only content
+        </section>
+        """
+        let parsed = MarkdownParser().parse(source)
+        let windows = parsed.sourceBlocks.map(\.range) + parsed.inlineHTML.map(\.range)
+
+        XCTAssertFalse(windows.isEmpty)
+        for window in windows {
+            XCTAssertEqual(parsed.slice(window), referenceSlice(parsed, window: window))
+        }
+    }
+
     /// Straight filtering implementation retained only as a correctness oracle
     /// for the indexed production path.
     private func referenceSlice(_ value: ParsedMarkdown, window: NSRange) -> ParsedMarkdown {
@@ -88,6 +109,18 @@ final class ParsedMarkdownSliceTests: XCTestCase {
             heading.anchor += delta
             if let subtree = heading.subtreeRange { heading.subtreeRange = shift(subtree) }
             return heading
+        }
+        output.sourceBlocks = value.sourceBlocks.filter { hits($0.range) }.map {
+            var block = $0
+            block.range = shift(block.range)
+            block.anchor += delta
+            return block
+        }
+        output.inlineHTML = value.inlineHTML.filter { hits($0.range) }.map {
+            var run = $0
+            run.range = shift(run.range)
+            run.anchor += delta
+            return run
         }
         return output
     }

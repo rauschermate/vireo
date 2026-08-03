@@ -165,7 +165,9 @@ public final class IncrementalParser {
         }
 
         // 4. Parse the slice locally and splice into the previous result.
-        let local = parser.parse(newSlice)
+        // A slice that begins at a thematic break in the middle of the file
+        // must not be mistaken for document front matter.
+        let local = parser.parse(newSlice, recognizesFrontMatter: newStart == 0)
         var spliced = splice(old: old, local: local,
                              oldStart: oldStart, oldEnd: oldEnd,
                              newStart: newStart, delta: delta)
@@ -321,6 +323,26 @@ public final class IncrementalParser {
             old.links.filter { keep($0.range) }
             + local.links.map { shiftLink($0, newStart) }
             + old.links.filter { keepAfter($0.range) }.map { shiftLink($0, delta) }
+        func shiftSourceBlock(_ block: SourceBlockRun, _ d: Int) -> SourceBlockRun {
+            var x = block
+            x.range = shift(x.range, d)
+            x.anchor += d
+            return x
+        }
+        out.sourceBlocks =
+            old.sourceBlocks.filter { keep($0.range) }
+            + local.sourceBlocks.map { shiftSourceBlock($0, newStart) }
+            + old.sourceBlocks.filter { keepAfter($0.range) }.map { shiftSourceBlock($0, delta) }
+        func shiftInlineHTML(_ run: InlineHTMLRun, _ d: Int) -> InlineHTMLRun {
+            var x = run
+            x.range = shift(x.range, d)
+            x.anchor += d
+            return x
+        }
+        out.inlineHTML =
+            old.inlineHTML.filter { keep($0.range) }
+            + local.inlineHTML.map { shiftInlineHTML($0, newStart) }
+            + old.inlineHTML.filter { keepAfter($0.range) }.map { shiftInlineHTML($0, delta) }
         func shiftTask(_ t: TaskMark, _ d: Int) -> TaskMark {
             var x = t
             x.anchor += d

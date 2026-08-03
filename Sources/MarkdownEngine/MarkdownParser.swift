@@ -8,6 +8,12 @@ public struct MarkdownParser {
     public init() {}
 
     public func parse(_ source: String) -> ParsedMarkdown {
+        parse(source, recognizesFrontMatter: true)
+    }
+
+    /// Slice parsing disables document-only constructs that would otherwise be
+    /// misclassified when a local window happens to start with `---`.
+    func parse(_ source: String, recognizesFrontMatter: Bool) -> ParsedMarkdown {
         let bench = ProcessInfo.processInfo.environment["VIREO_BENCH"] != nil
         func stamp() -> UInt64 { DispatchTime.now().uptimeNanoseconds }
         func report(_ label: String, _ t0: UInt64) {
@@ -29,11 +35,14 @@ public struct MarkdownParser {
         for child in doc.children {
             acc.visitBlock(child, listDepth: 0, inQuote: false)
         }
+        acc.scanDocumentMetadata(recognizesFrontMatter: recognizesFrontMatter)
         report("AST walk", t)
 
         acc.result.markerRanges = acc.result.markerRanges
             .filter { $0.length > 0 }
             .sorted { $0.location < $1.location }
+        acc.result.sourceBlocks.sort { $0.range.location < $1.range.location }
+        acc.result.inlineHTML.sort { $0.range.location < $1.range.location }
         acc.result.headings = Self.computeHeadingMarks(source: ns, toc: acc.result.toc)
         return acc.result
     }
@@ -152,6 +161,9 @@ private struct InlineStyle {
     var bold = false
     var italic = false
     var strike = false
+    var code = false
+    var underline = false
+    var highlight = false
     var link: String?
 }
 
@@ -159,6 +171,7 @@ private struct Accumulator {
     let map: SourceMapping
     let ns: NSString
     var result = ParsedMarkdown()
+    var htmlStyleStack: [String] = []
 
     // MARK: Block level
 
@@ -186,7 +199,7 @@ private struct Accumulator {
                                            length: textLine.upperBound - 1 - r.location)
                         result.blockRuns.append(BlockRun(range: para, kind: .paragraph))
                     }
-                    for c in heading.children { visitInline(c, style: InlineStyle()) }
+                    visitInlineChildren(heading.children)
                     return
                 }
             }
@@ -202,13 +215,13 @@ private struct Accumulator {
                                            title: plainText(heading).trimmingCharacters(in: .whitespaces),
                                            location: r.location))
             }
-            for c in heading.children { visitInline(c, style: InlineStyle()) }
+            visitInlineChildren(heading.children)
 
         case let para as Paragraph:
             if let r = map.nsRange(para.range), !inQuote {
                 result.blockRuns.append(BlockRun(range: r, kind: .paragraph))
             }
-            for c in para.children { visitInline(c, style: InlineStyle()) }
+            visitInlineChildren(para.children)
             // An empty item can't interrupt a paragraph (CommonMark), so the
             // marker-only line Tab just created rides along as lazy
             // continuation text — draw its marker anyway.
@@ -252,10 +265,21 @@ private struct Accumulator {
             }
 
         case let html as HTMLBlock:
-            // Rendered as plain text, but recorded as a block so incremental
-            // window expansion sees it (HTML blocks can span blank lines).
             if let r = map.nsRange(html.range) {
                 result.blockRuns.append(BlockRun(range: r, kind: .paragraph))
+                let trimmed = html.rawHTML.trimmingCharacters(in: .whitespacesAndNewlines)
+                let kind: SourceBlockKind
+                if trimmed.hasPrefix("<!--") {
+                    kind = .metadata(label: "HTML comment")
+                } else {
+                    let name = htmlTagName(trimmed)
+                    let label = name.isEmpty ? "HTML block · not rendered"
+                        : "HTML \(name) block · not rendered"
+                    kind = .unsupportedHTML(label: label)
+                }
+                result.sourceBlocks.append(SourceBlockRun(range: r, anchor: r.location,
+                                                           kind: kind))
+                result.markerRanges.append(r)
             }
 
         default:
@@ -532,7 +556,27 @@ private struct Accumulator {
 
     // MARK: Inline level
 
+    /// HTML styling is allowed to span inline siblings within one block, but a
+    /// malformed opening tag must not leak into the next paragraph or heading.
+    private mutating func visitInlineChildren(_ children: MarkupChildren) {
+        htmlStyleStack.removeAll(keepingCapacity: true)
+        for child in children { visitInline(child, style: InlineStyle()) }
+        htmlStyleStack.removeAll(keepingCapacity: true)
+    }
+
     mutating func visitInline(_ node: Markup, style: InlineStyle) {
+        var style = style
+        for tag in htmlStyleStack {
+            switch tag {
+            case "b", "strong": style.bold = true
+            case "i", "em": style.italic = true
+            case "del", "s", "strike": style.strike = true
+            case "code", "kbd": style.code = true
+            case "u": style.underline = true
+            case "mark": style.highlight = true
+            default: break
+            }
+        }
         switch node {
         case let strong as Strong:
             addSubtractionMarkers(parent: map.nsRange(strong.range), children: strong.children)
@@ -600,9 +644,12 @@ private struct Accumulator {
             }
 
         case let text as Text:
-            if let r = map.nsRange(text.range) { emit(r, style: style) }
+            if let r = map.nsRange(text.range) { emit(r, style: style, code: style.code) }
 
-        case is SoftBreak, is LineBreak, is InlineHTML:
+        case let html as InlineHTML:
+            handleInlineHTML(html)
+
+        case is SoftBreak, is LineBreak:
             break // visible whitespace / passthrough
 
         default:
@@ -612,13 +659,186 @@ private struct Accumulator {
 
     private mutating func emit(_ range: NSRange, style: InlineStyle, code: Bool = false) {
         guard range.length > 0 else { return }
-        if !style.bold && !style.italic && !style.strike && style.link == nil && !code { return }
+        if !style.bold && !style.italic && !style.strike && !style.underline
+            && !style.highlight && style.link == nil && !code { return }
         result.inlineRuns.append(InlineRun(range: range,
                                            bold: style.bold,
                                            italic: style.italic,
                                            code: code,
                                            strikethrough: style.strike,
+                                           underline: style.underline,
+                                           highlight: style.highlight,
                                            link: style.link))
+    }
+
+    private mutating func handleInlineHTML(_ html: InlineHTML) {
+        guard let range = map.nsRange(html.range), range.length > 0 else { return }
+        let raw = html.rawHTML.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = raw.lowercased()
+        if lower.hasPrefix("<!--") {
+            result.markerRanges.append(range)
+            return
+        }
+        let name = htmlTagName(lower)
+        guard !name.isEmpty else {
+            result.markerRanges.append(range)
+            result.inlineHTML.append(InlineHTMLRun(range: range, anchor: range.location,
+                                                   kind: .unsupported(tag: "HTML")))
+            return
+        }
+        let closing = lower.hasPrefix("</")
+        let selfClosing = lower.hasSuffix("/>")
+        let styled = Set(["b", "strong", "i", "em", "del", "s", "strike",
+                          "code", "kbd", "u", "mark"])
+        result.markerRanges.append(range)
+
+        if styled.contains(name) {
+            if closing {
+                if let index = htmlStyleStack.lastIndex(of: name) {
+                    htmlStyleStack.remove(at: index)
+                }
+            } else if !selfClosing {
+                htmlStyleStack.append(name)
+            }
+        } else if name == "br" {
+            result.inlineHTML.append(InlineHTMLRun(range: range, anchor: range.location,
+                                                   kind: .lineBreak))
+        } else if !closing {
+            result.inlineHTML.append(InlineHTMLRun(range: range, anchor: range.location,
+                                                   kind: .unsupported(tag: name)))
+        }
+    }
+
+    private func htmlTagName(_ raw: String) -> String {
+        var value = raw[...]
+        guard value.first == "<" else { return "" }
+        value = value.dropFirst()
+        if value.first == "/" { value = value.dropFirst() }
+        while value.first == " " { value = value.dropFirst() }
+        let name = value.prefix { $0.isLetter || $0.isNumber || $0 == "-" }
+        return name.lowercased()
+    }
+
+    // MARK: Source metadata
+
+    mutating func scanDocumentMetadata(recognizesFrontMatter: Bool) {
+        var lines: [NSRange] = []
+        enumerateLines(in: NSRange(location: 0, length: ns.length)) { lines.append($0) }
+        var frontMatterRange: NSRange?
+        // A definition-like line inside code, a table, ordinary paragraph
+        // continuation, or an HTML block is literal content. cmark has already
+        // classified those ranges, so never let the metadata fallback hide
+        // them merely because their trimmed text starts with `[label]:`.
+        let literalContent = result.blockRuns.compactMap { run -> NSRange? in
+            switch run.kind {
+            case .paragraph, .codeBlock, .tableRow:
+                return run.range
+            default:
+                return nil
+            }
+        }
+        func isLiteralContent(_ line: NSRange) -> Bool {
+            literalContent.contains { NSIntersectionRange($0, line).length > 0 }
+        }
+
+        if recognizesFrontMatter, lines.count >= 2, trimmedLine(lines[0]) == "---" {
+            for index in 1..<lines.count {
+                let delimiter = trimmedLine(lines[index])
+                if delimiter == "---" || delimiter == "..." {
+                    let fields = lines[1..<index].filter { trimmedLine($0).contains(":") }.count
+                    // Avoid treating an ordinary pair of thematic breaks as
+                    // front matter. A metadata envelope must contain at least
+                    // one YAML-like key/value field.
+                    guard fields > 0 else { break }
+                    let range = NSRange(location: 0, length: lines[index].upperBound)
+                    let label = fields == 1 ? "Front matter · 1 field"
+                        : "Front matter · \(fields) fields"
+                    result.sourceBlocks.append(SourceBlockRun(range: range, anchor: 0,
+                                                               kind: .metadata(label: label)))
+                    result.markerRanges.append(range)
+                    result.blockRuns.append(BlockRun(range: range, kind: .paragraph))
+                    frontMatterRange = range
+                    break
+                }
+            }
+        }
+
+        var index = 0
+        while index < lines.count {
+            if let frontMatterRange, NSIntersectionRange(lines[index], frontMatterRange).length > 0 {
+                index += 1
+                continue
+            }
+            guard !isLiteralContent(lines[index]),
+                  referenceLabel(in: lines[index]) != nil else {
+                index += 1
+                continue
+            }
+            let start = lines[index].location
+            var end = lines[index].upperBound
+            var count = 1
+            index += 1
+            while index < lines.count {
+                if !isLiteralContent(lines[index]),
+                   referenceLabel(in: lines[index]) != nil {
+                    end = lines[index].upperBound
+                    count += 1
+                    index += 1
+                    continue
+                }
+                // CommonMark permits a reference title on the following,
+                // indented line. It is source plumbing too, so collapse it with
+                // the definition instead of leaving a lone quoted title behind.
+                if !isLiteralContent(lines[index]),
+                   isReferenceTitleContinuation(lines[index]) {
+                    end = lines[index].upperBound
+                    index += 1
+                    continue
+                }
+                break
+            }
+            let label = count == 1 ? "1 link reference" : "\(count) link references"
+            let range = NSRange(location: start, length: end - start)
+            result.sourceBlocks.append(SourceBlockRun(range: range, anchor: start,
+                                                       kind: .metadata(label: label)))
+            result.markerRanges.append(range)
+            result.blockRuns.append(BlockRun(range: range, kind: .paragraph))
+        }
+
+        // Metadata owns its presentation; discard accidental cmark block/TOC
+        // interpretations (for example YAML delimiters read as thematic rules).
+        let metadata = result.sourceBlocks.compactMap { block -> NSRange? in
+            if case .metadata = block.kind { return block.range }
+            return nil
+        }
+        result.toc.removeAll { entry in metadata.contains { NSLocationInRange(entry.location, $0) } }
+    }
+
+    private func trimmedLine(_ range: NSRange) -> String {
+        ns.substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func referenceLabel(in range: NSRange) -> String? {
+        let line = trimmedLine(range)
+        guard line.hasPrefix("["), let close = line.firstIndex(of: "]") else { return nil }
+        let after = line.index(after: close)
+        guard after < line.endIndex, line[after] == ":" else { return nil }
+        let destination = line[line.index(after: after)...]
+            .trimmingCharacters(in: .whitespaces)
+        guard !destination.isEmpty else { return nil }
+        let label = String(line[line.index(after: line.startIndex)..<close])
+            .trimmingCharacters(in: .whitespaces)
+        return label.isEmpty ? nil : label
+    }
+
+    private func isReferenceTitleContinuation(_ range: NSRange) -> Bool {
+        let raw = ns.substring(with: range)
+        guard raw.first == " " || raw.first == "\t" else { return false }
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = value.first else { return false }
+        return (first == "\"" && value.last == "\"")
+            || (first == "'" && value.last == "'")
+            || (first == "(" && value.last == ")")
     }
 
     // MARK: Marker helpers
