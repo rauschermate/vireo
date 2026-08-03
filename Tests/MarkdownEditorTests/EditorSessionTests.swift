@@ -6,6 +6,18 @@ import AppKit
 final class EditorSessionTests: XCTestCase {
     private final class Delegate: NSObject, NSTextViewDelegate {}
 
+    func testInitializationDoesNotLayOutLargeDocumentBeforeItHasAViewport() {
+        let line = "## Section with **bold** and [a link](https://example.com)\n\n"
+        let source = Array(repeating: line, count: 5_000).joined()
+        let controller = EditorController()
+
+        let session = EditorSession(source: source, controller: controller)
+
+        XCTAssertTrue(session.layoutManager.allowsNonContiguousLayout)
+        XCTAssertEqual(session.layoutManager.firstUnlaidCharacterIndex(), 0,
+                       "constructing an unmounted editor must leave layout deferred")
+    }
+
     func testRemountKeepsTextKitSelectionScrollAndUndoObjects() {
         let source = Array(repeating: "A persistent editor line.\n", count: 200).joined()
         let controller = EditorController()

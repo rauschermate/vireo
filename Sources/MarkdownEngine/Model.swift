@@ -219,28 +219,58 @@ public extension ParsedMarkdown {
                 || (r.length == 0 && NSLocationInRange(r.location, window))
         }
         func shift(_ r: NSRange) -> NSRange { NSRange(location: r.location + d, length: r.length) }
+        /// Marker/inline/image/table ranges are source-ordered and do not
+        /// overlap peers in their collection. Binary-searching their first
+        /// possible intersection avoids filtering hundreds of thousands of
+        /// unrelated runs for a one-paragraph edit.
+        func intersecting<T>(_ values: [T], range: (T) -> NSRange) -> ArraySlice<T> {
+            var lo = 0
+            var hi = values.count
+            while lo < hi {
+                let mid = (lo + hi) / 2
+                if range(values[mid]).upperBound <= window.location { lo = mid + 1 }
+                else { hi = mid }
+            }
+            let start = lo
+            while lo < values.count, range(values[lo]).location < window.upperBound { lo += 1 }
+            return values[start..<lo]
+        }
+        func anchored<T>(_ values: [T], anchor: (T) -> Int) -> ArraySlice<T> {
+            var lo = 0
+            var hi = values.count
+            while lo < hi {
+                let mid = (lo + hi) / 2
+                if anchor(values[mid]) < window.location { lo = mid + 1 }
+                else { hi = mid }
+            }
+            let start = lo
+            while lo < values.count, anchor(values[lo]) < window.upperBound { lo += 1 }
+            return values[start..<lo]
+        }
 
         var out = ParsedMarkdown()
-        out.markerRanges = markerRanges.filter(hits).map(shift)
-        out.inlineRuns = inlineRuns.filter { hits($0.range) }
+        out.markerRanges = intersecting(markerRanges, range: { $0 }).filter(hits).map(shift)
+        out.inlineRuns = intersecting(inlineRuns, range: { $0.range }).filter { hits($0.range) }
             .map { var x = $0; x.range = shift(x.range); return x }
+        // Block runs can nest (quotes/lists), so this collection deliberately
+        // retains the general overlap scan.
         out.blockRuns = blockRuns.filter { hits($0.range) }
             .map { var x = $0; x.range = shift(x.range); return x }
-        out.images = images.filter { hits($0.range) }
+        out.images = intersecting(images, range: { $0.range }).filter { hits($0.range) }
             .map { var x = $0; x.range = shift(x.range); x.anchor += d; return x }
-        out.links = links.filter { hits($0.range) }
+        out.links = intersecting(links, range: { $0.range }).filter { hits($0.range) }
             .map { var x = $0; x.range = shift(x.range); x.labelRange = shift(x.labelRange); return x }
-        out.tasks = tasks.filter { NSLocationInRange($0.anchor, window) }
+        out.tasks = anchored(tasks, anchor: { $0.anchor })
             .map { var x = $0
                 x.anchor += d
                 if let s = x.subtreeRange { x.subtreeRange = shift(s) }
                 return x }
-        out.listMarkers = listMarkers.filter { NSLocationInRange($0.anchor, window) }
+        out.listMarkers = anchored(listMarkers, anchor: { $0.anchor })
             .map { var x = $0
                 x.anchor += d
                 if let s = x.subtreeRange { x.subtreeRange = shift(s) }
                 return x }
-        out.tables = tables.filter { hits($0.range) }.map { t in
+        out.tables = intersecting(tables, range: { $0.range }).filter { hits($0.range) }.map { t in
             var x = t
             x.range = shift(x.range)
             x.anchor += d
@@ -252,9 +282,9 @@ public extension ParsedMarkdown {
             }
             return x
         }
-        out.toc = toc.filter { NSLocationInRange($0.location, window) }
+        out.toc = anchored(toc, anchor: { $0.location })
             .map { var x = $0; x.location += d; return x }
-        out.headings = headings.filter { NSLocationInRange($0.anchor, window) }
+        out.headings = anchored(headings, anchor: { $0.anchor })
             .map { var x = $0
                 x.anchor += d
                 if let s = x.subtreeRange { x.subtreeRange = shift(s) }

@@ -86,8 +86,14 @@ public struct Theme: Sendable {
     public var textColor: NSColor { .textColor }
     public var secondaryColor: NSColor { .secondaryLabelColor }
     public var linkColor: NSColor { .linkColor }
-    public var codeColor: NSColor { .init(name: nil) { $0.isDark ? .init(white: 0.92, alpha: 1) : .init(white: 0.2, alpha: 1) } }
-    public var codeBackground: NSColor { .init(name: nil) { $0.isDark ? .init(white: 1, alpha: 0.07) : .init(white: 0, alpha: 0.05) } }
+    private static let sharedCodeColor = NSColor(name: nil) {
+        $0.isDark ? .init(white: 0.92, alpha: 1) : .init(white: 0.2, alpha: 1)
+    }
+    private static let sharedCodeBackground = NSColor(name: nil) {
+        $0.isDark ? .init(white: 1, alpha: 0.07) : .init(white: 0, alpha: 0.05)
+    }
+    public var codeColor: NSColor { Self.sharedCodeColor }
+    public var codeBackground: NSColor { Self.sharedCodeBackground }
     public var quoteBarColor: NSColor { .tertiaryLabelColor }
     public var ruleColor: NSColor { .separatorColor }
 }

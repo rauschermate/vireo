@@ -5,7 +5,6 @@ import MarkdownRender
 // Headless snapshot: run the real parse → render → TextKit layout pipeline into
 // an offscreen PNG so hidden-syntax rendering can be verified without a window.
 
-@main
 struct Snapshot {
     static func main() {
         let args = CommandLine.arguments
@@ -14,7 +13,11 @@ struct Snapshot {
         let dark = args.contains("--dark")
 
         MainActor.assumeIsolated {
-            if args.contains("--bench") {
+            if args.contains("--write-benchmark-fixtures") {
+                RenderBenchmark.writeFixtures(arguments: args)
+            } else if args.contains("--benchmark-suite") {
+                RenderBenchmark.run(arguments: args)
+            } else if args.contains("--bench") {
                 bench(inputPath: inputPath)
             } else {
                 render(inputPath: inputPath, outPath: outPath, dark: dark)
@@ -191,3 +194,5 @@ struct Snapshot {
         print("wrote \(outPath) (\(Int(width))×\(Int(height)))")
     }
 }
+
+Snapshot.main()
