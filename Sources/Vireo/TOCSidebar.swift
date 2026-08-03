@@ -7,6 +7,7 @@ import MarkdownEngine
 struct TOCSidebar: View {
     @ObservedObject var document: DocumentModel
     @State private var hoveringPanel = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -21,10 +22,14 @@ struct TOCSidebar: View {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(.tertiary)
+                        .frame(width: 40, height: 40)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Hide table of contents")
                 .opacity(hoveringPanel ? 1 : 0)
-                .animation(.easeInOut(duration: 0.15), value: hoveringPanel)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.15),
+                           value: hoveringPanel)
                 .help("Hide table of contents")
             }
             .padding(.horizontal, 16)
@@ -51,6 +56,7 @@ private struct TOCRow: View {
     let entry: TOCEntry
     let action: () -> Void
     @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button(action: action) {
@@ -62,11 +68,13 @@ private struct TOCRow: View {
                 .padding(.leading, CGFloat(entry.level - 1) * 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
+                .frame(minHeight: 40)
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 16)
         .padding(.vertical, 3)
-        .animation(.easeInOut(duration: 0.12), value: hovering)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.12),
+                   value: hovering)
         .onHover { hovering = $0 }
     }
 }

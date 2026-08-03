@@ -133,6 +133,12 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         tableCellGeometries.removeAll(keepingCapacity: true)
         tableRects.removeAll(keepingCapacity: true)
         tableScrollGeometries.removeAll(keepingCapacity: true)
+        chevronRects.removeAll(keepingCapacity: true)
+        dotsRects.removeAll(keepingCapacity: true)
+        collapseHoverRects.removeAll(keepingCapacity: true)
+        checkboxRects.removeAll(keepingCapacity: true)
+        imageRects.removeAll(keepingCapacity: true)
+        sourceBlockRects.removeAll(keepingCapacity: true)
     }
 
     public func tableCell(at point: NSPoint) -> TableCellGeometry? {
@@ -212,10 +218,18 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     /// chevron toggles and collapsed-`…` expanders, keyed by item anchor.
     public private(set) var chevronRects: [Int: NSRect] = [:]
     public private(set) var dotsRects: [Int: NSRect] = [:]
+    /// Full collapsible line bounds in text-view coordinates. These make
+    /// heading disclosure hover reliable even when the pointer approaches
+    /// through the leading margin rather than directly over a glyph.
+    public private(set) var collapseHoverRects: [Int: NSRect] = [:]
+    public private(set) var checkboxRects: [Int: NSRect] = [:]
     /// Rendered image hit targets in text-container coordinates, keyed by source
     /// anchor. Keeping these independent of a particular drawing pass matters:
     /// AppKit may translate `origin` while drawing a scrolled dirty region.
     public private(set) var imageRects: [Int: NSRect] = [:]
+    /// Metadata / unsupported-HTML placeholder bounds in text-container
+    /// coordinates, keyed by their source anchor.
+    public private(set) var sourceBlockRects: [Int: NSRect] = [:]
 
     public override init() {
         super.init()
@@ -497,6 +511,7 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     // MARK: Source-only placeholders
 
     private func drawSourceBlock(label: String, atCharIndex charIndex: Int, origin: NSPoint) {
+        sourceBlockRects[charIndex] = nil
         guard let storage = textStorage, charIndex < storage.length else { return }
         let glyph = glyphIndexForCharacter(at: charIndex)
         guard glyph < numberOfGlyphs else { return }
@@ -515,9 +530,11 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         ]
         let textSize = (label as NSString).size(withAttributes: attrs)
         let width = horizontal * 2 + iconSize + gap + textSize.width
-        let x = origin.x + line.minX + location.x
-        let y = origin.y + line.minY + (line.height - height) / 2
-        let rect = NSRect(x: x, y: y, width: width, height: height)
+        let containerRect = NSRect(x: line.minX + location.x,
+                                   y: line.minY + (line.height - height) / 2,
+                                   width: width, height: height)
+        sourceBlockRects[charIndex] = containerRect
+        let rect = containerRect.offsetBy(dx: origin.x, dy: origin.y)
 
         NSColor.controlBackgroundColor.withAlphaComponent(0.72).setFill()
         let pill = NSBezierPath(roundedRect: rect, xRadius: height / 2, yRadius: height / 2)
@@ -687,29 +704,32 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let hovered = hoveredAnchor == anchor
         chevronRects[anchor] = nil
         dotsRects[anchor] = nil
-        guard collapsed || hovered, subtree(forAnchor: anchor) != nil,
+        collapseHoverRects[anchor] = nil
+        guard subtree(forAnchor: anchor) != nil,
               let geo = markerGeometry(anchor: anchor, markerText: markerText) else { return }
+        collapseHoverRects[anchor] = NSRect(
+            x: origin.x + geo.lineRect.minX - 48,
+            y: origin.y + geo.lineRect.minY,
+            width: geo.lineRect.width + 48,
+            height: geo.lineRect.height
+        )
 
-        // Chevron sits left of the drawn marker; points right when collapsed.
-        let center = NSPoint(x: origin.x + geo.textX - geo.markerWidth - 5 - 12,
-                             y: origin.y + geo.baseline - bulletFont.capHeight / 2)
-        let chevron = NSBezierPath()
-        chevron.lineWidth = 1.8
-        chevron.lineCapStyle = .round
-        chevron.lineJoinStyle = .round
-        if collapsed { // ›
-            chevron.move(to: NSPoint(x: center.x - 2, y: center.y - 4))
-            chevron.line(to: NSPoint(x: center.x + 2, y: center.y))
-            chevron.line(to: NSPoint(x: center.x - 2, y: center.y + 4))
-        } else {       // ⌄
-            chevron.move(to: NSPoint(x: center.x - 4, y: center.y - 2))
-            chevron.line(to: NSPoint(x: center.x, y: center.y + 2))
-            chevron.line(to: NSPoint(x: center.x + 4, y: center.y - 2))
+        // A parent task has both a disclosure control and a checkbox. Keep
+        // their 40-point targets adjacent rather than overlapping so either
+        // action remains unambiguous. Ordinary list markers have no second
+        // control and retain their more compact visual placement.
+        let centerX: CGFloat
+        if markerText == nil {
+            let checkboxCenterX = origin.x + geo.textX - geo.markerWidth / 2 - 6
+            centerX = checkboxCenterX - 40
+        } else {
+            centerX = origin.x + geo.textX - geo.markerWidth - 5 - 12
         }
-        (collapsed ? NSColor.controlAccentColor : NSColor.secondaryLabelColor).setStroke()
-        chevron.stroke()
-        chevronRects[anchor] = NSRect(x: center.x - 8, y: center.y - 8, width: 16, height: 16)
-
+        let center = NSPoint(x: centerX,
+                             y: origin.y + geo.baseline - bulletFont.capHeight / 2)
+        chevronRects[anchor] = minimumHitRect(centeredAt: center)
+        guard collapsed || hovered else { return }
+        drawDisclosureChevron(at: center, collapsed: collapsed)
         // `…` after the collapsed line's text; click to expand.
         if collapsed, anchor < numberOfGlyphs {
             let glyph = glyphIndexForCharacter(at: anchor)
@@ -721,7 +741,9 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
             let at = NSPoint(x: origin.x + used.maxX + 8,
                              y: origin.y + geo.baseline - bulletFont.ascender)
             dots.draw(at: at, withAttributes: attrs)
-            dotsRects[anchor] = NSRect(x: at.x - 4, y: at.y, width: size.width + 12, height: size.height)
+            let visual = NSRect(x: at.x - 4, y: at.y,
+                                width: size.width + 12, height: size.height)
+            dotsRects[anchor] = minimumHitRect(containing: visual)
         }
     }
 
@@ -729,10 +751,10 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     /// same interaction as list items, sized to the heading's own font.
     private func drawHeadingAdornments(anchor: Int, origin: NSPoint, storage: NSTextStorage) {
         let collapsed = collapsedAnchors.contains(anchor)
-        let hovered = hoveredAnchor == anchor
         chevronRects[anchor] = nil
         dotsRects[anchor] = nil
-        guard collapsed || hovered, subtree(forAnchor: anchor) != nil,
+        collapseHoverRects[anchor] = nil
+        guard subtree(forAnchor: anchor) != nil,
               anchor < numberOfGlyphs else { return }
         let glyph = glyphIndexForCharacter(at: anchor)
         guard glyph < numberOfGlyphs else { return }
@@ -741,16 +763,56 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let loc = location(forGlyphAt: glyph)
         let baseline = origin.y + lineRect.minY + loc.y
         let textX = origin.x + lineRect.minX + loc.x
+        collapseHoverRects[anchor] = NSRect(
+            x: origin.x + lineRect.minX - 48,
+            y: origin.y + lineRect.minY,
+            width: lineRect.width + 48,
+            height: lineRect.height
+        )
 
-        // Chevron in the left margin of the heading text; points right when
-        // collapsed (matches the list chevron's geometry and colors).
-        let center = NSPoint(x: textX - 14, y: baseline - font.capHeight / 2)
-        if collapsed {
-            let d: CGFloat = 18
-            NSColor.controlAccentColor.withAlphaComponent(0.15).setFill()
-            NSBezierPath(ovalIn: NSRect(x: center.x - d / 2, y: center.y - d / 2,
-                                        width: d, height: d)).fill()
+        // Use the identical icon, spacing, color and state treatment as an
+        // unmarked collapsible list row. Headings differ only in the font used
+        // to find their vertical center.
+        let center = NSPoint(x: textX - 17, y: baseline - font.capHeight / 2)
+        chevronRects[anchor] = minimumHitRect(centeredAt: center)
+        guard collapsed else { return }
+
+        // `…` after the collapsed heading's text; click to expand.
+        let used = lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
+        let dots = "…" as NSString
+        let attrs: [NSAttributedString.Key: Any] = [.font: font,
+                                                    .foregroundColor: NSColor.tertiaryLabelColor]
+        let size = dots.size(withAttributes: attrs)
+        let at = NSPoint(x: origin.x + used.maxX + 8, y: baseline - font.ascender)
+        dots.draw(at: at, withAttributes: attrs)
+        let visual = NSRect(x: at.x - 4, y: at.y,
+                            width: size.width + 12, height: size.height)
+        dotsRects[anchor] = minimumHitRect(containing: visual)
+    }
+
+    /// Paint heading disclosures after TextKit finishes drawing glyphs. A
+    /// heading icon lives to the left of its first glyph, so drawing it from
+    /// `drawGlyphs` can be clipped even though its hit target is valid. List
+    /// disclosures remain inside their marker runs and use the same renderer
+    /// directly from the glyph pass.
+    public func drawHeadingDisclosureOverlays(in dirtyRect: NSRect) {
+        for heading in headingMarks where heading.subtreeRange != nil {
+            let anchor = heading.anchor
+            let collapsed = collapsedAnchors.contains(anchor)
+            guard collapsed || hoveredAnchor == anchor,
+                  let rect = chevronRects[anchor],
+                  dirtyRect.intersects(rect) else { continue }
+            drawDisclosureChevron(
+                at: NSPoint(x: rect.midX, y: rect.midY),
+                collapsed: collapsed
+            )
         }
+    }
+
+    /// One disclosure glyph for lists, tasks and headings. Keeping this in a
+    /// single renderer prevents the heading affordance from drifting from the
+    /// list interaction as either is polished.
+    private func drawDisclosureChevron(at center: NSPoint, collapsed: Bool) {
         let chevron = NSBezierPath()
         chevron.lineWidth = 1.8
         chevron.lineCapStyle = .round
@@ -766,19 +828,6 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         }
         (collapsed ? NSColor.controlAccentColor : NSColor.secondaryLabelColor).setStroke()
         chevron.stroke()
-        chevronRects[anchor] = NSRect(x: center.x - 8, y: center.y - 8, width: 16, height: 16)
-
-        // `…` after the collapsed heading's text; click to expand.
-        if collapsed {
-            let used = lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
-            let dots = "…" as NSString
-            let attrs: [NSAttributedString.Key: Any] = [.font: font,
-                                                        .foregroundColor: NSColor.tertiaryLabelColor]
-            let size = dots.size(withAttributes: attrs)
-            let at = NSPoint(x: origin.x + used.maxX + 8, y: baseline - font.ascender)
-            dots.draw(at: at, withAttributes: attrs)
-            dotsRects[anchor] = NSRect(x: at.x - 4, y: at.y, width: size.width + 12, height: size.height)
-        }
     }
 
     /// Accent halo behind a collapsed item's bullet.
@@ -1143,6 +1192,7 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     /// checkmark when checked; bordered empty box when not — matching modern
     /// macOS checkbox appearance (and the user's accent color).
     private func drawCheckbox(checked: Bool, atCharIndex charIndex: Int, origin: NSPoint) {
+        checkboxRects[charIndex] = nil
         guard charIndex < numberOfGlyphs else { return }
         let glyph = glyphIndexForCharacter(at: charIndex)
         guard glyph < numberOfGlyphs else { return }
@@ -1156,6 +1206,7 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
             + markerBaselineOffset(glyph: glyph, charIndex: charIndex, lineRect: lineRect)
         let y = baseline - bulletFont.capHeight / 2 - size / 2
         let rect = NSRect(x: x, y: y, width: size, height: size)
+        checkboxRects[charIndex] = minimumHitRect(containing: rect)
         let box = NSBezierPath(roundedRect: rect, xRadius: size * 0.28, yRadius: size * 0.28)
 
         if checked {
@@ -1178,6 +1229,20 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
             box.lineWidth = 1
             box.stroke()
         }
+    }
+
+    private func minimumHitRect(centeredAt center: NSPoint,
+                                size: CGFloat = 40) -> NSRect {
+        NSRect(x: center.x - size / 2, y: center.y - size / 2,
+               width: size, height: size)
+    }
+
+    private func minimumHitRect(containing rect: NSRect,
+                                size: CGFloat = 40) -> NSRect {
+        NSRect(x: rect.midX - max(size, rect.width) / 2,
+               y: rect.midY - max(size, rect.height) / 2,
+               width: max(size, rect.width),
+               height: max(size, rect.height))
     }
 
     private func drawLeftMarker(_ s: String, atCharIndex charIndex: Int, origin: NSPoint, color: NSColor) {

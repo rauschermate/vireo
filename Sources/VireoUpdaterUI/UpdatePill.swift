@@ -10,6 +10,7 @@ import VireoUpdater
 public struct UpdatePill: View {
     @ObservedObject var model: UpdateModel
     @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init(model: UpdateModel) {
         self.model = model
@@ -19,7 +20,7 @@ public struct UpdatePill: View {
         Group {
             if model.isPillVisible {
                 pill
-                    .transition(.asymmetric(
+                    .transition(reduceMotion ? .opacity : .asymmetric(
                         insertion: .scale(scale: 0.85, anchor: .bottomLeading)
                             .combined(with: .opacity)
                             .combined(with: .offset(y: 6)),
@@ -27,8 +28,10 @@ public struct UpdatePill: View {
                     ))
             }
         }
-        .animation(.spring(response: 0.34, dampingFraction: 1), value: model.isPillVisible)
-        .animation(.spring(response: 0.34, dampingFraction: 1), value: model.phase)
+        .animation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 1),
+                   value: model.isPillVisible)
+        .animation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 1),
+                   value: model.phase)
     }
 
     private var pill: some View {
@@ -55,7 +58,8 @@ public struct UpdatePill: View {
         .foregroundStyle(.white)
         .font(.system(size: 11, weight: .semibold))
         .onHover { hovering = $0 }
-        .animation(.spring(response: 0.28, dampingFraction: 1), value: hovering)
+        .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 1),
+                   value: hovering)
         .help(helpText)
         .fixedSize()
     }
@@ -151,6 +155,7 @@ public struct UpdatePill: View {
 private struct ProgressRing: View {
     /// `nil` → indeterminate spinner; otherwise a `0...1` arc.
     let progress: Double?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         if let progress {
@@ -160,7 +165,8 @@ private struct ProgressRing: View {
                     .trim(from: 0, to: max(0.02, progress))
                     .stroke(.white, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
                     .rotationEffect(.degrees(-90))
-                    .animation(.easeInOut(duration: 0.2), value: progress)
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.2),
+                               value: progress)
             }
             .frame(width: 12, height: 12)
         } else {
@@ -170,8 +176,22 @@ private struct ProgressRing: View {
 }
 
 private struct IndeterminateRing: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @ViewBuilder
     var body: some View {
-        TimelineView(.animation) { context in
+        if reduceMotion {
+            ZStack {
+                Circle().stroke(.white.opacity(0.24), lineWidth: 1.6)
+                Circle()
+                    .trim(from: 0, to: 0.28)
+                    .stroke(.white, style: StrokeStyle(lineWidth: 1.6,
+                                                       lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            }
+            .frame(width: 12, height: 12)
+        } else {
+            TimelineView(.animation) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let angle = (t.truncatingRemainder(dividingBy: 0.9) / 0.9) * 360
             ZStack {
@@ -182,17 +202,21 @@ private struct IndeterminateRing: View {
                     .rotationEffect(.degrees(angle))
             }
             .frame(width: 12, height: 12)
+            }
         }
     }
 }
 
 /// Tactile press feedback: a subtle scale on click (0.96), spring with no bounce.
 private struct PressableStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .scaleEffect(!reduceMotion && configuration.isPressed ? 0.96 : 1)
             .opacity(configuration.isPressed ? 0.9 : 1)
-            .animation(.spring(response: 0.25, dampingFraction: 1), value: configuration.isPressed)
+            .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 1),
+                       value: configuration.isPressed)
             .contentShape(Rectangle())
     }
 }

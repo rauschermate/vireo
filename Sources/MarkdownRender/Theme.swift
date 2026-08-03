@@ -70,7 +70,7 @@ public struct Theme: Sendable {
     public var codeFont: NSFont { .monospacedSystemFont(ofSize: codeSize, weight: .regular) }
     public var tableFont: NSFont { .systemFont(ofSize: baseSize * 0.95, weight: .regular) }
     public var tableHeaderFont: NSFont { .systemFont(ofSize: baseSize * 0.95, weight: .semibold) }
-    public var tableRowHeight: CGFloat { ceil(baseSize * 1.35) + 16 }
+    public var tableRowHeight: CGFloat { max(40, ceil(baseSize * 1.35) + 16) }
     /// Reserved below editor tables for the native horizontal scroller. Static
     /// renderers leave this disabled and keep their previous compact spacing.
     public var tableScrollerGutter: CGFloat { 16 }
