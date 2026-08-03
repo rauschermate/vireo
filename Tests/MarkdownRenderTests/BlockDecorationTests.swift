@@ -66,6 +66,13 @@ final class BlockDecorationTests: XCTestCase {
                                             at: firstFence.location,
                                             effectiveRange: nil) as? NSParagraphStyle
         XCTAssertEqual(fenceStyle?.maximumLineHeight, 8)
+        let closingFence = (source as NSString).lineRange(
+            for: (source as NSString).range(of: "```", options: .backwards)
+        )
+        let closingFenceStyle = rendered.attribute(.paragraphStyle,
+                                                   at: closingFence.location,
+                                                   effectiveRange: nil) as? NSParagraphStyle
+        XCTAssertEqual(closingFenceStyle?.maximumLineHeight, 8)
     }
 
     func testBlockSurfacesDrawContinuouslyInLightAndDarkAppearances() throws {
@@ -81,6 +88,21 @@ final class BlockDecorationTests: XCTestCase {
             XCTAssertGreaterThan(quote.height, 20)
             XCTAssertGreaterThan(rule.width, 350)
 
+            let firstCodeLine = lineFragment(containing: "let value", in: snapshot.layout)
+            let lastCodeLine = lineFragment(containing: "print(value)", in: snapshot.layout)
+            let topPadding = firstCodeLine.minY - code.minY
+            let bottomPadding = code.maxY - lastCodeLine.maxY
+            let firstGlyph = visualGlyphRect(containing: "let value", in: snapshot)
+            let lastGlyph = visualGlyphRect(containing: "print(value)", in: snapshot)
+            let topVisualPadding = firstGlyph.minY - code.minY
+            let bottomVisualPadding = code.maxY - lastGlyph.maxY
+            XCTAssertGreaterThanOrEqual(topPadding, 5)
+            XCTAssertGreaterThanOrEqual(bottomPadding, 5)
+            XCTAssertLessThanOrEqual(abs(topPadding - bottomPadding), 4)
+            XCTAssertGreaterThanOrEqual(topVisualPadding, 6)
+            XCTAssertGreaterThanOrEqual(bottomVisualPadding, 6)
+            XCTAssertLessThanOrEqual(abs(topVisualPadding - bottomVisualPadding), 4)
+
             let page = try color(snapshot.bitmap, x: 2, y: code.midY)
             let codeSurface = try color(snapshot.bitmap, x: code.maxX - 12,
                                         y: code.midY)
@@ -95,7 +117,8 @@ final class BlockDecorationTests: XCTestCase {
     }
 
     private func drawSnapshot(_ appearanceName: NSAppearance.Name) throws
-        -> (bitmap: NSBitmapImageRep, layout: MarkdownLayoutManager) {
+        -> (bitmap: NSBitmapImageRep, layout: MarkdownLayoutManager,
+            storage: NSTextStorage) {
         let parsed = MarkdownParser().parse(source)
         let rendered = MarkdownRenderer(theme: Theme()).render(source: source,
                                                                  parsed: parsed)
@@ -132,13 +155,38 @@ final class BlockDecorationTests: XCTestCase {
         }
         NSGraphicsContext.restoreGraphicsState()
         cg.restoreGState()
-        return (bitmap, layout)
+        return (bitmap, layout, storage)
     }
 
     private func color(_ bitmap: NSBitmapImageRep, x: CGFloat,
                        y: CGFloat) throws -> NSColor {
         try XCTUnwrap(bitmap.colorAt(x: Int(x), y: Int(y))?
             .usingColorSpace(.deviceRGB))
+    }
+
+    private func lineFragment(containing text: String,
+                              in layout: MarkdownLayoutManager) -> NSRect {
+        let character = (source as NSString).range(of: text).location
+        let glyph = layout.glyphIndexForCharacter(at: character)
+        return layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+    }
+
+    private func visualGlyphRect(
+        containing text: String,
+        in snapshot: (bitmap: NSBitmapImageRep, layout: MarkdownLayoutManager,
+                      storage: NSTextStorage)
+    ) -> NSRect {
+        let character = (source as NSString).range(of: text).location
+        let glyph = snapshot.layout.glyphIndexForCharacter(at: character)
+        let line = snapshot.layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let location = snapshot.layout.location(forGlyphAt: glyph)
+        let font = snapshot.storage.attribute(.font, at: character,
+                                              effectiveRange: nil) as! NSFont
+        let baseline = line.minY + location.y
+        return NSRect(x: line.minX + location.x,
+                      y: baseline - font.ascender,
+                      width: 1,
+                      height: font.ascender - font.descender)
     }
 
     private func distance(_ lhs: NSColor, _ rhs: NSColor) -> CGFloat {

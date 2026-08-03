@@ -295,6 +295,15 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
                     newProps[i] = .null
                     changed = true
                 }
+            } else if storage.attribute(.vireoCodeBlock, at: charIndex,
+                                        effectiveRange: nil) != nil,
+                      storage.attribute(.vireoMarker, at: charIndex,
+                                        effectiveRange: nil) != nil,
+                      ns.character(at: charIndex) == 0x0A {
+                // Keep fenced-code line endings as transparent geometry. Their
+                // compact paragraph style supplies symmetric surface padding
+                // while every visible fence character remains null-hidden.
+                newProps[i] = props[i]
             } else if storage.attribute(.vireoMarker, at: charIndex, effectiveRange: nil) != nil {
                 newProps[i] = .null
                 changed = true
