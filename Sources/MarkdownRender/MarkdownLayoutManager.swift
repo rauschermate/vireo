@@ -82,6 +82,9 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     /// The rendered image currently selected by the editor, if any.
     /// Selection is visual only; the Markdown source remains hidden.
     public var selectedImageAnchor: Int?
+    private(set) var codeBlockRects: [Int: NSRect] = [:]
+    private(set) var quoteBarRects: [Int: NSRect] = [:]
+    private(set) var thematicRuleRects: [Int: NSRect] = [:]
 
     // Table drawing config (set on each restyle).
     public var tables: [TableInfo] = [] {
@@ -292,6 +295,15 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
                     newProps[i] = .null
                     changed = true
                 }
+            } else if storage.attribute(.vireoCodeBlock, at: charIndex,
+                                        effectiveRange: nil) != nil,
+                      storage.attribute(.vireoMarker, at: charIndex,
+                                        effectiveRange: nil) != nil,
+                      ns.character(at: charIndex) == 0x0A {
+                // Keep fenced-code line endings as transparent geometry. Their
+                // compact paragraph style supplies symmetric surface padding
+                // while every visible fence character remains null-hidden.
+                newProps[i] = props[i]
             } else if storage.attribute(.vireoMarker, at: charIndex, effectiveRange: nil) != nil {
                 newProps[i] = .null
                 changed = true
@@ -323,6 +335,105 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     }
 
     // MARK: Draw bullets / checkboxes / images
+
+    public override func drawBackground(forGlyphRange glyphsToShow: NSRange,
+                                        at origin: NSPoint) {
+        codeBlockRects.removeAll(keepingCapacity: true)
+        quoteBarRects.removeAll(keepingCapacity: true)
+        thematicRuleRects.removeAll(keepingCapacity: true)
+        drawBlockDecorations(forGlyphRange: glyphsToShow, origin: origin)
+        super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+    }
+
+    /// Draw block-level surfaces behind glyph backgrounds and selection. Work
+    /// is bounded to the glyph range TextKit asked to paint, so a long code or
+    /// quote block does not force layout of its off-screen remainder.
+    private func drawBlockDecorations(forGlyphRange glyphsToShow: NSRange,
+                                      origin: NSPoint) {
+        guard let storage = textStorage, !textContainers.isEmpty else { return }
+        let visibleCharacters = characterRange(forGlyphRange: glyphsToShow,
+                                               actualGlyphRange: nil)
+        let full = NSRange(location: 0, length: storage.length)
+
+        func decorations(for key: NSAttributedString.Key)
+            -> [(range: NSRange, color: NSColor)] {
+            var found: [(NSRange, NSColor)] = []
+            var seen: Set<Int> = []
+            storage.enumerateAttribute(key, in: visibleCharacters) { value, range, _ in
+                guard value != nil, range.location < storage.length else { return }
+                var effective = NSRange()
+                guard let color = storage.attribute(
+                    key, at: range.location, longestEffectiveRange: &effective, in: full
+                ) as? NSColor,
+                seen.insert(effective.location).inserted,
+                storage.attribute(.vireoCollapsed, at: effective.location,
+                                  effectiveRange: nil) == nil else { return }
+                found.append((effective, color))
+            }
+            return found
+        }
+
+        for decoration in decorations(for: .vireoCodeBlock) {
+            guard let bounds = decorationBounds(
+                for: decoration.range, visibleCharacters: visibleCharacters
+            ) else { continue }
+            let rect = bounds.offsetBy(dx: origin.x, dy: origin.y)
+                .insetBy(dx: 4, dy: 1)
+            codeBlockRects[decoration.range.location] = rect
+            let surface = NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7)
+            decoration.color.setFill()
+            surface.fill()
+            NSColor.separatorColor.withAlphaComponent(0.35).setStroke()
+            surface.lineWidth = 0.5
+            surface.stroke()
+        }
+
+        for decoration in decorations(for: .vireoBlockQuote) {
+            guard let bounds = decorationBounds(
+                for: decoration.range, visibleCharacters: visibleCharacters
+            ) else { continue }
+            let rect = NSRect(x: origin.x + bounds.minX + 5,
+                              y: origin.y + bounds.minY + 2,
+                              width: 3, height: max(1, bounds.height - 4))
+            quoteBarRects[decoration.range.location] = rect
+            decoration.color.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5).fill()
+        }
+
+        for decoration in decorations(for: .vireoThematicBreak) {
+            guard let bounds = decorationBounds(
+                for: decoration.range, visibleCharacters: visibleCharacters
+            ) else { continue }
+            let left = origin.x + bounds.minX + 16
+            let right = origin.x + bounds.maxX - 16
+            guard right > left else { continue }
+            let rule = NSBezierPath()
+            rule.lineWidth = 1
+            rule.move(to: NSPoint(x: left, y: origin.y + bounds.midY))
+            rule.line(to: NSPoint(x: right, y: origin.y + bounds.midY))
+            decoration.color.setStroke()
+            rule.stroke()
+            thematicRuleRects[decoration.range.location] = NSRect(
+                x: left, y: origin.y + bounds.midY - 0.5,
+                width: right - left, height: 1
+            )
+        }
+    }
+
+    private func decorationBounds(for range: NSRange,
+                                  visibleCharacters: NSRange) -> NSRect? {
+        let visible = NSIntersectionRange(range, visibleCharacters)
+        guard visible.length > 0 else { return nil }
+        let glyphs = glyphRange(forCharacterRange: visible,
+                                actualCharacterRange: nil)
+        guard glyphs.length > 0 else { return nil }
+        var bounds: NSRect?
+        enumerateLineFragments(forGlyphRange: glyphs) { fragment, _, _, lineGlyphs, _ in
+            guard NSIntersectionRange(glyphs, lineGlyphs).length > 0 else { return }
+            bounds = bounds.map { NSUnionRect($0, fragment) } ?? fragment
+        }
+        return bounds
+    }
 
     public override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
         let signpost = VireoPerformanceTrace.begin("Visible Draw")

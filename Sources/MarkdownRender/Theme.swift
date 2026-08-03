@@ -10,6 +10,12 @@ public extension NSAttributedString.Key {
     static let vireoImage = NSAttributedString.Key("vireoImage")
     /// Image alt text on the draw anchor, used for a calm missing/loading fallback.
     static let vireoImageAlt = NSAttributedString.Key("vireoImageAlt")
+    /// Full fenced-code range; value is its coherent surface color (NSColor).
+    static let vireoCodeBlock = NSAttributedString.Key("vireoCodeBlock")
+    /// Full quote range; value is the leading quote-bar color (NSColor).
+    static let vireoBlockQuote = NSAttributedString.Key("vireoBlockQuote")
+    /// Hidden thematic-break anchor; value is the drawn rule color (NSColor).
+    static let vireoThematicBreak = NSAttributedString.Key("vireoThematicBreak")
     /// Bullet/number text drawn left of this (visible) char (NSString).
     static let vireoBullet = NSAttributedString.Key("vireoBullet")
     /// Task checkbox state drawn left of this (visible) char (NSNumber bool).

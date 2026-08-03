@@ -11,6 +11,7 @@ struct RenderStyleCache {
     let headingAttributes: [Int: [NSAttributedString.Key: Any]]
     let quoteAttributes: [NSAttributedString.Key: Any]
     let codeBlockAttributes: [NSAttributedString.Key: Any]
+    let codeFenceParagraph: NSParagraphStyle
     let tableHeaderRowAttributes: [NSAttributedString.Key: Any]
     let tableBodyRowAttributes: [NSAttributedString.Key: Any]
     let ruleAttributes: [NSAttributedString.Key: Any]
@@ -62,6 +63,7 @@ struct RenderStyleCache {
             .foregroundColor: theme.secondaryColor,
             .paragraphStyle: quote,
             .font: italicFont,
+            .vireoBlockQuote: theme.quoteBarColor,
         ]
 
         let code = NSMutableParagraphStyle()
@@ -71,9 +73,15 @@ struct RenderStyleCache {
         codeBlockAttributes = [
             .font: theme.codeFont,
             .foregroundColor: theme.codeColor,
-            .backgroundColor: theme.codeBackground,
             .paragraphStyle: code,
+            .vireoCodeBlock: theme.codeBackground,
         ]
+        let codeFence = NSMutableParagraphStyle()
+        codeFence.minimumLineHeight = 8 * theme.zoom
+        codeFence.maximumLineHeight = 8 * theme.zoom
+        codeFence.firstLineHeadIndent = 12
+        codeFence.headIndent = 12
+        codeFenceParagraph = codeFence
         inlineCodeAttributes = [
             .font: theme.codeFont,
             .foregroundColor: theme.codeColor,
@@ -87,10 +95,10 @@ struct RenderStyleCache {
             .font: theme.tableFont,
             .foregroundColor: theme.textColor,
         ]
-        let rule = NSMutableParagraphStyle()
-        rule.alignment = .center
+        let rule = body.mutableCopy() as! NSMutableParagraphStyle
+        rule.minimumLineHeight = 24 * theme.zoom
+        rule.maximumLineHeight = 24 * theme.zoom
         ruleAttributes = [
-            .foregroundColor: theme.ruleColor,
             .paragraphStyle: rule,
         ]
 
