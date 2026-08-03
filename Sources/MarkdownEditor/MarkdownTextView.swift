@@ -15,7 +15,7 @@ public final class MarkdownTextView: NSTextView {
     private var markdownAccessibilityElements: [String: MarkdownAccessibilityElement] = [:]
     private var cachedAccessibilityIndex = MarkerIndex.empty
     private var cachedAccessibilityBase = MarkerIndex.empty
-    private var cachedAccessibilityTableRanges: [NSRange] = []
+    private var cachedAccessibilityAdditionalRanges: [NSRange] = []
 
     public override var undoManager: UndoManager? { persistentUndoManager }
 
@@ -920,16 +920,37 @@ public final class MarkdownTextView: NSTextView {
 
     /// Tables are rendered as semantic accessibility children below, so their
     /// transparent pipes/separator rows must not also leak through the text
-    /// area's backing-source representation.
+    /// area's backing-source representation. Folded descendants similarly
+    /// stay out of the text value until the user expands their parent.
     private func accessibilityTextIndex() -> MarkerIndex? {
         guard let storage = textStorage, let controller else { return nil }
         let tableRanges = controller.parsed.tables.map(\.range)
+        let collapsed = (controller.parsed.listMarkers.map {
+            ($0.anchor, $0.subtreeRange)
+        } + controller.parsed.tasks.map {
+            ($0.anchor, $0.subtreeRange)
+        } + controller.parsed.headings.map {
+            ($0.anchor, $0.subtreeRange)
+        }).compactMap { anchor, subtree -> NSRange? in
+            guard (layoutManager as? MarkdownLayoutManager)?
+                .collapsedAnchors.contains(anchor) == true,
+                  var subtree else { return nil }
+            if subtree.location > 0 {
+                subtree = NSRange(location: subtree.location - 1,
+                                  length: subtree.length + 1)
+            }
+            return subtree
+        }
+        let additionalRanges = (tableRanges + collapsed).sorted {
+            $0.location == $1.location ? $0.length < $1.length
+                                       : $0.location < $1.location
+        }
         if cachedAccessibilityBase != controller.markerIndex
-            || cachedAccessibilityTableRanges != tableRanges {
+            || cachedAccessibilityAdditionalRanges != additionalRanges {
             cachedAccessibilityBase = controller.markerIndex
-            cachedAccessibilityTableRanges = tableRanges
+            cachedAccessibilityAdditionalRanges = additionalRanges
             cachedAccessibilityIndex = MarkerIndex(
-                ranges: controller.markerIndex.ranges + tableRanges,
+                ranges: controller.markerIndex.ranges + additionalRanges,
                 sourceLength: storage.length
             )
         }
@@ -1077,7 +1098,7 @@ public final class MarkdownTextView: NSTextView {
         var usedIDs: Set<String> = []
         var ordered: [(location: Int, element: MarkdownAccessibilityElement)] = []
 
-        func element(id: String, role: NSAccessibility.Role, label: String,
+        func element(id: String, role: NSAccessibility.Role, label: String?,
                      frame: NSRect, parent: Any? = nil, value: Any? = nil,
                      help: String? = nil,
                      press: (() -> Bool)? = nil) -> MarkdownAccessibilityElement {
@@ -1161,7 +1182,7 @@ public final class MarkdownTextView: NSTextView {
             let item = element(
                 id: "markdown-image-\(image.anchor)", role: .image,
                 label: alt.isEmpty ? "Image" : alt,
-                frame: accessibilityScreenFrame(for: rect),
+                frame: accessibilityScreenFrame(forContainerRect: rect),
                 help: "Image source: \(image.source). Press to edit.",
                 press: { [weak controller] in
                     controller?.editImage(atAnchor: image.anchor)
@@ -1169,6 +1190,21 @@ public final class MarkdownTextView: NSTextView {
                 }
             )
             ordered.append((image.anchor, item))
+        }
+
+        for block in controller.parsed.sourceBlocks {
+            guard let rect = layout.sourceBlockRects[block.anchor] else { continue }
+            let label: String
+            switch block.kind {
+            case .metadata(let value), .unsupportedHTML(let value):
+                label = value
+            }
+            let item = element(
+                id: "markdown-source-block-\(block.anchor)", role: .staticText,
+                label: nil, frame: accessibilityScreenFrame(forContainerRect: rect),
+                value: label
+            )
+            ordered.append((block.anchor, item))
         }
 
         let visibleSource = super.accessibilityVisibleCharacterRange()
@@ -1195,7 +1231,7 @@ public final class MarkdownTextView: NSTextView {
             let tableElement = element(
                 id: "markdown-table-\(table.anchor)", role: .table,
                 label: "Table, \(table.rows.count) rows, \(table.columnCount) columns",
-                frame: accessibilityScreenFrame(for: tableRect)
+                frame: accessibilityScreenFrame(forContainerRect: tableRect)
             )
             var rowElements: [MarkdownAccessibilityElement] = []
             for rowIndex in table.rows.indices {
@@ -1210,7 +1246,7 @@ public final class MarkdownTextView: NSTextView {
                     id: "markdown-table-\(table.anchor)-row-\(rowIndex)",
                     role: .row,
                     label: rowIndex == 0 ? "Header row" : "Row \(rowIndex)",
-                    frame: accessibilityScreenFrame(for: rowRect),
+                    frame: accessibilityScreenFrame(forContainerRect: rowRect),
                     parent: tableElement
                 )
                 var cells: [MarkdownAccessibilityElement] = []
@@ -1227,7 +1263,7 @@ public final class MarkdownTextView: NSTextView {
                     let cellElement = element(
                         id: "markdown-table-\(table.anchor)-cell-\(geometry.id.row)-\(geometry.id.column)",
                         role: .cell, label: cellLabel,
-                        frame: accessibilityScreenFrame(for: geometry.rect),
+                        frame: accessibilityScreenFrame(forContainerRect: geometry.rect),
                         parent: rowElement, value: cellValue,
                         help: "Press to edit this table cell.",
                         press: { [weak controller] in
@@ -1269,6 +1305,11 @@ public final class MarkdownTextView: NSTextView {
     private func accessibilityScreenFrame(for viewRect: NSRect) -> NSRect {
         guard let window else { return viewRect }
         return window.convertToScreen(convert(viewRect, to: nil))
+    }
+
+    private func accessibilityScreenFrame(forContainerRect rect: NSRect) -> NSRect {
+        accessibilityScreenFrame(for: rect.offsetBy(dx: textContainerOrigin.x,
+                                                     dy: textContainerOrigin.y))
     }
 
     func notifyAccessibilityLayoutChanged() {

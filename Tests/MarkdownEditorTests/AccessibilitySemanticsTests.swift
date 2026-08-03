@@ -6,6 +6,10 @@ import MarkdownRender
 @MainActor
 final class AccessibilitySemanticsTests: XCTestCase {
     private let source = """
+    ---
+    title: Internal only
+    ---
+
     # Overview
 
     - [ ] Parent task
@@ -53,6 +57,10 @@ final class AccessibilitySemanticsTests: XCTestCase {
         XCTAssertEqual(image.accessibilityLabel(), "Architecture diagram")
         XCTAssertTrue(image.accessibilityHelp()?.contains("missing.png") == true)
 
+        let sourceBlock = try element(with: .staticText, in: children)
+        XCTAssertEqual(sourceBlock.accessibilityValue() as? String,
+                       "Front matter · 1 field")
+
         let table = try element(with: .table, in: children)
         let rows = table.accessibilityChildren() as? [MarkdownAccessibilityElement]
         XCTAssertEqual(rows?.count, 2)
@@ -71,6 +79,10 @@ final class AccessibilitySemanticsTests: XCTestCase {
         XCTAssertFalse(value.contains("| --- |"))
         XCTAssertFalse(value.contains("https://example.com/vireo"),
                        "the hidden link destination must stay out of the text value")
+        XCTAssertFalse(value.contains("missing.png"),
+                       "image source must be announced by its semantic element only")
+        XCTAssertFalse(value.contains("Internal only"),
+                       "source-only metadata must not leak through the text value")
         XCTAssertTrue(value.contains("Read Vireo."))
 
         let layout = try XCTUnwrap(harness.textView.layoutManager
@@ -81,9 +93,51 @@ final class AccessibilitySemanticsTests: XCTestCase {
         let disclosure = try XCTUnwrap(layout.chevronRects.values.first)
         XCTAssertGreaterThanOrEqual(disclosure.width, 40)
         XCTAssertGreaterThanOrEqual(disclosure.height, 40)
+        let parentTask = try XCTUnwrap(harness.controller.parsed.tasks.first {
+            $0.subtreeRange != nil
+        })
+        let taskCheckbox = try XCTUnwrap(layout.checkboxRects[parentTask.anchor])
+        let taskDisclosure = try XCTUnwrap(layout.chevronRects[parentTask.anchor])
+        XCTAssertTrue(NSIntersectionRect(taskCheckbox, taskDisclosure).isEmpty,
+                      "adjacent 40-point actions must not compete for the same click")
         for cell in layout.tableCellGeometries.values {
             XCTAssertGreaterThanOrEqual(cell.rect.height, 40)
         }
+    }
+
+    func testCollapsedContentLeavesAccessibilityTextUntilExpanded() throws {
+        let harness = makeHarness()
+        let parentTask = try XCTUnwrap(harness.controller.parsed.tasks.first {
+            $0.subtreeRange != nil
+        })
+        let disclosure = try XCTUnwrap(customChildren(of: harness.textView)
+            .first { $0.accessibilityIdentifier() == "markdown-fold-\(parentTask.anchor)" })
+
+        XCTAssertTrue(harness.textView.accessibilityValue()?.contains("child") == true)
+        XCTAssertTrue(disclosure.accessibilityPerformPress())
+        draw(harness.textView)
+        XCTAssertFalse(harness.textView.accessibilityValue()?.contains("child") == true)
+    }
+
+    func testContainerGeometryConvertsToScreenCoordinates() throws {
+        let harness = makeHarness()
+        let layout = try XCTUnwrap(harness.textView.layoutManager
+            as? MarkdownLayoutManager)
+        let imageRun = try XCTUnwrap(harness.controller.parsed.images.first)
+        let containerRect = try XCTUnwrap(layout.imageRects[imageRun.anchor])
+        let imageElement = try XCTUnwrap(customChildren(of: harness.textView)
+            .first { $0.accessibilityIdentifier() == "markdown-image-\(imageRun.anchor)" })
+        let viewRect = containerRect.offsetBy(dx: harness.textView.textContainerOrigin.x,
+                                              dy: harness.textView.textContainerOrigin.y)
+        let expected = harness.window.convertToScreen(
+            harness.textView.convert(viewRect, to: nil)
+        )
+        let actual = imageElement.accessibilityFrame()
+
+        XCTAssertEqual(actual.origin.x, expected.origin.x, accuracy: 0.5)
+        XCTAssertEqual(actual.origin.y, expected.origin.y, accuracy: 0.5)
+        XCTAssertEqual(actual.width, expected.width, accuracy: 0.5)
+        XCTAssertEqual(actual.height, expected.height, accuracy: 0.5)
     }
 
     private func makeHarness() -> (controller: EditorController,
@@ -101,6 +155,7 @@ final class AccessibilitySemanticsTests: XCTestCase {
             ?? NSRect(x: 0, y: 0, width: 760, height: 900)
         window.contentView = stack.scroll
         stack.textView.frame = NSRect(x: 0, y: 0, width: 760, height: 1_600)
+        stack.textView.textContainerInset = NSSize(width: 37, height: 29)
         controller.restyle()
         draw(stack.textView)
         return (controller, stack.textView, window)

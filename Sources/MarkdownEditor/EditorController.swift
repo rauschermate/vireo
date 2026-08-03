@@ -624,6 +624,7 @@ public final class EditorController: ObservableObject {
 
         invalidateTable(anchor: anchor)
         syncTableScrollers()
+        textView?.notifyAccessibilityLayoutChanged()
     }
 
     private func invalidateTable(anchor: Int) {

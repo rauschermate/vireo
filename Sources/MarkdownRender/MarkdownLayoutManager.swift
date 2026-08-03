@@ -137,6 +137,7 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         dotsRects.removeAll(keepingCapacity: true)
         checkboxRects.removeAll(keepingCapacity: true)
         imageRects.removeAll(keepingCapacity: true)
+        sourceBlockRects.removeAll(keepingCapacity: true)
     }
 
     public func tableCell(at point: NSPoint) -> TableCellGeometry? {
@@ -221,6 +222,9 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     /// anchor. Keeping these independent of a particular drawing pass matters:
     /// AppKit may translate `origin` while drawing a scrolled dirty region.
     public private(set) var imageRects: [Int: NSRect] = [:]
+    /// Metadata / unsupported-HTML placeholder bounds in text-container
+    /// coordinates, keyed by their source anchor.
+    public private(set) var sourceBlockRects: [Int: NSRect] = [:]
 
     public override init() {
         super.init()
@@ -502,6 +506,7 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     // MARK: Source-only placeholders
 
     private func drawSourceBlock(label: String, atCharIndex charIndex: Int, origin: NSPoint) {
+        sourceBlockRects[charIndex] = nil
         guard let storage = textStorage, charIndex < storage.length else { return }
         let glyph = glyphIndexForCharacter(at: charIndex)
         guard glyph < numberOfGlyphs else { return }
@@ -520,9 +525,11 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         ]
         let textSize = (label as NSString).size(withAttributes: attrs)
         let width = horizontal * 2 + iconSize + gap + textSize.width
-        let x = origin.x + line.minX + location.x
-        let y = origin.y + line.minY + (line.height - height) / 2
-        let rect = NSRect(x: x, y: y, width: width, height: height)
+        let containerRect = NSRect(x: line.minX + location.x,
+                                   y: line.minY + (line.height - height) / 2,
+                                   width: width, height: height)
+        sourceBlockRects[charIndex] = containerRect
+        let rect = containerRect.offsetBy(dx: origin.x, dy: origin.y)
 
         NSColor.controlBackgroundColor.withAlphaComponent(0.72).setFill()
         let pill = NSBezierPath(roundedRect: rect, xRadius: height / 2, yRadius: height / 2)
@@ -695,8 +702,18 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         guard subtree(forAnchor: anchor) != nil,
               let geo = markerGeometry(anchor: anchor, markerText: markerText) else { return }
 
-        // Chevron sits left of the drawn marker; points right when collapsed.
-        let center = NSPoint(x: origin.x + geo.textX - geo.markerWidth - 5 - 12,
+        // A parent task has both a disclosure control and a checkbox. Keep
+        // their 40-point targets adjacent rather than overlapping so either
+        // action remains unambiguous. Ordinary list markers have no second
+        // control and retain their more compact visual placement.
+        let centerX: CGFloat
+        if markerText == nil {
+            let checkboxCenterX = origin.x + geo.textX - geo.markerWidth / 2 - 6
+            centerX = checkboxCenterX - 40
+        } else {
+            centerX = origin.x + geo.textX - geo.markerWidth - 5 - 12
+        }
+        let center = NSPoint(x: centerX,
                              y: origin.y + geo.baseline - bulletFont.capHeight / 2)
         chevronRects[anchor] = minimumHitRect(centeredAt: center)
         guard collapsed || hovered else { return }
