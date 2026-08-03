@@ -1,7 +1,7 @@
 # Editor quality gates
 
 This matrix turns the boundary cases identified in the
-[editor review](https://github.com/rauschermate/vireo/blob/review/docs/editor-review.md)
+[editor review](../docs/editor-review.md#p1--current-tests-do-not-protect-the-whole-experience)
 into named, repeatable gates.
 Coverage is distributed across the focused implementation PRs so a regression
 fails next to the subsystem that owns it. Run all gates after the stack is
@@ -34,7 +34,7 @@ swift run VireoSnapshot samples/welcome.md /tmp/vireo-light.png
 swift run VireoSnapshot samples/welcome.md /tmp/vireo-dark.png --dark
 ```
 
-After PR #34 is present, also run its release-mode benchmark suite:
+Also run the release-mode performance budget suite:
 
 ```sh
 swift run -c release VireoSnapshot --benchmark-suite
