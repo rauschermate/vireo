@@ -291,9 +291,27 @@ public final class EditorController: ObservableObject {
 
     /// Hover target for the collapse chevron (set from mouse tracking).
     public func setHoveredListAnchor(_ anchor: Int?) {
-        guard layoutManager?.hoveredAnchor != anchor else { return }
-        layoutManager?.hoveredAnchor = anchor
-        textView?.needsDisplay = true
+        guard let layout = layoutManager, layout.hoveredAnchor != anchor else { return }
+        let previous = layout.hoveredAnchor
+        layout.hoveredAnchor = anchor
+
+        // These chevrons are custom layout-manager drawing, not attributed
+        // glyphs. Invalidate both affected lines explicitly so TextKit cannot
+        // reuse a cached heading display when hover enters or leaves it.
+        if let tv = textView, let storage = tv.textStorage, storage.length > 0 {
+            let source = storage.string as NSString
+            for candidate in Set([previous, anchor].compactMap { $0 }) {
+                let location = min(max(0, candidate), storage.length - 1)
+                let line = source.lineRange(for: NSRange(location: location,
+                                                         length: 0))
+                layout.invalidateDisplay(forCharacterRange: line)
+                if let rect = layout.collapseHoverRects[candidate] {
+                    tv.setNeedsDisplay(rect.insetBy(dx: -2, dy: -2))
+                }
+            }
+        } else {
+            textView?.needsDisplay = true
+        }
     }
 
     /// Full restyle: theme, zoom or appearance changed, so every attribute must

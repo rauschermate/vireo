@@ -729,21 +729,7 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
                              y: origin.y + geo.baseline - bulletFont.capHeight / 2)
         chevronRects[anchor] = minimumHitRect(centeredAt: center)
         guard collapsed || hovered else { return }
-        let chevron = NSBezierPath()
-        chevron.lineWidth = 1.8
-        chevron.lineCapStyle = .round
-        chevron.lineJoinStyle = .round
-        if collapsed { // ›
-            chevron.move(to: NSPoint(x: center.x - 2, y: center.y - 4))
-            chevron.line(to: NSPoint(x: center.x + 2, y: center.y))
-            chevron.line(to: NSPoint(x: center.x - 2, y: center.y + 4))
-        } else {       // ⌄
-            chevron.move(to: NSPoint(x: center.x - 4, y: center.y - 2))
-            chevron.line(to: NSPoint(x: center.x, y: center.y + 2))
-            chevron.line(to: NSPoint(x: center.x + 4, y: center.y - 2))
-        }
-        (collapsed ? NSColor.controlAccentColor : NSColor.secondaryLabelColor).setStroke()
-        chevron.stroke()
+        drawDisclosureChevron(at: center, collapsed: collapsed)
         // `…` after the collapsed line's text; click to expand.
         if collapsed, anchor < numberOfGlyphs {
             let glyph = glyphIndexForCharacter(at: anchor)
@@ -785,17 +771,33 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
             height: lineRect.height
         )
 
-        // Chevron in the left margin of the heading text; points right when
-        // collapsed (matches the list chevron's geometry and colors).
-        let center = NSPoint(x: textX - 14, y: baseline - font.capHeight / 2)
+        // Use the identical icon, spacing, color and state treatment as an
+        // unmarked collapsible list row. Headings differ only in the font used
+        // to find their vertical center.
+        let center = NSPoint(x: textX - 17, y: baseline - font.capHeight / 2)
         chevronRects[anchor] = minimumHitRect(centeredAt: center)
         guard collapsed || hovered else { return }
+        drawDisclosureChevron(at: center, collapsed: collapsed)
+
+        // `…` after the collapsed heading's text; click to expand.
         if collapsed {
-            let d: CGFloat = 18
-            NSColor.controlAccentColor.withAlphaComponent(0.15).setFill()
-            NSBezierPath(ovalIn: NSRect(x: center.x - d / 2, y: center.y - d / 2,
-                                        width: d, height: d)).fill()
+            let used = lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
+            let dots = "…" as NSString
+            let attrs: [NSAttributedString.Key: Any] = [.font: font,
+                                                        .foregroundColor: NSColor.tertiaryLabelColor]
+            let size = dots.size(withAttributes: attrs)
+            let at = NSPoint(x: origin.x + used.maxX + 8, y: baseline - font.ascender)
+            dots.draw(at: at, withAttributes: attrs)
+            let visual = NSRect(x: at.x - 4, y: at.y,
+                                width: size.width + 12, height: size.height)
+            dotsRects[anchor] = minimumHitRect(containing: visual)
         }
+    }
+
+    /// One disclosure glyph for lists, tasks and headings. Keeping this in a
+    /// single renderer prevents the heading affordance from drifting from the
+    /// list interaction as either is polished.
+    private func drawDisclosureChevron(at center: NSPoint, collapsed: Bool) {
         let chevron = NSBezierPath()
         chevron.lineWidth = 1.8
         chevron.lineCapStyle = .round
@@ -811,19 +813,6 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         }
         (collapsed ? NSColor.controlAccentColor : NSColor.secondaryLabelColor).setStroke()
         chevron.stroke()
-        // `…` after the collapsed heading's text; click to expand.
-        if collapsed {
-            let used = lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
-            let dots = "…" as NSString
-            let attrs: [NSAttributedString.Key: Any] = [.font: font,
-                                                        .foregroundColor: NSColor.tertiaryLabelColor]
-            let size = dots.size(withAttributes: attrs)
-            let at = NSPoint(x: origin.x + used.maxX + 8, y: baseline - font.ascender)
-            dots.draw(at: at, withAttributes: attrs)
-            let visual = NSRect(x: at.x - 4, y: at.y,
-                                width: size.width + 12, height: size.height)
-            dotsRects[anchor] = minimumHitRect(containing: visual)
-        }
     }
 
     /// Accent halo behind a collapsed item's bullet.
