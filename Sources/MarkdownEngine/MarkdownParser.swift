@@ -725,6 +725,21 @@ private struct Accumulator {
         var lines: [NSRange] = []
         enumerateLines(in: NSRange(location: 0, length: ns.length)) { lines.append($0) }
         var frontMatterRange: NSRange?
+        // A definition-like line inside code, a table, ordinary paragraph
+        // continuation, or an HTML block is literal content. cmark has already
+        // classified those ranges, so never let the metadata fallback hide
+        // them merely because their trimmed text starts with `[label]:`.
+        let literalContent = result.blockRuns.compactMap { run -> NSRange? in
+            switch run.kind {
+            case .paragraph, .codeBlock, .tableRow:
+                return run.range
+            default:
+                return nil
+            }
+        }
+        func isLiteralContent(_ line: NSRange) -> Bool {
+            literalContent.contains { NSIntersectionRange($0, line).length > 0 }
+        }
 
         if recognizesFrontMatter, lines.count >= 2, trimmedLine(lines[0]) == "---" {
             for index in 1..<lines.count {
@@ -754,13 +769,18 @@ private struct Accumulator {
                 index += 1
                 continue
             }
-            guard referenceLabel(in: lines[index]) != nil else { index += 1; continue }
+            guard !isLiteralContent(lines[index]),
+                  referenceLabel(in: lines[index]) != nil else {
+                index += 1
+                continue
+            }
             let start = lines[index].location
             var end = lines[index].upperBound
             var count = 1
             index += 1
             while index < lines.count {
-                if referenceLabel(in: lines[index]) != nil {
+                if !isLiteralContent(lines[index]),
+                   referenceLabel(in: lines[index]) != nil {
                     end = lines[index].upperBound
                     count += 1
                     index += 1
@@ -769,7 +789,8 @@ private struct Accumulator {
                 // CommonMark permits a reference title on the following,
                 // indented line. It is source plumbing too, so collapse it with
                 // the definition instead of leaving a lone quoted title behind.
-                if isReferenceTitleContinuation(lines[index]) {
+                if !isLiteralContent(lines[index]),
+                   isReferenceTitleContinuation(lines[index]) {
                     end = lines[index].upperBound
                     index += 1
                     continue

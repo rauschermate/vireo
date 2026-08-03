@@ -46,6 +46,32 @@ final class SourceTreatmentTests: XCTestCase {
         XCTAssertTrue(parsed.sourceBlocks.isEmpty)
     }
 
+    func testReferenceLikeLinesInsideLiteralBlocksStayContent() {
+        let source = """
+        ```text
+        [fenced]: https://example.com/fenced
+        ```
+
+            [indented]: https://example.com/indented
+
+        <section>
+        [html]: https://example.com/html
+        </section>
+        """
+        let parsed = parser.parse(source)
+
+        XCTAssertFalse(parsed.sourceBlocks.contains {
+            if case .metadata = $0.kind { return true }
+            return false
+        })
+        XCTAssertTrue(parsed.sourceBlocks.contains {
+            if case .unsupportedHTML(let label) = $0.kind {
+                return label == "HTML section block · not rendered"
+            }
+            return false
+        })
+    }
+
     func testSafeInlineHTMLStylesContentAndHidesTags() {
         let source = "Press <kbd>⌘K</kbd>, <u>under</u>, <mark>bright</mark>."
         let parsed = parser.parse(source)
