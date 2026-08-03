@@ -31,7 +31,7 @@ struct TOCSidebar: View {
             .padding(.vertical, 10)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
+                LazyVStack(alignment: .leading, spacing: 2) {
                     ForEach(document.toc) { entry in
                         TOCRow(entry: entry) {
                             document.controller.scroll(to: entry.location)
