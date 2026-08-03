@@ -21,7 +21,7 @@ struct ChromeRow: View {
                 Image(systemName: "sidebar.left")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(state.showFileSidebar ? Color.accentColor : .secondary)
-                    .frame(width: 40, height: 40)
+                    .frame(width: 26, height: 26)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -54,15 +54,15 @@ struct TabStrip: View {
     @EnvironmentObject private var state: AppState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private static let minTabWidth: CGFloat = 96
+    private static let minTabWidth: CGFloat = 72
     /// The active tab stays readable: it never shrinks below this even when
     /// the others are squeezed to `minTabWidth`.
-    private static let activeMinTabWidth: CGFloat = 112
-    private static let maxTabWidth: CGFloat = 220
+    private static let activeMinTabWidth: CGFloat = 96
+    private static let maxTabWidth: CGFloat = 200
     private static let spacing: CGFloat = 3
     /// Traffic lights + sidebar button + overflow chevron + margins.
-    private static let reservedChrome: CGFloat = 220
-    private static let plusButtonWidth: CGFloat = 40
+    private static let reservedChrome: CGFloat = 190
+    private static let plusButtonWidth: CGFloat = 30
     private static let dividerWidth: CGFloat = 1
 
     var body: some View {
@@ -92,7 +92,7 @@ struct TabStrip: View {
                         Image(systemName: "plus")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary)
-                            .frame(width: 40, height: 40)
+                            .frame(width: 24, height: 24)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -158,7 +158,7 @@ struct TabOverflowMenu: View {
             Image(systemName: "chevron.down")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
-                .frame(width: 40, height: 40)
+                .frame(width: 24, height: 24)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -299,7 +299,7 @@ private struct TabItem: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 8.5, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 40, height: 40)
+                    .frame(width: 16, height: 16)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -308,7 +308,7 @@ private struct TabItem: View {
         }
         .padding(.leading, 10)
         .padding(.trailing, 5)
-        .frame(height: 40)
+        .frame(height: 26)
         .frame(width: width, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 6)

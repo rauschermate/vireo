@@ -412,10 +412,15 @@ public final class MarkdownTextView: NSTextView {
 
     /// The collapsible list-item or heading anchor on the hovered line, if any.
     private func collapsibleAnchorOnLine(at event: NSEvent) -> Int? {
+        let point = convert(event.locationInWindow, from: nil)
+        if let layout = layoutManager as? MarkdownLayoutManager,
+           let anchor = nearestCandidate(at: point,
+                                         in: layout.collapseHoverRects)?.anchor {
+            return anchor
+        }
         guard let storage = textStorage, storage.length > 0,
               let lm = layoutManager, let container = textContainer,
               let controller else { return nil }
-        let point = convert(event.locationInWindow, from: nil)
         let inset = textContainerInset
         let local = NSPoint(x: point.x - inset.width, y: point.y - inset.height)
         let glyph = lm.glyphIndex(for: local, in: container)

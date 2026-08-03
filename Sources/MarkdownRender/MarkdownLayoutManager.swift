@@ -135,6 +135,7 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         tableScrollGeometries.removeAll(keepingCapacity: true)
         chevronRects.removeAll(keepingCapacity: true)
         dotsRects.removeAll(keepingCapacity: true)
+        collapseHoverRects.removeAll(keepingCapacity: true)
         checkboxRects.removeAll(keepingCapacity: true)
         imageRects.removeAll(keepingCapacity: true)
         sourceBlockRects.removeAll(keepingCapacity: true)
@@ -217,6 +218,10 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     /// chevron toggles and collapsed-`…` expanders, keyed by item anchor.
     public private(set) var chevronRects: [Int: NSRect] = [:]
     public private(set) var dotsRects: [Int: NSRect] = [:]
+    /// Full collapsible line bounds in text-view coordinates. These make
+    /// heading disclosure hover reliable even when the pointer approaches
+    /// through the leading margin rather than directly over a glyph.
+    public private(set) var collapseHoverRects: [Int: NSRect] = [:]
     public private(set) var checkboxRects: [Int: NSRect] = [:]
     /// Rendered image hit targets in text-container coordinates, keyed by source
     /// anchor. Keeping these independent of a particular drawing pass matters:
@@ -699,8 +704,15 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let hovered = hoveredAnchor == anchor
         chevronRects[anchor] = nil
         dotsRects[anchor] = nil
+        collapseHoverRects[anchor] = nil
         guard subtree(forAnchor: anchor) != nil,
               let geo = markerGeometry(anchor: anchor, markerText: markerText) else { return }
+        collapseHoverRects[anchor] = NSRect(
+            x: origin.x + geo.lineRect.minX - 48,
+            y: origin.y + geo.lineRect.minY,
+            width: geo.lineRect.width + 48,
+            height: geo.lineRect.height
+        )
 
         // A parent task has both a disclosure control and a checkbox. Keep
         // their 40-point targets adjacent rather than overlapping so either
@@ -756,6 +768,7 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let hovered = hoveredAnchor == anchor
         chevronRects[anchor] = nil
         dotsRects[anchor] = nil
+        collapseHoverRects[anchor] = nil
         guard subtree(forAnchor: anchor) != nil,
               anchor < numberOfGlyphs else { return }
         let glyph = glyphIndexForCharacter(at: anchor)
@@ -765,6 +778,12 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let loc = location(forGlyphAt: glyph)
         let baseline = origin.y + lineRect.minY + loc.y
         let textX = origin.x + lineRect.minX + loc.x
+        collapseHoverRects[anchor] = NSRect(
+            x: origin.x + lineRect.minX - 48,
+            y: origin.y + lineRect.minY,
+            width: lineRect.width + 48,
+            height: lineRect.height
+        )
 
         // Chevron in the left margin of the heading text; points right when
         // collapsed (matches the list chevron's geometry and colors).

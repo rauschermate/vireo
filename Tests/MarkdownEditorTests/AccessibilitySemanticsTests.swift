@@ -140,6 +140,34 @@ final class AccessibilitySemanticsTests: XCTestCase {
         XCTAssertEqual(actual.height, expected.height, accuracy: 0.5)
     }
 
+    func testHeadingDisclosureActivatesFromItsHoverLineAndLeadingMargin() throws {
+        let harness = makeHarness()
+        let layout = try XCTUnwrap(harness.textView.layoutManager
+            as? MarkdownLayoutManager)
+        let heading = try XCTUnwrap(harness.controller.parsed.headings.first {
+            $0.subtreeRange != nil
+        })
+        let hoverRect = try XCTUnwrap(layout.collapseHoverRects[heading.anchor])
+        let pointInView = NSPoint(x: hoverRect.minX + 2, y: hoverRect.midY)
+        let pointInWindow = harness.textView.convert(pointInView, to: nil)
+        let event = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .mouseMoved,
+            location: pointInWindow,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: harness.window.windowNumber,
+            context: nil,
+            eventNumber: 1,
+            clickCount: 0,
+            pressure: 0
+        ))
+
+        harness.textView.mouseMoved(with: event)
+
+        XCTAssertEqual(layout.hoveredAnchor, heading.anchor)
+        XCTAssertNotNil(layout.chevronRects[heading.anchor])
+    }
+
     private func makeHarness() -> (controller: EditorController,
                                    textView: MarkdownTextView,
                                    window: NSWindow) {
