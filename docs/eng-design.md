@@ -291,7 +291,11 @@ Where the shipped implementation intentionally differs from the sections above:
   paragraph styles are cached once per render. Fenced blocks above 256 KiB keep
   their code font/surface but skip synchronous regex token coloring. Instruments
   signposts cover source notification, parse/splice, style application, glyph
-  generation, and visible draw.
+  generation, and visible draw. TextKit layout is viewport-demand-driven:
+  layout managers allow non-contiguous layout, and zero-sized pre-mount redraw
+  invalidations explicitly avoid generating glyphs. Constructing an editor or
+  jumping to a distant viewport therefore does not first typeset the full
+  document.
   - Run the deterministic release suite with
     `swift run -c release VireoSnapshot --benchmark-suite --samples 5`.
   - Export the same large sources for manual app review with

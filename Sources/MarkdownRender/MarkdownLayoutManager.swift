@@ -216,11 +216,16 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
 
     public override init() {
         super.init()
+        // Requesting a distant viewport in a large document must not first
+        // typeset every preceding character. This also keeps TextKit's idle
+        // background layout from monopolising the main thread after open.
+        allowsNonContiguousLayout = true
         self.delegate = self
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
+        allowsNonContiguousLayout = true
         self.delegate = self
     }
 

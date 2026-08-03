@@ -317,6 +317,17 @@ public final class MarkdownTextView: NSTextView {
     /// corrected rect and the last place it was drawn — otherwise the old
     /// pixel is never erased and lingers as a ghost when the caret moves away.
     public override func setNeedsDisplay(_ invalidRect: NSRect, avoidAdditionalLayout flag: Bool) {
+        // AppKit invalidates several NSTextView properties while the document
+        // view still has a zero-sized pre-mount frame. Asking TextKit to map
+        // that rect to glyphs eagerly fills every layout hole in a large
+        // document. There is no visible viewport to update yet, so preserve
+        // the invalidation while explicitly deferring layout until mounting
+        // gives the view real bounds.
+        guard bounds.width > 0, bounds.height > 0 else {
+            super.setNeedsDisplay(invalidRect, avoidAdditionalLayout: true)
+            return
+        }
+
         var union = invalidRect
         if invalidRect.width <= 2, selectedRange().length == 0 {
             union = union.union(insertionRect(for: invalidRect))
