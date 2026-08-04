@@ -1,0 +1,34 @@
+name: Editor quality
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+concurrency:
+  group: editor-quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-build-and-snapshot:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Test Swift packages
+        run: swift test
+      - name: Build app and Quick Look extension
+        run: ./scripts/build-app-xcode.sh Debug
+      - name: Render light and dark smoke snapshots
+        run: |
+          swift run VireoSnapshot samples/welcome.md /tmp/vireo-light.png
+          swift run VireoSnapshot samples/welcome.md /tmp/vireo-dark.png --dark
+      - name: Upload smoke snapshots
+        uses: actions/upload-artifact@v6
+        with:
+          name: editor-smoke-snapshots
+          path: |
+            /tmp/vireo-light.png
+            /tmp/vireo-dark.png
