@@ -62,9 +62,11 @@ architecture (§14 documents as-built deviations).
   for fast iteration. `./scripts/build-app-xcode.sh Debug` — full app + embedded
   `VireoQuickLook.appex` (needs `xcodegen`; regenerates `Vireo.xcodeproj` from
   `project.yml`).
-- **Launch the app with `open -a build/Vireo.app <files>` — never `open … --args
-  <files>`.** File paths in argv put AppKit in legacy auto-open mode which
-  suppresses SwiftUI scene creation entirely (the app runs windowless).
+- **Launch the app with `open -a "$PWD/build/Vireo.app" <files>` — never `open …
+  --args <files>`.** File paths in argv put AppKit in legacy auto-open mode which
+  suppresses SwiftUI scene creation entirely (the app runs windowless). `-a` needs
+  an *absolute* path (or an installed app's name); a relative one fails with
+  "Unable to find application named 'build/Vireo.app'".
 - **Do NOT `swift run Vireo`** to "check" it — it's a GUI app and blocks forever.
   Use the bundle via `open` instead.
 - `CGWindowListCopyWindowInfo` *does* see the user's windows (usable to verify
