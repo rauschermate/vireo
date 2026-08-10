@@ -82,7 +82,7 @@ countable. Key subtlety: for **MAU the id must be stable across the month** — 
 
 | Option | DAU/MAU? | Fit for a privacy-branded Mac app | Effort |
 |---|---|---|---|
-| **TelemetryDeck** | ✅ + retention | **Best fit** — Swift SDK (macOS/iOS/…), cookieless, EU/Germany-hosted, GDPR, built for Apple-platform indies | Low |
+| **TelemetryDeck** | ✅ + retention | **Best fit** — Swift SDK (macOS/iOS/…), cookieless, EU/Germany-hosted, GDPR, built for Apple-platform indies. Free tier: **100k signals/month** with retention + funnels included; paid from ~€9/mo | Low |
 | **PostHog** | ✅ + funnels/flags/experiments | Good if you want **one tool for site *and* app** and room to grow | Low–med |
 | **Aptabase** | ❌ **No MAU/retention** | Privacy-lovely, but stores *no* per-user id by design → can't do MAU. Wrong tool for this goal | — |
 | **DIY launch ping** | ✅ (you compute it) | Max control/privacy, zero vendors | Medium |
@@ -112,10 +112,10 @@ enum Analytics {
     static let endpoint = URL(string: "https://ping.vireo.app/ping")!
 
     static func pingIfNeeded() {
-        guard Preferences.shared.usageStatsEnabled else { return }   // Preferences toggle
         #if DEBUG
         return                                                       // don't count dev runs
-        #endif
+        #else
+        guard Preferences.shared.usageStatsEnabled else { return }   // Preferences toggle
         let today = dayKey()                                         // "2026-07-12" (UTC)
         guard UserDefaults.standard.string(forKey: "lastPingDay") != today else { return }
 
@@ -132,6 +132,7 @@ enum Analytics {
                 UserDefaults.standard.set(today, forKey: "lastPingDay")
             }
         }.resume()                                                   // fire-and-forget
+        #endif
     }
 
     /// Anonymous, random, per-install — NOT hardware-derived (so it's not PII and
@@ -216,7 +217,14 @@ Because `(hash, day)` is unique, `COUNT(*) WHERE day=X` is that day's DAU and
 - **Identity/privacy:** fixed `SALT` → stable hash → MAU works, device linkable
   *only inside your own DB* (never externally, raw id never stored). Rotate `SALT`
   monthly for "un-linkable across months" (MAU-within-a-month still works). **Never
-  daily** (kills MAU).
+  daily** (kills MAU). ⚠️ If you do rotate monthly, switch the MAU query to a
+  **calendar month** (`day LIKE '2026-08%'`) — the trailing-30-day query above
+  crosses the rotation boundary and double-counts every device that was active on
+  both sides of it. Fixed salt ↔ trailing window; monthly salt ↔ calendar window.
+- **Version adoption lags up to a day:** the `lastPingDay` throttle plus
+  `INSERT OR IGNORE` means the first ping of a day wins, so someone who takes a
+  Sparkle update at noon still shows on the old version until tomorrow. Fine for
+  rollout *trends*, not for same-day adoption.
 - **No PII, ever** — random id, no file names/paths/content, no IP stored.
 - **Cost:** effectively free — Workers 100k req/day, D1 5M reads + 100k writes/day;
   a once-per-day ping is nowhere near it.
@@ -244,6 +252,11 @@ A/B tests — PostHog covers both surfaces from one project.
   mobile), 1M flag requests, 100k error-tracking exceptions, 1.5k surveys / month.
 
 ### Website (`site/index.html`)
+**Prerequisite:** both CTAs on the site currently point at `#download` / `#` — there
+is no real DMG URL yet, so there's nothing to instrument. Ship the release link
+first; `download_clicked` is meaningless until the button actually downloads
+something.
+
 Single static file → easiest target. Paste the `posthog-js` snippet in `<head>`
 (project API key is public/safe to commit), and you get web analytics + autocapture
 + web session replay for free. Add the `download_clicked` event (above) for the
@@ -263,7 +276,8 @@ blockers eat 10–30% of events.
 ```
 
 ### App (native macOS)
-The `PostHog` Swift SDK (`github.com/PostHog/posthog-ios`, latest `3.64.1`) supports
+The `PostHog` Swift SDK (`github.com/PostHog/posthog-ios`, `3.69.3` as of Aug 2026 —
+it ships often, so check the latest tag rather than trusting this number) supports
 **macOS 10.15+**, ships a `PrivacyInfo.xcprivacy`, and does crash reporting on
 macOS. **But no session replay and no autocapture on macOS** — every event is
 hand-instrumented. Keep it a deliberate ~6-event set, not a firehose:
@@ -325,6 +339,8 @@ Vireo is sold as quiet, local, no-subscription — analytics must not betray tha
 - Whichever: opt-out toggle, no PII/paths/content, dev-build guard, EU region.
 
 ### Suggested rollout (small, reversible)
+0. **Prerequisite:** publish the first GitHub release and point the site's CTAs at
+   the real DMG URL. Everything below assumes a download that exists.
 1. **Site (½ day):** create the project (EU), managed reverse proxy, snippet +
    `download_clicked`. Zero app risk.
 2. **App opt-out plumbing (½ day):** Preferences toggle + a `VireoAnalytics` wrapper
