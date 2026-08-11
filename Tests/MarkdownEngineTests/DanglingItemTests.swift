@@ -39,4 +39,28 @@ final class DanglingItemTests: XCTestCase {
         let m = markers("1. asd\n    1. asf\n    2. asd\n        1. x\n")
         XCTAssertEqual(m.map(\.text), ["1.", "a.", "b.", "i."])
     }
+
+    func testTabAfterTheMarkerStillSynthesizes() {
+        let parsed = MarkdownParser().parse("text\n-\u{09}\n")
+        XCTAssertEqual(parsed.listMarkers.map(\.text), ["•"])
+        // The tab is part of the marker, so it hides with the dash.
+        XCTAssertEqual(parsed.markerRanges, [NSRange(location: 5, length: 2)])
+    }
+
+    func testBareDashOnItsOwnLineStaysASetextUnderline() {
+        // The scanner accepts a marker that runs to the line end (that is the
+        // empty item Tab just created), so this path must reject it itself.
+        let parsed = MarkdownParser().parse("Title\n-\n")
+        XCTAssertTrue(parsed.listMarkers.isEmpty, "`-` under text is a setext underline")
+        XCTAssertEqual(parsed.toc.count, 1)
+    }
+
+    func testEmptyOrderedTaskItemDrawsACheckbox() {
+        // swift-markdown reports a checkbox on ordered items, so an empty one
+        // must synthesize a task rather than a numbered marker.
+        let parsed = MarkdownParser().parse("text\n1. [ ] \n")
+        XCTAssertEqual(parsed.tasks.count, 1)
+        XCTAssertEqual(parsed.tasks.first?.checked, false)
+        XCTAssertTrue(parsed.listMarkers.isEmpty)
+    }
 }

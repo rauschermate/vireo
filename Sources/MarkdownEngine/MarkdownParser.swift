@@ -368,63 +368,27 @@ private struct Accumulator {
         let line = ns.lineRange(for: NSRange(location: r.upperBound - 1, length: 0))
         guard line.location > r.location else { return false } // first line would be a real item
 
-        var contentEnd = min(line.upperBound, ns.length)
-        if contentEnd > line.location, ns.character(at: contentEnd - 1) == 0x0A { contentEnd -= 1 }
-
-        var i = line.location
-        while i < contentEnd, ns.character(at: i) == 0x20 || ns.character(at: i) == 0x09 { i += 1 }
-        let markerStart = i
-        var ordered = false
-        var ordinal = 1
-        var delimiter = "."
-        switch i < contentEnd ? ns.character(at: i) : 0 {
-        case 0x2D, 0x2A, 0x2B: // - * +
-            i += 1
-        case 0x30...0x39:
-            while i < contentEnd, ns.character(at: i) >= 0x30, ns.character(at: i) <= 0x39 { i += 1 }
-            guard i < contentEnd,
-                  ns.character(at: i) == 0x2E || ns.character(at: i) == 0x29 else { return false }
-            ordinal = Int(ns.substring(with: NSRange(location: markerStart,
-                                                     length: i - markerStart))) ?? 1
-            delimiter = ns.character(at: i) == 0x29 ? ")" : "."
-            ordered = true
-            i += 1
-        default:
-            return false
-        }
-        // Whitespace after the marker is required: a bare `-` under text is a
-        // deliberate setext underline, and an item needs the space anyway.
-        guard i < contentEnd, ns.character(at: i) == 0x20 || ns.character(at: i) == 0x09 else { return false }
-        while i < contentEnd, ns.character(at: i) == 0x20 || ns.character(at: i) == 0x09 { i += 1 }
-        var checked: Bool?
-        if !ordered, i + 3 <= contentEnd,
-           ns.character(at: i) == 0x5B, ns.character(at: i + 2) == 0x5D { // [ ]
-            switch ns.character(at: i + 1) {
-            case 0x20: checked = false
-            case 0x78, 0x58: checked = true // x X
-            default: break
-            }
-            if checked != nil {
-                i += 3
-                while i < contentEnd, ns.character(at: i) == 0x20 { i += 1 }
-            }
-        }
+        guard let scan = ListMarkerScanner.scan(ns, in: line) else { return false }
+        // Whitespace after the marker is required here: a bare `-` under text
+        // is a deliberate setext underline, and an item needs the space anyway.
+        guard scan.hasWhitespaceAfterMarker else { return false }
         // Marker-only means nothing else on the line, and a newline must exist
         // to carry the drawn marker (same rule as empty items in visitListItem).
-        guard i >= contentEnd, contentEnd < ns.length else { return false }
-        let anchor = contentEnd
+        guard scan.isMarkerOnly, scan.lineEnd < ns.length else { return false }
+        let anchor = scan.lineEnd
 
         result.markerRanges.append(NSRange(location: line.location,
                                            length: anchor - line.location))
         result.blockRuns.append(BlockRun(range: NSRange(location: line.location,
                                                         length: anchor - line.location),
-                                         kind: .listItem(depth: listDepth, ordered: ordered)))
-        if let checked {
+                                         kind: .listItem(depth: listDepth,
+                                                         ordered: scan.isOrdered)))
+        if let checked = scan.taskChecked {
             result.tasks.append(TaskMark(anchor: anchor, checked: checked))
-        } else if ordered {
+        } else if case .ordered(let ordinal, let delimiter) = scan.kind {
             result.listMarkers.append(ListMarker(anchor: anchor,
                                                  text: MarkdownParser.orderedMarkerText(ordinal: ordinal,
-                                                                                        delimiter: delimiter,
+                                                                                        delimiter: String(delimiter),
                                                                                         depth: listDepth),
                                                  depth: listDepth))
         } else {
@@ -436,32 +400,12 @@ private struct Accumulator {
     }
 
     /// Indent + bullet/number + spacing (+ task box) at the start of an item
-    /// that has no parsed children (empty item).
+    /// that has no parsed children (empty item). The task box counts: without
+    /// it the box syntax stays visible next to the drawn checkbox until the
+    /// first character of content arrives.
     private func scanMarkerLength(in itemRange: NSRange) -> Int {
-        var i = itemRange.location
-        let end = itemRange.location + itemRange.length
-        while i < end, ns.character(at: i) == 0x20 || ns.character(at: i) == 0x09 { i += 1 }
-        let c = i < end ? ns.character(at: i) : 0
-        if c == 0x2D || c == 0x2A || c == 0x2B { // - * +
-            i += 1
-        } else if c >= 0x30, c <= 0x39 {
-            while i < end, ns.character(at: i) >= 0x30, ns.character(at: i) <= 0x39 { i += 1 }
-            if i < end, ns.character(at: i) == 0x2E || ns.character(at: i) == 0x29 { i += 1 }
-        } else {
-            return 0
-        }
-        while i < end, ns.character(at: i) == 0x20 { i += 1 }
-        // Task box on an otherwise empty item ("- [ ] " just typed) — without
-        // this the box syntax stays visible next to the drawn checkbox until
-        // the first character of content arrives.
-        if i + 2 < end, ns.character(at: i) == 0x5B, ns.character(at: i + 2) == 0x5D { // [ ]
-            let mid = ns.character(at: i + 1)
-            if mid == 0x20 || mid == 0x78 || mid == 0x58 { // ' ', x, X
-                i += 3
-                while i < end, ns.character(at: i) == 0x20 { i += 1 }
-            }
-        }
-        return i - itemRange.location
+        guard let scan = ListMarkerScanner.scan(ns, in: itemRange) else { return 0 }
+        return scan.contentStart - itemRange.location
     }
 
     /// Everything below the item's first line — hidden when collapsed.
