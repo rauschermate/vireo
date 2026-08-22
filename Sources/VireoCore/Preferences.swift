@@ -38,11 +38,18 @@ public final class Preferences: ObservableObject {
         static let recentFiles = "vireo.recentFiles"
         static let appearance = "vireo.appearance"
         static let tocDefault = "vireo.tocDefault"
+        static let revealSyntax = "vireo.revealSyntaxNearCaret"
     }
 
     /// Auto-save on by default (PRD §2).
     @Published public var autoSave: Bool = true {
         didSet { defaults.set(autoSave, forKey: Keys.autoSave) }
+    }
+
+    /// Prototype: the block that holds the caret shows its raw Markdown
+    /// syntax, dimmed; every other block renders clean. Off by default.
+    @Published public var revealSyntax: Bool = false {
+        didSet { defaults.set(revealSyntax, forKey: Keys.revealSyntax) }
     }
 
     /// Follow the system appearance unless the user overrides it.
@@ -60,6 +67,7 @@ public final class Preferences: ObservableObject {
         autoSave = defaults.object(forKey: Keys.autoSave) as? Bool ?? true
         appearance = AppearanceOption(rawValue: defaults.string(forKey: Keys.appearance) ?? "") ?? .system
         tocDefault = TOCDefaultOption(rawValue: defaults.string(forKey: Keys.tocDefault) ?? "") ?? .dynamic
+        revealSyntax = defaults.object(forKey: Keys.revealSyntax) as? Bool ?? false
     }
 
     public var recentFiles: [URL] {

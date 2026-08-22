@@ -61,6 +61,7 @@ final class DocumentModel: ObservableObject, Identifiable {
     private var watcher: FileWatcher?
     private var saveWork: DispatchWorkItem?
     private var preferenceObserver: AnyCancellable?
+    private var revealSyntaxObserver: AnyCancellable?
     private var diskRevision: FileRevision?
     private var editGeneration = 0
     private var activeWriteID = 0
@@ -134,6 +135,10 @@ final class DocumentModel: ObservableObject, Identifiable {
         controller.onOpenLink = { [weak self] dest in self?.openLink(dest) }
         preferenceObserver = preferences.$autoSave.dropFirst().sink { [weak self] enabled in
             self?.autoSavePreferenceChanged(enabled)
+        }
+        controller.syntaxRevealEnabled = preferences.revealSyntax
+        revealSyntaxObserver = preferences.$revealSyntax.dropFirst().sink { [weak self] enabled in
+            self?.controller.syntaxRevealEnabled = enabled
         }
     }
 
