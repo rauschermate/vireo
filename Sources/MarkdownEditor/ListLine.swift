@@ -72,6 +72,73 @@ public struct ListLine: Equatable {
                         markerEndOffset: i)
     }
 
+    /// One source rewrite produced by `orderedSiblingRenumberEdits`:
+    /// replace the digits in `range` with `String(number)`.
+    public struct RenumberEdit: Equatable {
+        public var range: NSRange
+        public var number: Int
+        public var replacement: String { String(number) }
+    }
+
+    /// Source edits that make the ordered siblings *after* the item on
+    /// `location`'s line count on from that item's own number. Deeper-indented
+    /// lines are one sibling's subtree and pass through untouched. The walk
+    /// ends at a shallower line, a different marker style, two consecutive
+    /// blank lines, or content at the margin.
+    public static func orderedSiblingRenumberEdits(in source: NSString,
+                                                   afterLineAt location: Int) -> [RenumberEdit] {
+        guard source.length > 0 else { return [] }
+        let baseLine = source.lineRange(
+            for: NSRange(location: min(location, source.length), length: 0))
+        var baseText = source.substring(with: baseLine)
+        if baseText.hasSuffix("\n") { baseText.removeLast() }
+        guard let base = parse(baseText), base.isOrdered,
+              var counter = Int(base.marker.dropLast()) else { return [] }
+        let delimiter = base.marker.hasSuffix(")") ? ")" : "."
+        let indentLength = (base.indent as NSString).length
+
+        var edits: [RenumberEdit] = []
+        var position = baseLine.upperBound
+        var blankRun = 0
+        while position < source.length {
+            let line = source.lineRange(for: NSRange(location: position, length: 0))
+            guard line.upperBound > position else { break }
+            position = line.upperBound
+            var text = source.substring(with: line)
+            if text.hasSuffix("\n") { text.removeLast() }
+
+            if text.trimmingCharacters(in: .whitespaces).isEmpty {
+                blankRun += 1
+                if blankRun >= 2 { break }
+                continue
+            }
+            guard let item = parse(text) else {
+                // Indented text continues the previous item; anything at the
+                // margin ends the list.
+                let leading = text.prefix { $0 == " " || $0 == "\t" }
+                if (String(leading) as NSString).length >= indentLength + 2 {
+                    blankRun = 0
+                    continue
+                }
+                break
+            }
+            let itemIndent = (item.indent as NSString).length
+            if itemIndent > indentLength { blankRun = 0; continue }
+            if itemIndent < indentLength { break }
+            guard item.isOrdered, item.marker.hasSuffix(delimiter) else { break }
+            blankRun = 0
+            counter += 1
+            let digits = String(item.marker.dropLast())
+            if digits != String(counter) {
+                edits.append(RenumberEdit(
+                    range: NSRange(location: line.location + itemIndent,
+                                   length: (digits as NSString).length),
+                    number: counter))
+            }
+        }
+        return edits
+    }
+
     /// Prefix that continues this list on the next line: same indent and
     /// bullet (unchecked box for tasks), incremented number for ordered lists.
     public var continuationPrefix: String {

@@ -824,10 +824,30 @@ public final class MarkdownTextView: NSTextView {
         let sel = NSRange(location: caret, length: 0)
         if shouldChangeText(in: sel, replacementString: insertion) {
             storage.replaceCharacters(in: sel, with: insertion)
+            let newCaret = caret + (insertion as NSString).length
+            // A new item in the middle of an ordered list duplicates the
+            // numbers below it — count the following siblings on from the
+            // inserted one so the source stays sequential.
+            if info.isOrdered {
+                renumberOrderedSiblings(afterLineAt: newCaret)
+            }
             didChangeText()
-            setSelectedRange(NSRange(location: caret + (insertion as NSString).length, length: 0))
+            setSelectedRange(NSRange(location: newCaret, length: 0))
         }
         return true
+    }
+
+    /// Apply `ListLine`'s renumber edits bottom-up so earlier ranges stay
+    /// valid while later digit runs change width (9 → 10).
+    private func renumberOrderedSiblings(afterLineAt location: Int) {
+        guard let storage = textStorage else { return }
+        let edits = ListLine.orderedSiblingRenumberEdits(
+            in: storage.string as NSString, afterLineAt: location)
+        for edit in edits.reversed() {
+            if shouldChangeText(in: edit.range, replacementString: edit.replacement) {
+                storage.replaceCharacters(in: edit.range, with: edit.replacement)
+            }
+        }
     }
 
     /// When the caret sits at the end of a construct's visible text, the
