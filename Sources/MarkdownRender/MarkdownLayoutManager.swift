@@ -211,11 +211,11 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     public var headingMarks: [HeadingMark] = []
     public var collapsedAnchors: Set<Int> = []
     public var hoveredAnchor: Int?
-    /// Source region whose markers the editor currently reveals (the
-    /// syntax-reveal prototype). Constructs inside it show raw syntax, so
-    /// their drawn stand-ins adapt: bullets and checkboxes yield to the raw
-    /// text, and fold chevrons pin to the line's resting position instead of
-    /// the anchor glyph — which shifts right when the markers gain width.
+    /// Source region whose markers the editor currently reveals (the block
+    /// that holds the caret). Constructs inside it show raw syntax, so their
+    /// drawn stand-ins adapt: bullets and checkboxes yield to the raw text,
+    /// and fold chevrons pin to the line's resting position instead of the
+    /// anchor glyph — which shifts right when the markers gain width.
     public var syntaxRevealRange: NSRange?
     private var listGuideIndex = ListGuideIndex(listMarkers: [], tasks: [])
     private var listGuideIndexNeedsRebuild = false

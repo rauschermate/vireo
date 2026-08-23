@@ -258,11 +258,6 @@ struct PreferencesView: View {
                 applyAppearance(newValue)
             }
 
-            Toggle("Show syntax near the caret (prototype)", isOn: $prefs.revealSyntax)
-            Text("The block that holds the caret shows its Markdown syntax, dimmed. Other blocks stay clean.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
             Picker("Table of contents", selection: $prefs.tocDefault) {
                 ForEach(TOCDefaultOption.allCases) { option in
                     Text(option.label).tag(option)

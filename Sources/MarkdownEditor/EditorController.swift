@@ -24,32 +24,10 @@ public final class EditorController: ObservableObject {
     /// Shared source/visual boundary map. Every editor interaction uses this
     /// index rather than rediscovering marker ranges from text attributes.
     public private(set) var markerIndex = MarkerIndex.empty
-    /// Semantic markers plus any delimiters retained while a formerly-valid
-    /// construct is transiently incomplete in the active paragraph.
-    private var presentationMarkerRanges: [NSRange] = []
-    /// Prototype (preferences → "reveal syntax near the caret"): the block
-    /// that holds the caret shows its raw syntax, dimmed; every other block
-    /// renders clean. Off = the original fully hidden presentation.
-    public var syntaxRevealEnabled: Bool = false {
-        didSet {
-            guard oldValue != syntaxRevealEnabled else { return }
-            guard let tv = textView, let storage = tv.textStorage else {
-                syntaxRevealRange = nil
-                return
-            }
-            let dirty = refreshSyntaxRevealRange(storage: storage)
-            guard !dirty.isEmpty else { return }
-            applyStyles(dirtyRanges: dirty)
-            invalidateHiddenSyntax(in: dirty)
-        }
-    }
-    /// The source region whose markers are currently revealed, if any.
+    /// The block that holds the caret shows its raw syntax, dimmed; every
+    /// other block renders clean. This is the source region whose markers
+    /// are currently revealed, if any.
     private var syntaxRevealRange: NSRange?
-    private var provisionalMarkerRanges: [NSRange]?
-    private var expectedEditedSourceLength: Int?
-    private var expectedEditedAnchor: Int?
-    private var transientMarkerRanges: [NSRange] = []
-    private var transientParagraphRange: NSRange?
     private lazy var toolbar = FloatingToolbar(controller: self)
     private lazy var linkPopover = LinkPopover()
     private var tableCellEditor: TableCellEditorOverlay?
@@ -75,7 +53,7 @@ public final class EditorController: ObservableObject {
     /// at the beginning of a non-empty document.
     func bootstrapMarkerIndex(sourceLength: Int) {
         guard markerIndex.sourceLength != sourceLength else { return }
-        markerIndex = MarkerIndex(ranges: presentationMarkerRanges,
+        markerIndex = MarkerIndex(ranges: parsed.markerRanges,
                                   sourceLength: sourceLength)
     }
 
@@ -84,14 +62,6 @@ public final class EditorController: ObservableObject {
         guard let tv = textView else { return }
         let sel = tv.selectedRange()
 
-        // Incomplete syntax is retained only for the paragraph being actively
-        // repaired. Moving away commits it as literal text rather than hiding
-        // arbitrary punctuation indefinitely.
-        if !transientMarkerRanges.isEmpty,
-           let paragraph = transientParagraphRange,
-           (sel.location < paragraph.location || sel.location >= paragraph.upperBound) {
-            clearTransientMarkerPresentation(dirty: paragraph)
-        }
         // Caret geometry on empty lines follows typingAttributes — keep them
         // in sync with wherever the caret just moved to.
         refreshTypingAttributes()
@@ -177,23 +147,6 @@ public final class EditorController: ObservableObject {
         restyleAfterEdit(source: source)
     }
 
-    /// Capture marker presentation before an edit mutates the source. Existing
-    /// delimiters that survive an edit can remain hidden even if the parser
-    /// temporarily stops recognizing their now-incomplete construct.
-    public func prepareForEdit(in range: NSRange, replacementString: String) {
-        guard let storage = textView?.textStorage else { return }
-        let sourceLength = storage.length
-        let lower = min(max(0, range.location), sourceLength)
-        let upper = min(max(lower, range.upperBound), sourceLength)
-        let edit = NSRange(location: lower, length: upper - lower)
-        let replacementLength = (replacementString as NSString).length
-        let base = provisionalMarkerRanges ?? presentationMarkerRanges
-        provisionalMarkerRanges = transformMarkerRanges(base, through: edit,
-                                                         replacementLength: replacementLength)
-        expectedEditedSourceLength = sourceLength - edit.length + replacementLength
-        expectedEditedAnchor = edit.location + replacementLength
-    }
-
     /// Edit path: incremental parse; re-apply attributes only over the dirty
     /// region (the whole document when the parser had to fall back).
     private func restyleAfterEdit(source: String) {
@@ -203,7 +156,7 @@ public final class EditorController: ObservableObject {
         VireoPerformanceTrace.end("Parse and Splice", parse)
         lastIncrementalStrategy = update.strategy
         parsed = update.parsed
-        updateMarkerPresentation(after: update, storage: storage)
+        rebuildMarkerIndex(sourceLength: storage.length)
         // Block boundaries move with every edit, so the reveal window must
         // follow before styles land; its flipped regions join the dirty set.
         // A region recorded before the edit may sit after the edit point and
@@ -326,14 +279,14 @@ public final class EditorController: ObservableObject {
                        length: 0)
     }
 
-    // MARK: Syntax reveal near the caret (prototype)
+    // MARK: Syntax reveal near the caret
 
     /// Markers to hide, given the current reveal window. Markers inside the
     /// window stay visible — except image expressions, whose rendered image
     /// would otherwise draw on top of its own raw source.
     private func presentedMarkerRanges() -> [NSRange] {
-        guard let reveal = syntaxRevealRange else { return presentationMarkerRanges }
-        return presentationMarkerRanges.filter { marker in
+        guard let reveal = syntaxRevealRange else { return parsed.markerRanges }
+        return parsed.markerRanges.filter { marker in
             guard NSIntersectionRange(marker, reveal).length > 0 else { return true }
             return parsed.images.contains {
                 NSIntersectionRange(marker, $0.range).length > 0
@@ -388,7 +341,7 @@ public final class EditorController: ObservableObject {
     /// The marker index is rebuilt so caret math matches the new presentation.
     private func refreshSyntaxRevealRange(storage: NSTextStorage) -> [NSRange] {
         let next: NSRange?
-        if syntaxRevealEnabled, let tv = textView {
+        if let tv = textView {
             next = syntaxRevealTarget(for: tv.selectedRange(), storage: storage)
         } else {
             next = nil
@@ -403,8 +356,7 @@ public final class EditorController: ObservableObject {
     /// Selection moved without a text change: re-hide the block the caret
     /// left and reveal the one it entered.
     private func updateSyntaxRevealForSelection() {
-        guard syntaxRevealEnabled || syntaxRevealRange != nil,
-              let tv = textView, let storage = tv.textStorage,
+        guard let tv = textView, let storage = tv.textStorage,
               !tv.hasMarkedText() else { return }
         let dirty = refreshSyntaxRevealRange(storage: storage)
         guard !dirty.isEmpty else { return }
@@ -418,7 +370,7 @@ public final class EditorController: ObservableObject {
     private func dimRevealedMarkers(in window: NSRange, storage: NSTextStorage) {
         guard let reveal = syntaxRevealRange else { return }
         let dim = theme.secondaryColor
-        for marker in presentationMarkerRanges {
+        for marker in parsed.markerRanges {
             let revealed = NSIntersectionRange(marker, reveal)
             guard revealed.length > 0 else { continue }
             let target = NSIntersectionRange(revealed, window)
@@ -517,10 +469,6 @@ public final class EditorController: ObservableObject {
         let update = incremental.update(storage.string)
         lastIncrementalStrategy = update.strategy
         parsed = update.parsed
-        // A theme/image restyle does not end an active repair transaction.
-        if presentationMarkerRanges.isEmpty {
-            presentationMarkerRanges = parsed.markerRanges
-        }
         rebuildMarkerIndex(sourceLength: storage.length)
         onParsed?(parsed)
         lastSourceLength = storage.length
@@ -1119,95 +1067,11 @@ public final class EditorController: ObservableObject {
         storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: s)
         discardPendingEdit()
         incremental.reset() // wholesale replacement — diffing history is useless
-        presentationMarkerRanges = []
-        provisionalMarkerRanges = nil
-        expectedEditedSourceLength = nil
-        expectedEditedAnchor = nil
-        transientMarkerRanges = []
-        transientParagraphRange = nil
         syntaxRevealRange = nil
         restyle()
         let caret = min(sel.location, (s as NSString).length)
         tv.setSelectedRange(NSRange(location: caret, length: 0))
     }
-
-    private func updateMarkerPresentation(after update: IncrementalUpdate,
-                                          storage: NSTextStorage) {
-        defer {
-            provisionalMarkerRanges = nil
-            expectedEditedSourceLength = nil
-            expectedEditedAnchor = nil
-        }
-
-        // Reveal mode shows the active block's raw syntax anyway, so there is
-        // no incomplete construct to keep hidden — skip the repair transaction.
-        guard !syntaxRevealEnabled,
-              let candidates = provisionalMarkerRanges,
-              expectedEditedSourceLength == storage.length else {
-            transientMarkerRanges = []
-            transientParagraphRange = nil
-            presentationMarkerRanges = parsed.markerRanges
-            rebuildMarkerIndex(sourceLength: storage.length)
-            return
-        }
-
-        let ns = storage.string as NSString
-        let anchor = min(expectedEditedAnchor ?? update.dirtyRange?.location ?? 0, storage.length)
-        let paragraph = ns.paragraphRange(for: NSRange(location: anchor, length: 0))
-        let semantic = MarkerIndex(ranges: parsed.markerRanges, sourceLength: storage.length)
-        transientMarkerRanges = candidates.filter { candidate in
-            guard NSIntersectionRange(candidate, paragraph).length > 0 else { return false }
-            return !semantic.ranges.contains { semanticRange in
-                semanticRange.location <= candidate.location
-                    && semanticRange.upperBound >= candidate.upperBound
-            }
-        }
-        transientParagraphRange = transientMarkerRanges.isEmpty ? nil : paragraph
-        presentationMarkerRanges = MarkerIndex(
-            ranges: parsed.markerRanges + transientMarkerRanges,
-            sourceLength: storage.length
-        ).ranges
-        rebuildMarkerIndex(sourceLength: storage.length)
-    }
-
-    private func clearTransientMarkerPresentation(dirty: NSRange) {
-        transientMarkerRanges = []
-        transientParagraphRange = nil
-        presentationMarkerRanges = parsed.markerRanges
-        if let storage = textView?.textStorage {
-            rebuildMarkerIndex(sourceLength: storage.length)
-        }
-        applyStyles(dirty: dirty)
-    }
-
-    private func transformMarkerRanges(_ ranges: [NSRange], through edit: NSRange,
-                                       replacementLength: Int) -> [NSRange] {
-        let delta = replacementLength - edit.length
-        var result: [NSRange] = []
-        result.reserveCapacity(ranges.count + 2)
-        for marker in ranges {
-            if marker.upperBound <= edit.location {
-                result.append(marker)
-            } else if marker.location >= edit.upperBound {
-                result.append(NSRange(location: marker.location + delta, length: marker.length))
-            } else {
-                let leftEnd = min(marker.upperBound, edit.location)
-                if leftEnd > marker.location {
-                    result.append(NSRange(location: marker.location,
-                                          length: leftEnd - marker.location))
-                }
-                let rightStart = max(marker.location, edit.upperBound)
-                if marker.upperBound > rightStart {
-                    let shiftedStart = rightStart + delta
-                    result.append(NSRange(location: shiftedStart,
-                                          length: marker.upperBound - rightStart))
-                }
-            }
-        }
-        let newLength = max(0, (textView?.textStorage?.length ?? 0) + delta)
-        return MarkerIndex(ranges: result, sourceLength: newLength).ranges
-    }
-
     // MARK: Navigation
 
     /// Web-style smooth scroll to a character position (TOC clicks, anchors).

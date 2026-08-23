@@ -379,11 +379,8 @@ public final class MarkdownTextView: NSTextView {
         let allowed = super.shouldChangeText(in: affectedCharRange,
                                              replacementString: replacementString)
         if allowed, let storage = textStorage {
-            let replacement = replacementString ?? ""
-            controller?.prepareForEdit(in: affectedCharRange,
-                                       replacementString: replacement)
             controller?.recordPendingEdit(range: affectedCharRange,
-                                          replacement: replacement,
+                                          replacement: replacementString ?? "",
                                           oldSourceLength: storage.length)
         }
         return allowed
