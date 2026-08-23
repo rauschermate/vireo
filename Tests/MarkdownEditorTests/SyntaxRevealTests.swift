@@ -133,6 +133,38 @@ final class SyntaxRevealTests: XCTestCase {
         withExtendedLifetime(controller) {}
     }
 
+    private func contentX(_ textView: MarkdownTextView, at charIndex: Int) -> CGFloat {
+        guard let lm = textView.layoutManager else { return -1 }
+        let glyph = lm.glyphIndexForCharacter(at: charIndex)
+        let line = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        return line.minX + lm.location(forGlyphAt: glyph).x
+    }
+
+    func testListContentKeepsItsColumnWhenTheLineReveals() {
+        let (controller, textView) = makeEditor("- alpha\n    - beta\n\ntail\n")
+        textView.setFrameSize(NSSize(width: 600, height: 400))
+        let ns = textView.string as NSString
+        let alpha = ns.range(of: "alpha").location
+        let beta = ns.range(of: "beta").location
+        let alphaResting = contentX(textView, at: alpha)
+        let betaResting = contentX(textView, at: beta)
+
+        // The revealed raw prefix hangs in the gutter; the item's content
+        // must not move. This is what kept Enter/Tab from feeling jumpy.
+        controller.syntaxRevealEnabled = true
+        textView.setSelectedRange(NSRange(location: alpha, length: 0))
+        controller.selectionChanged()
+        XCTAssertFalse(isMarker(textView, at: 0))
+        XCTAssertEqual(contentX(textView, at: alpha), alphaResting, accuracy: 1.0)
+
+        textView.setSelectedRange(NSRange(location: beta, length: 0))
+        controller.selectionChanged()
+        XCTAssertEqual(contentX(textView, at: beta), betaResting, accuracy: 1.0)
+        XCTAssertEqual(contentX(textView, at: alpha), alphaResting, accuracy: 1.0,
+                       "the line re-hides at the same column")
+        withExtendedLifetime(controller) {}
+    }
+
     func testDisablingTheFlagRestoresFullHiding() {
         let (controller, textView) = makeEditor(source)
         textView.setSelectedRange(NSRange(location: 3, length: 0))

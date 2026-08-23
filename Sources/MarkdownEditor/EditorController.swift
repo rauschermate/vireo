@@ -430,6 +430,45 @@ public final class EditorController: ObservableObject {
         }
     }
 
+    /// A revealed list line shows its raw `    - ` prefix. Rendered on top of
+    /// the list paragraph indent, that prefix doubled the indentation, so the
+    /// caret jumped right on Enter/Tab and snapped back when the line hid.
+    /// Hang the prefix into the gutter instead: pull the first-line indent
+    /// back by the prefix's width, so the item's content keeps its resting
+    /// column whether the line is revealed or hidden.
+    private func hangRevealedListPrefixes(in window: NSRange, storage: NSTextStorage) {
+        guard let reveal = syntaxRevealRange else { return }
+        let ns = storage.string as NSString
+        for run in parsed.blockRuns {
+            guard case .listItem = run.kind,
+                  NSIntersectionRange(run.range, reveal).length > 0,
+                  run.range.location < storage.length else { continue }
+            let line = ns.paragraphRange(for: NSRange(location: run.range.location,
+                                                      length: 0))
+            guard NSIntersectionRange(line, window).length > 0 else { continue }
+            var lineText = ns.substring(with: line)
+            if lineText.hasSuffix("\n") { lineText.removeLast() }
+            guard let info = ListLine.parse(lineText) else { continue }
+            // Only the marker itself is hidden at rest — the leading indent
+            // spaces are visible glyphs in both states, so they stay out of
+            // the width that hangs.
+            let indentLength = (info.indent as NSString).length
+            guard info.markerEndOffset > indentLength else { continue }
+            let marker = (lineText as NSString).substring(
+                with: NSRange(location: indentLength,
+                              length: info.markerEndOffset - indentLength))
+            let width = (marker as NSString)
+                .size(withAttributes: [.font: theme.bodyFont]).width
+            guard width > 0,
+                  let style = storage.attribute(.paragraphStyle, at: line.location,
+                                                effectiveRange: nil) as? NSParagraphStyle,
+                  let adjusted = style.mutableCopy() as? NSMutableParagraphStyle
+            else { continue }
+            adjusted.firstLineHeadIndent = max(0, style.firstLineHeadIndent - width)
+            storage.addAttribute(.paragraphStyle, value: adjusted, range: line)
+        }
+    }
+
     /// Null glyphs are produced during glyph *generation*, so flipping a
     /// marker between hidden and shown must invalidate glyphs explicitly —
     /// an attribute-only restyle does not reliably regenerate them.
@@ -530,6 +569,7 @@ public final class EditorController: ObservableObject {
                 renderer.apply(source: sliceSource, parsed: sliceParsed,
                                to: storage, at: window.location)
                 dimRevealedMarkers(in: window, storage: storage)
+                hangRevealedListPrefixes(in: window, storage: storage)
             }
             storage.endEditing()
         }

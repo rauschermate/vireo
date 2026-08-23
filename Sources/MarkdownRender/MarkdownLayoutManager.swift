@@ -702,16 +702,40 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     }
 
     /// The anchor glyph's resting x — where it sits while its leading markers
-    /// are hidden: the line-fragment padding plus the paragraph's first-line
-    /// indent. Used to keep fold controls and guides still while the revealed
-    /// markers push the anchor glyph to the right.
+    /// are hidden: line-fragment padding + the paragraph's indent + the
+    /// line's leading whitespace, which stays visible in both states.
+    /// Reads the style at the paragraph's first character (the one TextKit
+    /// honors) and uses `headIndent`, not `firstLineHeadIndent` — the two are
+    /// equal at rest, but the editor pulls the first-line indent back on
+    /// revealed list lines to hang the raw marker in the gutter. Keeps fold
+    /// controls and guides still while the revealed marker occupies it.
     private func restingTextX(anchor: Int, lineRect: NSRect) -> CGFloat {
         let padding = textContainers.first?.lineFragmentPadding ?? 0
-        let style = (anchor < (textStorage?.length ?? 0))
-            ? textStorage?.attribute(.paragraphStyle, at: anchor,
-                                     effectiveRange: nil) as? NSParagraphStyle
-            : nil
-        return lineRect.minX + padding + (style?.firstLineHeadIndent ?? 0)
+        guard let storage = textStorage, storage.length > 0 else {
+            return lineRect.minX + padding
+        }
+        let ns = storage.string as NSString
+        let location = min(max(0, anchor), storage.length - 1)
+        let line = ns.paragraphRange(for: NSRange(location: location, length: 0))
+        let style = storage.attribute(.paragraphStyle, at: line.location,
+                                      effectiveRange: nil) as? NSParagraphStyle
+
+        var end = line.location
+        let limit = min(line.upperBound, storage.length)
+        while end < limit,
+              ns.character(at: end) == 0x20 || ns.character(at: end) == 0x09 {
+            end += 1
+        }
+        var leadingWidth: CGFloat = 0
+        if end > line.location {
+            let leading = ns.substring(with: NSRange(location: line.location,
+                                                     length: end - line.location))
+            let font = storage.attribute(.font, at: line.location,
+                                         effectiveRange: nil) as? NSFont ?? bulletFont
+            leadingWidth = (leading as NSString)
+                .size(withAttributes: [.font: font]).width
+        }
+        return lineRect.minX + padding + (style?.headIndent ?? 0) + leadingWidth
     }
 
     func markerGeometry(anchor: Int, markerText: String?) -> (lineRect: NSRect, baseline: CGFloat, textX: CGFloat, markerWidth: CGFloat)? {
