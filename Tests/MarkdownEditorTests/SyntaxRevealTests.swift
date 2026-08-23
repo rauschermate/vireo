@@ -1,7 +1,7 @@
 import XCTest
 import AppKit
 import MarkdownEngine
-import MarkdownRender
+@testable import MarkdownRender
 @testable import MarkdownEditor
 
 /// The prototype "reveal syntax near the caret" mode: the block that holds
@@ -107,6 +107,29 @@ final class SyntaxRevealTests: XCTestCase {
         textView.setSelectedRange(NSRange(location: 14, length: 0)) // inside "Beta"
         controller.selectionChanged()
         XCTAssertTrue(isMarker(textView, at: 6), "the block re-hides once the caret leaves")
+        withExtendedLifetime(controller) {}
+    }
+
+    func testFoldGeometryStaysPutWhenAListLineReveals() {
+        let (controller, textView) = makeEditor("- alpha\n  - beta\n\ntail\n")
+        textView.setFrameSize(NSSize(width: 600, height: 400))
+        let lm = textView.layoutManager as! MarkdownLayoutManager
+        let anchor = (textView.string as NSString).range(of: "alpha").location
+        guard let before = lm.markerGeometry(anchor: anchor, markerText: "•")?.textX else {
+            return XCTFail("no marker geometry before the reveal")
+        }
+
+        textView.setSelectedRange(NSRange(location: anchor, length: 0))
+        controller.syntaxRevealEnabled = true
+        XCTAssertFalse(isMarker(textView, at: 0), "the `- ` marker is revealed")
+        XCTAssertTrue(lm.isSyntaxRevealed(at: anchor))
+
+        // The revealed `- ` pushes the anchor glyph right; chevrons, halos
+        // and guides must keep the resting position instead of riding along.
+        guard let after = lm.markerGeometry(anchor: anchor, markerText: "•")?.textX else {
+            return XCTFail("no marker geometry after the reveal")
+        }
+        XCTAssertEqual(before, after, accuracy: 0.5)
         withExtendedLifetime(controller) {}
     }
 

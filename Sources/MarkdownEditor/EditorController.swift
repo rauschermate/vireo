@@ -536,6 +536,7 @@ public final class EditorController: ObservableObject {
 
         layoutManager?.markerColor = theme.secondaryColor
         layoutManager?.bulletFont = theme.bodyFont
+        layoutManager?.syntaxRevealRange = syntaxRevealRange
         layoutManager?.beginTableGeometryPass()
         layoutManager?.tables = parsed.tables
         layoutManager?.tableRowHeight = theme.tableRowHeight
