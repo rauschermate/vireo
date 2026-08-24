@@ -34,8 +34,9 @@ final class EditorExperienceRegressionTests: XCTestCase {
         harness.controller.toggleBold()
         harness.textView.breakUndoCoalescing()
         XCTAssertEqual(harness.textView.string, "**Hello** world")
+        // The caret sits in the edited block, so its raw syntax is revealed.
         XCTAssertEqual(harness.controller.markerIndex.visibleString(
-            in: harness.textView.string as NSString), "Hello world")
+            in: harness.textView.string as NSString), "**Hello** world")
 
         let undo = try XCTUnwrap(harness.textView.undoManager)
         undo.undo()
@@ -46,12 +47,15 @@ final class EditorExperienceRegressionTests: XCTestCase {
         undo.redo()
         XCTAssertEqual(harness.textView.string, "**Hello** world")
         XCTAssertEqual(harness.controller.markerIndex.visibleString(
-            in: harness.textView.string as NSString), "Hello world")
+            in: harness.textView.string as NSString), "**Hello** world")
     }
 
     func testMarkedTextDefersRestyleUntilCompositionCommits() {
-        let harness = Harness(source: "**Hello** world")
-        harness.textView.setSelectedRange(NSRange(location: 6, length: 0))
+        // The composition happens in the second block; the first block must
+        // keep its hidden presentation untouched throughout.
+        let harness = Harness(source: "**Hello** world\n\n**Tail** note")
+        let caret = (harness.textView.string as NSString).range(of: "Tail").location + 3
+        harness.textView.setSelectedRange(NSRange(location: caret, length: 0))
 
         harness.textView.setMarkedText(
             "日本", selectedRange: NSRange(location: 2, length: 0),
@@ -59,7 +63,7 @@ final class EditorExperienceRegressionTests: XCTestCase {
         )
 
         XCTAssertTrue(harness.textView.hasMarkedText())
-        XCTAssertEqual(harness.textView.string, "**Hell日本o** world")
+        XCTAssertEqual(harness.textView.string, "**Hello** world\n\n**Tai日本l** note")
         XCTAssertNotNil(harness.textView.textStorage?.attribute(
             .vireoMarker, at: 0, effectiveRange: nil),
             "composition must not tear down presentation attributes")
@@ -68,23 +72,29 @@ final class EditorExperienceRegressionTests: XCTestCase {
         harness.controller.scheduleRestyle()
 
         XCTAssertFalse(harness.textView.hasMarkedText())
+        // The caret's block shows its raw syntax; the first block stays clean.
         XCTAssertEqual(harness.controller.markerIndex.visibleString(
-            in: harness.textView.string as NSString), "Hell日本o world")
+            in: harness.textView.string as NSString),
+            "Hello world\n\n**Tai日本l** note")
         XCTAssertNotNil(harness.textView.textStorage?.attribute(
             .vireoMarker, at: 0, effectiveRange: nil))
     }
 
     func testTextInputServiceReplacementUsesTheNormalEditPipeline() {
-        let harness = Harness(source: "A **short** note")
+        let harness = Harness(source: "A **short** note\n\nplain tail")
         let short = (harness.textView.string as NSString).range(of: "short")
 
         harness.textView.insertText("dictated phrase", replacementRange: short)
 
-        XCTAssertEqual(harness.textView.string, "A **dictated phrase** note")
+        XCTAssertEqual(harness.textView.string,
+                       "A **dictated phrase** note\n\nplain tail")
+        // The replacement block holds the caret, so its syntax is revealed;
+        // the pipeline still reparses and the untouched block stays clean.
         XCTAssertEqual(harness.controller.markerIndex.visibleString(
-            in: harness.textView.string as NSString), "A dictated phrase note")
+            in: harness.textView.string as NSString),
+            "A **dictated phrase** note\n\nplain tail")
         XCTAssertEqual(harness.textView.accessibilityValue(),
-                       "A dictated phrase note")
+                       "A **dictated phrase** note\n\nplain tail")
     }
 }
 

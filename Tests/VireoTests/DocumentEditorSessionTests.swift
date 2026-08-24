@@ -33,9 +33,11 @@ final class DocumentEditorSessionTests: XCTestCase {
         window.contentView = scrollView
         XCTAssertTrue(window.makeFirstResponder(session.textView))
 
+        // The caret's block reveals its syntax, so backspace removes the one
+        // visible character — the closing asterisk.
         session.textView.setSelectedRange(NSRange(location: 5, length: 0))
         session.textView.deleteBackward(nil)
-        XCTAssertEqual(session.textView.string, " 👩🏽‍💻")
+        XCTAssertEqual(session.textView.string, "**X* 👩🏽‍💻")
 
         let manager = window.undoManager
         XCTAssertTrue(manager === session.textView.undoManager)

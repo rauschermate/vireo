@@ -211,6 +211,12 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     public var headingMarks: [HeadingMark] = []
     public var collapsedAnchors: Set<Int> = []
     public var hoveredAnchor: Int?
+    /// Source region whose markers the editor currently reveals (the block
+    /// that holds the caret). Constructs inside it show raw syntax, so their
+    /// drawn stand-ins adapt: bullets and checkboxes yield to the raw text,
+    /// and fold chevrons pin to the line's resting position instead of the
+    /// anchor glyph — which shifts right when the markers gain width.
+    public var syntaxRevealRange: NSRange?
     private var listGuideIndex = ListGuideIndex(listMarkers: [], tasks: [])
     private var listGuideIndexNeedsRebuild = false
 
@@ -470,12 +476,20 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
             let collapsed = collapsedAnchors.contains(anchor)
             let color: NSColor = collapsed ? .controlAccentColor : markerColor
             if collapsed { drawCollapseHalo(atCharIndex: anchor, markerText: s, origin: origin) }
-            drawLeftMarker(s, atCharIndex: anchor, origin: origin, color: color)
+            // A revealed line shows its raw `- ` — a drawn bullet next to it
+            // would double the marker.
+            if !isSyntaxRevealed(at: anchor) {
+                drawLeftMarker(s, atCharIndex: anchor, origin: origin, color: color)
+            }
             drawListAdornments(anchor: anchor, markerText: s, origin: origin)
         }
         storage.enumerateAttribute(.vireoCheckbox, in: charRange) { value, range, _ in
             guard let n = value as? NSNumber, !isCollapsedAway(range.location) else { return }
-            drawCheckbox(checked: n.boolValue, atCharIndex: range.location, origin: origin)
+            // As with bullets: the revealed line shows its raw `- [ ]`, so the
+            // drawn checkbox (and its click target) steps aside.
+            if !isSyntaxRevealed(at: range.location) {
+                drawCheckbox(checked: n.boolValue, atCharIndex: range.location, origin: origin)
+            }
             drawListAdornments(anchor: range.location, markerText: nil, origin: origin)
         }
         storage.enumerateAttribute(.vireoHeading, in: charRange) { value, range, _ in
@@ -682,7 +696,49 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         return nil
     }
 
-    private func markerGeometry(anchor: Int, markerText: String?) -> (lineRect: NSRect, baseline: CGFloat, textX: CGFloat, markerWidth: CGFloat)? {
+    func isSyntaxRevealed(at anchor: Int) -> Bool {
+        guard let reveal = syntaxRevealRange else { return false }
+        return NSLocationInRange(anchor, reveal)
+    }
+
+    /// The anchor glyph's resting x — where it sits while its leading markers
+    /// are hidden: line-fragment padding + the paragraph's indent + the
+    /// line's leading whitespace, which stays visible in both states.
+    /// Reads the style at the paragraph's first character (the one TextKit
+    /// honors) and uses `headIndent`, not `firstLineHeadIndent` — the two are
+    /// equal at rest, but the editor pulls the first-line indent back on
+    /// revealed list lines to hang the raw marker in the gutter. Keeps fold
+    /// controls and guides still while the revealed marker occupies it.
+    private func restingTextX(anchor: Int, lineRect: NSRect) -> CGFloat {
+        let padding = textContainers.first?.lineFragmentPadding ?? 0
+        guard let storage = textStorage, storage.length > 0 else {
+            return lineRect.minX + padding
+        }
+        let ns = storage.string as NSString
+        let location = min(max(0, anchor), storage.length - 1)
+        let line = ns.paragraphRange(for: NSRange(location: location, length: 0))
+        let style = storage.attribute(.paragraphStyle, at: line.location,
+                                      effectiveRange: nil) as? NSParagraphStyle
+
+        var end = line.location
+        let limit = min(line.upperBound, storage.length)
+        while end < limit,
+              ns.character(at: end) == 0x20 || ns.character(at: end) == 0x09 {
+            end += 1
+        }
+        var leadingWidth: CGFloat = 0
+        if end > line.location {
+            let leading = ns.substring(with: NSRange(location: line.location,
+                                                     length: end - line.location))
+            let font = storage.attribute(.font, at: line.location,
+                                         effectiveRange: nil) as? NSFont ?? bulletFont
+            leadingWidth = (leading as NSString)
+                .size(withAttributes: [.font: font]).width
+        }
+        return lineRect.minX + padding + (style?.headIndent ?? 0) + leadingWidth
+    }
+
+    func markerGeometry(anchor: Int, markerText: String?) -> (lineRect: NSRect, baseline: CGFloat, textX: CGFloat, markerWidth: CGFloat)? {
         guard anchor < numberOfGlyphs else { return nil }
         let glyph = glyphIndexForCharacter(at: anchor)
         guard glyph < numberOfGlyphs else { return nil }
@@ -695,7 +751,10 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         } else {
             width = max(12, min(16, bulletFont.pointSize * 0.9)) // checkbox
         }
-        return (lineRect, lineRect.minY + loc.y, lineRect.minX + loc.x, width)
+        let textX = isSyntaxRevealed(at: anchor)
+            ? restingTextX(anchor: anchor, lineRect: lineRect)
+            : lineRect.minX + loc.x
+        return (lineRect, lineRect.minY + loc.y, textX, width)
     }
 
     /// Chevron (hover / collapsed) and the collapsed `…` expander.
@@ -762,7 +821,12 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let lineRect = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
         let loc = location(forGlyphAt: glyph)
         let baseline = origin.y + lineRect.minY + loc.y
-        let textX = origin.x + lineRect.minX + loc.x
+        // While the heading's `#` prefix is revealed, keep the chevron at the
+        // line's resting position — otherwise it rides right with the anchor
+        // glyph and lands on top of the hashes.
+        let textX = isSyntaxRevealed(at: anchor)
+            ? origin.x + restingTextX(anchor: anchor, lineRect: lineRect)
+            : origin.x + lineRect.minX + loc.x
         collapseHoverRects[anchor] = NSRect(
             x: origin.x + lineRect.minX - 48,
             y: origin.y + lineRect.minY,

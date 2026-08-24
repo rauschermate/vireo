@@ -180,28 +180,6 @@ final class MarkerInteractionTests: XCTestCase {
         withExtendedLifetime(controller) {}
     }
 
-    func testExistingConstructKeepsMarkersHiddenWhileTemporarilyIncomplete() {
-        let (controller, textView) = makeEditor("**bold**\nnext")
-        let deletion = NSRange(location: 7, length: 1)
-        XCTAssertTrue(textView.shouldChangeText(in: deletion, replacementString: ""))
-        textView.textStorage!.replaceCharacters(in: deletion, with: "")
-        textView.didChangeText()
-        controller.scheduleRestyle()
-
-        XCTAssertEqual(controller.markerIndex.visibleString(in: textView.string as NSString),
-                       "bold\nnext")
-        XCTAssertNotNil(textView.textStorage!.attribute(.vireoMarker, at: 0,
-                                                        effectiveRange: nil))
-
-        let repair = NSRange(location: 7, length: 0)
-        XCTAssertTrue(textView.shouldChangeText(in: repair, replacementString: "*"))
-        textView.textStorage!.replaceCharacters(in: repair, with: "*")
-        textView.didChangeText()
-        controller.scheduleRestyle()
-        XCTAssertEqual(controller.markerIndex.visibleString(in: textView.string as NSString),
-                       "bold\nnext")
-    }
-
     func testNewUnpairedDelimiterRemainsLiteral() {
         let (controller, textView) = makeEditor("word")
         let insertion = NSRange(location: 4, length: 0)
