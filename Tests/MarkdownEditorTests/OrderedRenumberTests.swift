@@ -96,6 +96,17 @@ final class OrderedRenumberTests: XCTestCase {
         withExtendedLifetime(controller) {}
     }
 
+    func testEnterMidOrderedTaskListContinuesTheBoxAndRenumbers() {
+        // The unified scanner recognizes task boxes on ordered items, so the
+        // continuation keeps the box and the renumber walk sees the siblings.
+        let (controller, textView) = makeEditor("1. [x] a\n2. [ ] b\n")
+        let caret = ("1. [x] a" as NSString).length
+        textView.setSelectedRange(NSRange(location: caret, length: 0))
+        textView.insertNewline(nil)
+        XCTAssertEqual(textView.string, "1. [x] a\n2. [ ] \n3. [ ] b\n")
+        withExtendedLifetime(controller) {}
+    }
+
     func testUndoRestoresTheOldNumbering() {
         let (controller, textView) = makeEditor("1. a\n2. b\n3. c\n")
         let caret = ("1. a\n2. b" as NSString).length
