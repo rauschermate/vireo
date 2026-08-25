@@ -35,6 +35,17 @@ struct RenderPlan {
         baseAttributes = styles.bodyAttributes
         guard length > 0 else { return }
 
+        // cmark extends a list item's source range through the blank lines
+        // that follow it. A blank between two siblings must keep the list's
+        // compact spacing, but blanks after the *last* item belong to the
+        // text below — styled as list, they park the caret at the list
+        // indent right after Enter exits the list. An item is last when no
+        // sibling starts where its range ends.
+        let listItemStarts = Set(parsed.blockRuns.compactMap { run -> Int? in
+            if case .listItem = run.kind { return run.range.location }
+            return nil
+        })
+
         // 1. Block styles.
         for block in parsed.blockRuns {
             let range = NSIntersectionRange(block.range, NSRange(location: 0, length: length))
@@ -55,7 +66,12 @@ struct RenderPlan {
                                 surfaceColor: theme.codeBackground)
             case .listItem(let depth, _):
                 if let paragraph = styles.listParagraphs[depth] {
-                    add(range, [.paragraphStyle: paragraph])
+                    let styled = listItemStarts.contains(range.upperBound)
+                        ? range
+                        : rangeWithoutTrailingBlankLines(range, in: ns)
+                    if styled.length > 0 {
+                        add(styled, [.paragraphStyle: paragraph])
+                    }
                 }
             case .tableRow(let isHeader):
                 add(range, isHeader ? styles.tableHeaderRowAttributes
@@ -314,6 +330,20 @@ struct RenderPlan {
         let line = source.substring(with: range)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return line.hasPrefix("```") || line.hasPrefix("~~~")
+    }
+
+    /// Drop whitespace-only lines from the end of `range`, keeping the
+    /// newline that terminates the last content line.
+    private func rangeWithoutTrailingBlankLines(_ range: NSRange,
+                                                in source: NSString) -> NSRange {
+        var end = range.upperBound
+        while end > range.location {
+            let line = source.lineRange(for: NSRange(location: end - 1, length: 0))
+            let text = source.substring(with: NSIntersectionRange(line, range))
+            guard text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { break }
+            end = max(range.location, line.location)
+        }
+        return NSRange(location: range.location, length: end - range.location)
     }
 
     private func rangeWithoutTrailingNewline(_ range: NSRange,
