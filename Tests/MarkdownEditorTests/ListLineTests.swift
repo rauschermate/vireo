@@ -63,6 +63,28 @@ final class ListLineTests: XCTestCase {
         XCTAssertNil(ListLine.parse("  "))
     }
 
+    /// The editor and the engine share `ListMarkerScanner`, so these three
+    /// cases now match what the parser does.
+    func testTabAfterTheMarkerIsAList() {
+        let l = ListLine.parse("-\titem")
+        XCTAssertEqual(l?.marker, "-")
+        XCTAssertEqual(l?.markerEndOffset, 2)
+        XCTAssertEqual(l?.contentIsEmpty, false)
+    }
+
+    func testOrderedTaskItem() {
+        let l = ListLine.parse("1. [x] done")
+        XCTAssertEqual(l?.isOrdered, true)
+        XCTAssertEqual(l?.isTask, true)
+        XCTAssertEqual(l?.taskChecked, true)
+        XCTAssertEqual(l?.continuationPrefix, "2. [ ] ")
+    }
+
+    func testTenDigitOrdinalIsNotAList() {
+        XCTAssertNil(ListLine.parse("1234567890. x"))
+        XCTAssertNotNil(ListLine.parse("123456789. x"))
+    }
+
     func testBracketContentIsNotATaskBox() {
         // `- [link](url)` is a bullet whose content starts with a link, not a task.
         let l = ListLine.parse("- [link](url)")

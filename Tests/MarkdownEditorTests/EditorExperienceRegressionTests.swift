@@ -80,6 +80,32 @@ final class EditorExperienceRegressionTests: XCTestCase {
             .vireoMarker, at: 0, effectiveRange: nil))
     }
 
+    func testEnterExitFromANestedTaskListParksTheCaretAtTheMargin() throws {
+        let harness = Harness(source: "- [ ] Ship\n    - [ ] asf\n\ntail\n")
+        let end = (harness.textView.string as NSString).range(of: "asf").upperBound
+        harness.textView.setSelectedRange(NSRange(location: end, length: 0))
+
+        // Enter continues, Enter outdents, Enter exits the list.
+        harness.textView.insertNewline(nil)
+        harness.textView.insertNewline(nil)
+        harness.textView.insertNewline(nil)
+
+        let sel = harness.textView.selectedRange()
+        let line = (harness.textView.string as NSString).lineRange(for: sel)
+        XCTAssertEqual((harness.textView.string as NSString)
+            .substring(with: line), "\n", "the third Enter leaves the list")
+
+        // The exited line must not inherit the list indent — a caret parked
+        // at the list column reads as "still inside the list".
+        let stored = harness.textView.textStorage?.attribute(
+            .paragraphStyle, at: line.location, effectiveRange: nil
+        ) as? NSParagraphStyle
+        XCTAssertEqual(stored?.firstLineHeadIndent ?? -1, 0)
+        let typing = try XCTUnwrap(
+            harness.textView.typingAttributes[.paragraphStyle] as? NSParagraphStyle)
+        XCTAssertEqual(typing.firstLineHeadIndent, 0)
+    }
+
     func testTextInputServiceReplacementUsesTheNormalEditPipeline() {
         let harness = Harness(source: "A **short** note\n\nplain tail")
         let short = (harness.textView.string as NSString).range(of: "short")
