@@ -1,7 +1,9 @@
 # Vireo
 
 A fast, native macOS markdown viewer and editor that renders markdown as clean
-formatted text and **hides the syntax entirely — even while editing**. See
+formatted text and **hides the syntax everywhere except where you edit**: the
+block that holds the caret shows its raw syntax, dimmed; every other block
+stays clean. Move the caret away and the block re-hides. See
 [`docs/prd.md`](docs/prd.md) for the product vision and
 [`docs/eng-design.md`](docs/eng-design.md) for the architecture.
 
@@ -111,13 +113,18 @@ Local SPM packages (see `docs/eng-design.md` §10), consumed by the `Vireo` app:
 **Core invariant:** the markdown *source string* is always the single source of
 truth. The text view holds the raw markdown; syntax markers are hidden by
 emitting null glyphs (present in the store, invisible on screen), so saving is
-just writing `textStorage.string` back to disk unchanged.
+just writing `textStorage.string` back to disk unchanged. The caret's block is
+the one exception: its markers render as dimmed text, so the caret walks real
+characters and backspace deletes the character you see.
 
 ## Implemented (v1)
 
-- Hidden-syntax rendering & inline editing: headings, bold, italic, bold-italic,
-  strikethrough, inline code, links, blockquotes, ordered/unordered/nested lists,
+- Clean rendering with caret-block syntax reveal: headings, bold, italic,
+  bold-italic, strikethrough, inline code, links, blockquotes,
+  ordered/unordered/nested lists (nested ordered display cycles 1. → a. → i.),
   task checkboxes, fenced code with syntax highlighting, images (local + remote).
+- List editing: Enter continues a list and renumbers the ordered items below;
+  Enter on an empty item walks out one level; Tab/⇧Tab indent and outdent.
 - Centered reading column, OS light/dark, proportional zoom (⌘+/⌘−/⌘0).
 - Floating format toolbar on selection + ⌘B/⌘I/⌘K + Format menu.
 - Obsidian-style tabs (min/max-width, content-derived titles for untitled tabs,
@@ -134,9 +141,10 @@ just writing `textStorage.string` back to disk unchanged.
   bottom-left, one-click download + install + relaunch, driven entirely from a
   custom UI (Sparkle's own dialogs suppressed).
 
-Behavior notes: GFM tables render as a drawn grid; placing the caret inside one
-reveals its raw source for editing. Task checkboxes toggle on click. Links open
-on ⌘-click (plain click edits); `#anchor` and `file.md#anchor` links navigate.
+Behavior notes: GFM tables always render as a drawn grid; a click on a cell
+opens a native cell editor over it, so the raw pipes never appear. Task
+checkboxes toggle on click. Links open on ⌘-click (plain click edits);
+`#anchor` and `file.md#anchor` links navigate.
 
 ## Known gaps / next steps
 
@@ -145,8 +153,10 @@ Smaller engineering follow-ups (from the PR #16 review) are tracked in
 eng-design are documented in [`docs/eng-design.md` §14](docs/eng-design.md).
 Remaining work:
 
-- **Caret over hidden markers**: arrow keys step through zero-width hidden marker
-  characters (the eng-design's noted option-C caret nuance). Acceptable for v1.
+- **Caret polish across hidden blocks**: inside the caret's block the caret
+  walks real characters. Movement across *other* blocks still crosses hidden
+  markers through per-command snapping, and some paths (Home/End, ⌥-arrows)
+  keep small gaps. Acceptable for v1.
 - **Notarization** (`scripts/release.sh`) needs an Apple Developer ID — the app,
   Quick Look extension, dmg, and signing/notary scripts are all in place, but the
   actual notarized build can only be produced with your credentials.
