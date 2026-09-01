@@ -63,6 +63,18 @@ the paragraph under the caret shows its raw markdown, dimmed.
 **Optional caption** (only if the layout has room):
 The syntax shows only where you're editing. Move on, and it hides again.
 
+**How to regenerate:** `site/hero.png` renders from `site/hero-source.md`
+through the real pipeline, not a mockup:
+
+```bash
+swift run VireoSnapshot site/hero-source.md site/hero.png --caret 89 --dark
+```
+
+`--caret <offset>` is a `VireoSnapshot`-only flag (`Sources/VireoSnapshot/main.swift`)
+that reveals the block at that character offset, dimmed, the way the live
+editor reveals the caret's block. `89` lands inside the second paragraph of
+`hero-source.md`; recompute it if that file changes.
+
 ---
 
 ## SUPPORTING COPY (for `<head>` / social sharing, not shown on the page)
