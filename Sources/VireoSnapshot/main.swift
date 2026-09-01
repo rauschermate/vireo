@@ -11,6 +11,7 @@ struct Snapshot {
         let inputPath = args.count > 1 ? args[1] : "samples/welcome.md"
         let outPath = args.count > 2 ? args[2] : "/tmp/vireo-snapshot.png"
         let dark = args.contains("--dark")
+        let family: Theme.FontFamily = args.contains("--mono") ? .mono : .sans
 
         MainActor.assumeIsolated {
             if args.contains("--write-benchmark-fixtures") {
@@ -20,7 +21,7 @@ struct Snapshot {
             } else if args.contains("--bench") {
                 bench(inputPath: inputPath)
             } else {
-                render(inputPath: inputPath, outPath: outPath, dark: dark)
+                render(inputPath: inputPath, outPath: outPath, dark: dark, family: family)
             }
         }
     }
@@ -77,7 +78,8 @@ struct Snapshot {
     }
 
     @MainActor
-    static func render(inputPath: String, outPath: String, dark: Bool) {
+    static func render(inputPath: String, outPath: String, dark: Bool,
+                       family: Theme.FontFamily = .sans) {
         let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)!
         NSAppearance.current = appearance
 
@@ -88,7 +90,8 @@ struct Snapshot {
 
         let parsed = MarkdownParser().parse(source)
         let loader = ImageLoader()
-        var renderer = MarkdownRenderer(theme: Theme(zoom: 1.0),
+        let theme = Theme(zoom: 1.0, family: family)
+        var renderer = MarkdownRenderer(theme: theme,
                                         baseURL: URL(fileURLWithPath: inputPath).deletingLastPathComponent(),
                                         imageLoader: loader, isDark: dark)
         let args = CommandLine.arguments
@@ -113,8 +116,7 @@ struct Snapshot {
         let storage = NSTextStorage(attributedString: attributed)
         let layout = MarkdownLayoutManager()
         layout.markerColor = .secondaryLabelColor
-        layout.bulletFont = .systemFont(ofSize: 16)
-        let theme = Theme(zoom: 1.0)
+        layout.bulletFont = theme.bodyFont
         layout.tables = parsed.tables
         layout.tableRowHeight = theme.tableRowHeight
         layout.tableFont = theme.tableFont

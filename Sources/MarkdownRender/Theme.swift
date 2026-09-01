@@ -40,10 +40,21 @@ public extension NSAttributedString.Key {
 /// Visual design tokens. A single `zoom` factor scales the whole type system
 /// proportionally so headings, body and code stay balanced (PRD §8).
 public struct Theme: Sendable {
-    public var zoom: CGFloat
+    /// Typeface of the document text. Code spans and code blocks stay
+    /// monospaced in both families.
+    public enum FontFamily: String, Sendable {
+        /// SF Pro, the macOS system sans face.
+        case sans
+        /// SF Mono, the macOS system monospaced face.
+        case mono
+    }
 
-    public init(zoom: CGFloat = 1.0) {
+    public var zoom: CGFloat
+    public var family: FontFamily
+
+    public init(zoom: CGFloat = 1.0, family: FontFamily = .sans) {
         self.zoom = zoom
+        self.family = family
     }
 
     // Type scale (points at zoom = 1).
@@ -63,18 +74,26 @@ public struct Theme: Sendable {
     }
 
     // Fonts.
-    public var bodyFont: NSFont { .systemFont(ofSize: baseSize, weight: .regular) }
+    /// The document face at one size and weight. `family` picks sans or mono.
+    public func documentFont(ofSize size: CGFloat, weight: NSFont.Weight) -> NSFont {
+        switch family {
+        case .sans: return .systemFont(ofSize: size, weight: weight)
+        case .mono: return .monospacedSystemFont(ofSize: size, weight: weight)
+        }
+    }
+
+    public var bodyFont: NSFont { documentFont(ofSize: baseSize, weight: .regular) }
     public func headingFont(_ level: Int) -> NSFont {
-        .systemFont(ofSize: headingSize(level), weight: level <= 2 ? .bold : .semibold)
+        documentFont(ofSize: headingSize(level), weight: level <= 2 ? .bold : .semibold)
     }
     public var codeFont: NSFont { .monospacedSystemFont(ofSize: codeSize, weight: .regular) }
-    public var tableFont: NSFont { .systemFont(ofSize: baseSize * 0.95, weight: .regular) }
-    public var tableHeaderFont: NSFont { .systemFont(ofSize: baseSize * 0.95, weight: .semibold) }
+    public var tableFont: NSFont { documentFont(ofSize: baseSize * 0.95, weight: .regular) }
+    public var tableHeaderFont: NSFont { documentFont(ofSize: baseSize * 0.95, weight: .semibold) }
     public var tableRowHeight: CGFloat { max(40, ceil(baseSize * 1.35) + 16) }
     /// Reserved below editor tables for the native horizontal scroller. Static
     /// renderers leave this disabled and keep their previous compact spacing.
     public var tableScrollerGutter: CGFloat { 16 }
-    public var boldFont: NSFont { .systemFont(ofSize: baseSize, weight: .semibold) }
+    public var boldFont: NSFont { documentFont(ofSize: baseSize, weight: .semibold) }
     public var italicFont: NSFont { Self.italic(of: bodyFont) }
     public var boldItalicFont: NSFont { Self.italic(of: boldFont) }
 

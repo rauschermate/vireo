@@ -18,6 +18,10 @@ public final class EditorController: ObservableObject {
     public var onOpenLink: ((String) -> Void)?
 
     @Published public var zoom: CGFloat = 1.0 { didSet { restyle() } }
+    /// Typeface of the document text (code stays monospaced either way).
+    @Published public var fontFamily: Theme.FontFamily = .sans {
+        didSet { if oldValue != fontFamily { restyle() } }
+    }
 
     private let incremental = IncrementalParser()
     public private(set) var parsed = ParsedMarkdown()
@@ -126,7 +130,7 @@ public final class EditorController: ObservableObject {
         }
     }
 
-    var theme: Theme { Theme(zoom: zoom) }
+    var theme: Theme { Theme(zoom: zoom, family: fontFamily) }
 
     // MARK: Styling
 

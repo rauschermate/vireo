@@ -27,6 +27,19 @@ public enum TOCDefaultOption: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// Typeface of the document text: the system sans face (default) or the
+/// system monospaced face. Code always stays monospaced.
+public enum EditorFontOption: String, CaseIterable, Identifiable, Sendable {
+    case sans, mono
+    public var id: String { rawValue }
+    public var label: String {
+        switch self {
+        case .sans: return "Sans"
+        case .mono: return "Mono"
+        }
+    }
+}
+
 /// Thin typed wrapper over UserDefaults for the handful of v1 preferences.
 @MainActor
 public final class Preferences: ObservableObject {
@@ -38,6 +51,7 @@ public final class Preferences: ObservableObject {
         static let recentFiles = "vireo.recentFiles"
         static let appearance = "vireo.appearance"
         static let tocDefault = "vireo.tocDefault"
+        static let editorFont = "vireo.editorFont"
     }
 
     /// Auto-save on by default (PRD §2).
@@ -55,11 +69,17 @@ public final class Preferences: ObservableObject {
         didSet { defaults.set(tocDefault.rawValue, forKey: Keys.tocDefault) }
     }
 
+    /// Document text uses the system sans face out of the box.
+    @Published public var editorFont: EditorFontOption = .sans {
+        didSet { defaults.set(editorFont.rawValue, forKey: Keys.editorFont) }
+    }
+
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         autoSave = defaults.object(forKey: Keys.autoSave) as? Bool ?? true
         appearance = AppearanceOption(rawValue: defaults.string(forKey: Keys.appearance) ?? "") ?? .system
         tocDefault = TOCDefaultOption(rawValue: defaults.string(forKey: Keys.tocDefault) ?? "") ?? .dynamic
+        editorFont = EditorFontOption(rawValue: defaults.string(forKey: Keys.editorFont) ?? "") ?? .sans
     }
 
     public var recentFiles: [URL] {

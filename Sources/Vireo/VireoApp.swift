@@ -258,6 +258,19 @@ struct PreferencesView: View {
                 applyAppearance(newValue)
             }
 
+            Picker("Font", selection: $prefs.editorFont) {
+                ForEach(EditorFontOption.allCases) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+            .pickerStyle(.menu)
+            .onChange(of: prefs.editorFont) { _, _ in
+                AppState.shared.applyEditorFont()
+            }
+            Text("The typeface of the document text. Code blocks stay monospaced either way.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             Picker("Table of contents", selection: $prefs.tocDefault) {
                 ForEach(TOCDefaultOption.allCases) { option in
                     Text(option.label).tag(option)
