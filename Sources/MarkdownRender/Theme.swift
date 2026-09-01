@@ -40,13 +40,9 @@ public extension NSAttributedString.Key {
 /// Visual design tokens. A single `zoom` factor scales the whole type system
 /// proportionally so headings, body and code stay balanced (PRD §8).
 public struct Theme: Sendable {
-    /// Typeface of the document text. Code spans and code blocks stay
-    /// monospaced in both families.
+    /// Typeface of the document text. Code stays monospaced in both.
     public enum FontFamily: String, Sendable {
-        /// SF Pro, the macOS system sans face.
-        case sans
-        /// SF Mono, the macOS system monospaced face.
-        case mono
+        case sans, mono
     }
 
     public var zoom: CGFloat
@@ -74,7 +70,6 @@ public struct Theme: Sendable {
     }
 
     // Fonts.
-    /// The document face at one size and weight. `family` picks sans or mono.
     public func documentFont(ofSize size: CGFloat, weight: NSFont.Weight) -> NSFont {
         switch family {
         case .sans: return .systemFont(ofSize: size, weight: weight)

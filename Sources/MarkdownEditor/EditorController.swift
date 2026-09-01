@@ -18,7 +18,6 @@ public final class EditorController: ObservableObject {
     public var onOpenLink: ((String) -> Void)?
 
     @Published public var zoom: CGFloat = 1.0 { didSet { restyle() } }
-    /// Typeface of the document text (code stays monospaced either way).
     @Published public var fontFamily: Theme.FontFamily = .sans {
         didSet { if oldValue != fontFamily { restyle() } }
     }
@@ -268,13 +267,9 @@ public final class EditorController: ObservableObject {
     public func normalizedSelection(_ proposed: NSRange,
                                     previous: NSRange? = nil,
                                     affinity explicitAffinity: MarkerAffinity? = nil) -> NSRange {
-        // AppKit validates the selection once *inside* `didChangeText`, before
-        // the restyle that rebuilds the index. That index still describes the
-        // pre-edit source: its ranges sit at stale offsets and its length is
-        // short by the edit's delta, so it would clamp a perfectly good caret
-        // onto a marker that has since moved — or onto the old end of the
-        // document. An index that does not describe this text cannot decide
-        // anything about it; pass the proposal through untouched.
+        // AppKit validates the selection inside `didChangeText`, before the
+        // restyle rebuilds the index. Applied then, the pre-edit ranges clamp
+        // the caret onto a marker the edit already moved.
         if let length = textView?.textStorage?.length,
            markerIndex.sourceLength != length {
             return proposed

@@ -317,10 +317,8 @@ private struct Accumulator {
             anchor = childRange.location
         } else {
             // On an empty item cmark's range starts at the line, not at the
-            // marker. Hide from the marker on, so the leading indent stays a
-            // visible glyph run exactly as it is on a filled item — otherwise
-            // revealing the caret's line un-hides spaces the layout never
-            // accounted for and the text jumps right.
+            // marker. Hide from the marker on, or the leading indent hides too
+            // and the revealed line jumps right by its width.
             let scan = ListMarkerScanner.scan(ns, in: itemRange)
             let markerStart = scan?.markerStart ?? itemRange.location
             anchor = scan?.contentStart ?? itemRange.location
@@ -385,13 +383,9 @@ private struct Accumulator {
         guard scan.isMarkerOnly, scan.lineEnd < ns.length else { return false }
         let anchor = scan.lineEnd
 
-        // Start at the marker, not at the line: that is where a real item's
-        // range starts, and both consumers depend on it. The hidden range must
-        // leave the leading indent a visible glyph run, or revealing the
-        // caret's line un-hides spaces the layout never accounted for. The
-        // block run must not reach the line's first character, or its own
-        // depth — not the parent's — sets the paragraph indent, and the line
-        // steps back one level as soon as content arrives.
+        // Start at the marker, where a real item's range starts. Reaching the
+        // line's first character would hide the indent, and would put this
+        // item's own depth — not its parent's — on the paragraph style.
         let itemRange = NSRange(location: scan.markerStart,
                                 length: anchor - scan.markerStart)
         result.markerRanges.append(itemRange)

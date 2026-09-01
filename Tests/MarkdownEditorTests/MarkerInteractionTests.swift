@@ -24,10 +24,9 @@ final class MarkerInteractionTests: XCTestCase {
         withExtendedLifetime(controller) {}
     }
 
-    /// AppKit validates the selection once inside `didChangeText`, before the
-    /// restyle rebuilds the index. The stale index describes the pre-edit
-    /// source, so applying it clamped the caret onto the old end of the
-    /// document — or onto a marker that the edit had already moved.
+    /// AppKit validates the selection inside `didChangeText`, before the
+    /// restyle rebuilds the index; the pre-edit ranges clamped the caret onto
+    /// a marker the edit had already moved.
     func testStaleMarkerIndexLeavesTheCaretAlone() {
         let (controller, textView) = makeEditor("- a\n    - \n")
         let storage = textView.textStorage!

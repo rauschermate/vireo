@@ -6,7 +6,6 @@ import VireoCore
 import VireoUpdater
 
 extension EditorFontOption {
-    /// Bridge the stored preference to the renderer's typeface token.
     var themeFamily: Theme.FontFamily {
         switch self {
         case .sans: return .sans
@@ -61,8 +60,6 @@ final class AppState: ObservableObject {
         for doc in documents { doc.controller.zoom = zoom }
     }
 
-    /// Push the current font preference to every open document. The preferences
-    /// window calls this when the user switches family.
     func applyEditorFont() {
         let family = Preferences.shared.editorFont.themeFamily
         for doc in documents { doc.controller.fontFamily = family }
