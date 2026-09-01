@@ -1,8 +1,7 @@
 # Editor quality gates
 
-This matrix turns the boundary cases identified in the
-[editor review](../docs/editor-review.md#p1--current-tests-do-not-protect-the-whole-experience)
-into named, repeatable gates.
+This matrix turns the boundary cases identified during editor review into
+named, repeatable gates.
 Coverage is distributed across the focused implementation PRs so a regression
 fails next to the subsystem that owns it. Run all gates after the stack is
 integrated.

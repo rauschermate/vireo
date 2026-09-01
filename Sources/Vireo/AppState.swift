@@ -1,8 +1,18 @@
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
+import MarkdownRender
 import VireoCore
 import VireoUpdater
+
+extension EditorFontOption {
+    var themeFamily: Theme.FontFamily {
+        switch self {
+        case .sans: return .sans
+        case .mono: return .mono
+        }
+    }
+}
 
 /// Single window, custom Obsidian-style tab strip: ordered documents, one
 /// selected. (Native NSWindow tabs were tried first — the system bar can't do
@@ -50,6 +60,11 @@ final class AppState: ObservableObject {
         for doc in documents { doc.controller.zoom = zoom }
     }
 
+    func applyEditorFont() {
+        let family = Preferences.shared.editorFont.themeFamily
+        for doc in documents { doc.controller.fontFamily = family }
+    }
+
     // MARK: Tabs
 
     func document(for id: UUID?) -> DocumentModel? {
@@ -67,6 +82,7 @@ final class AppState: ObservableObject {
 
     private func register(_ doc: DocumentModel) {
         doc.controller.zoom = zoom
+        doc.controller.fontFamily = Preferences.shared.editorFont.themeFamily
         doc.openLinkHandler = { [weak self] target, anchor in
             guard let self, let opened = self.requestOpen(target) else { return }
             if let anchor {

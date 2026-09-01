@@ -55,6 +55,30 @@ final class DanglingItemTests: XCTestCase {
         XCTAssertEqual(parsed.toc.count, 1)
     }
 
+    /// Hiding the indent as well as the marker made the revealed line jump
+    /// right by its width — the layout compensates for the marker alone.
+    func testIndentedEmptyItemHidesOnlyTheMarker() {
+        let parsed = MarkdownParser().parse("- a\n    - b\n        - \n")
+        XCTAssertEqual(parsed.markerRanges.last, NSRange(location: 20, length: 2))
+    }
+
+    /// A run reaching the line's first character puts its own depth on the
+    /// paragraph style, so the line stepped back a level once content arrived.
+    func testEmptyAndFilledItemsAgreeOnRangeStart() {
+        let head = "- a\n    - b\n"
+        let empty = MarkdownParser().parse(head + "        - \n")
+        let filled = MarkdownParser().parse(head + "        - x\n")
+        func itemStart(_ p: ParsedMarkdown) -> Int? {
+            p.blockRuns.last {
+                if case .listItem = $0.kind { return $0.range.location >= 12 }
+                return false
+            }?.range.location
+        }
+        XCTAssertEqual(itemStart(empty), 20)
+        XCTAssertEqual(itemStart(empty), itemStart(filled),
+                       "an empty item must occupy the same range as the item it becomes")
+    }
+
     func testEmptyOrderedTaskItemDrawsACheckbox() {
         // swift-markdown reports a checkbox on ordered items, so an empty one
         // must synthesize a task rather than a numbered marker.

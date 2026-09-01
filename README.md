@@ -152,10 +152,8 @@ checkboxes toggle on click. Links open on ⌘-click (plain click edits);
 
 ## Known gaps / next steps
 
-Smaller engineering follow-ups (from the PR #16 review) are tracked in
-[`docs/roadmap.md`](docs/roadmap.md). Implementation deviations from the
-eng-design are documented in [`docs/eng-design.md` §14](docs/eng-design.md).
-Remaining work:
+Implementation deviations from the eng-design are documented in
+[`docs/eng-design.md` §14](docs/eng-design.md). Remaining work:
 
 - **Caret polish across hidden blocks**: inside the caret's block the caret
   walks real characters. Movement across *other* blocks still crosses hidden
