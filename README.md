@@ -1,10 +1,13 @@
 # Vireo
 
-A fast, native macOS markdown viewer and editor that renders markdown as clean
-formatted text and **hides the syntax everywhere except where you edit**: the
-block that holds the caret shows its raw syntax, dimmed; every other block
-stays clean. Move the caret away and the block re-hides. See
-[`docs/prd.md`](docs/prd.md) for the product vision and
+Vireo is a fast, native macOS markdown viewer and editor. It renders markdown
+as clean formatted text and hides the syntax.
+
+The block that holds the caret shows its raw syntax, dimmed. Every other
+block stays clean. When the caret moves away, the block hides its syntax
+again.
+
+See [`docs/prd.md`](docs/prd.md) for the product vision. See
 [`docs/eng-design.md`](docs/eng-design.md) for the architecture.
 
 ## Build & run
@@ -111,11 +114,12 @@ Local SPM packages (see `docs/eng-design.md` §10), consumed by the `Vireo` app:
 | `Vireo` | SwiftUI app: tabs, sidebars, TOC, menus, zoom, auto-save |
 
 **Core invariant:** the markdown *source string* is always the single source of
-truth. The text view holds the raw markdown; syntax markers are hidden by
-emitting null glyphs (present in the store, invisible on screen), so saving is
-just writing `textStorage.string` back to disk unchanged. The caret's block is
-the one exception: its markers render as dimmed text, so the caret walks real
-characters and backspace deletes the character you see.
+truth. The text view holds the raw markdown. Syntax markers are hidden by null
+glyphs: present in the store, invisible on screen. Saving writes
+`textStorage.string` back to disk unchanged.
+
+The caret's block is the one exception. Its markers render as dimmed text, so
+the caret walks real characters and backspace deletes the character you see.
 
 ## Implemented (v1)
 
