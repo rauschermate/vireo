@@ -55,6 +55,35 @@ final class DanglingItemTests: XCTestCase {
         XCTAssertEqual(parsed.toc.count, 1)
     }
 
+    /// An indented empty item must hide only its marker. Hiding the leading
+    /// indent too made the caret's line jump right the moment the reveal showed
+    /// its raw syntax, because the layout compensates for the marker alone.
+    func testIndentedEmptyItemHidesOnlyTheMarker() {
+        let src = "- a\n    - b\n        - \n"
+        let parsed = MarkdownParser().parse(src)
+        // `        - ` starts at 12; the marker is the `- ` at 20.
+        XCTAssertEqual(parsed.markerRanges.last, NSRange(location: 20, length: 2))
+    }
+
+    /// The synthesized item's block run must start at the marker, like a real
+    /// item's. A run reaching the line's first character sets the paragraph
+    /// indent from its own depth, so the line stepped back one level as soon
+    /// as the first character of content arrived.
+    func testEmptyAndFilledItemsAgreeOnRangeStart() {
+        let head = "- a\n    - b\n"
+        let empty = MarkdownParser().parse(head + "        - \n")
+        let filled = MarkdownParser().parse(head + "        - x\n")
+        func itemStart(_ p: ParsedMarkdown) -> Int? {
+            p.blockRuns.last {
+                if case .listItem = $0.kind { return $0.range.location >= 12 }
+                return false
+            }?.range.location
+        }
+        XCTAssertEqual(itemStart(empty), 20)
+        XCTAssertEqual(itemStart(empty), itemStart(filled),
+                       "an empty item must occupy the same range as the item it becomes")
+    }
+
     func testEmptyOrderedTaskItemDrawsACheckbox() {
         // swift-markdown reports a checkbox on ordered items, so an empty one
         // must synthesize a task rather than a numbered marker.
