@@ -24,6 +24,23 @@ final class MarkerInteractionTests: XCTestCase {
         withExtendedLifetime(controller) {}
     }
 
+    /// AppKit validates the selection once inside `didChangeText`, before the
+    /// restyle rebuilds the index. The stale index describes the pre-edit
+    /// source, so applying it clamped the caret onto the old end of the
+    /// document — or onto a marker that the edit had already moved.
+    func testStaleMarkerIndexLeavesTheCaretAlone() {
+        let (controller, textView) = makeEditor("- a\n    - \n")
+        let storage = textView.textStorage!
+        let oldLength = storage.length
+        storage.replaceCharacters(in: NSRange(location: 4, length: 0), with: "    ")
+        XCTAssertEqual(controller.markerIndex.sourceLength, oldLength,
+                       "precondition: the index has not been rebuilt yet")
+
+        let caret = NSRange(location: storage.length, length: 0)
+        XCTAssertEqual(controller.normalizedSelection(caret, previous: NSRange(location: 10, length: 0)),
+                       caret, "a stale index must not clamp a caret it cannot describe")
+    }
+
     func testShiftSelectionCannotOwnHalfADelimiter() {
         let (controller, _) = makeEditor("a **bold** c")
         XCTAssertEqual(controller.normalizedSelection(NSRange(location: 3, length: 3)),

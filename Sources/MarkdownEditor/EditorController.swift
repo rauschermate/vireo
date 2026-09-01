@@ -268,6 +268,17 @@ public final class EditorController: ObservableObject {
     public func normalizedSelection(_ proposed: NSRange,
                                     previous: NSRange? = nil,
                                     affinity explicitAffinity: MarkerAffinity? = nil) -> NSRange {
+        // AppKit validates the selection once *inside* `didChangeText`, before
+        // the restyle that rebuilds the index. That index still describes the
+        // pre-edit source: its ranges sit at stale offsets and its length is
+        // short by the edit's delta, so it would clamp a perfectly good caret
+        // onto a marker that has since moved — or onto the old end of the
+        // document. An index that does not describe this text cannot decide
+        // anything about it; pass the proposal through untouched.
+        if let length = textView?.textStorage?.length,
+           markerIndex.sourceLength != length {
+            return proposed
+        }
         if proposed.length > 0 { return markerIndex.atomicSelection(proposed) }
         let affinity: MarkerAffinity
         if let explicitAffinity {
