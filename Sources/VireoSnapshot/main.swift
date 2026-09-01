@@ -76,6 +76,39 @@ struct Snapshot {
         print("size: \(bytes / 1024) KB, blocks: \(parsed.blockRuns.count), markers: \(parsed.markerRanges.count)")
     }
 
+    /// Mirrors `EditorController.syntaxRevealTarget`: the caret's paragraph,
+    /// expanded over every parsed block that touches it (list items and
+    /// table rows don't expand). Ported here, storage-free, so a snapshot
+    /// can preview the caret-block reveal without a live `NSTextView`.
+    static func revealRegion(caret: Int, source: String, parsed: ParsedMarkdown) -> NSRange? {
+        let ns = source as NSString
+        guard ns.length > 0 else { return nil }
+        let location = min(max(0, caret), ns.length)
+        var region = ns.paragraphRange(for: NSRange(location: location, length: 0))
+        guard region.length > 0 else { return nil }
+        if parsed.tables.contains(where: { NSIntersectionRange($0.range, region).length > 0 }) {
+            return nil
+        }
+        var changed = true
+        var iterations = 0
+        while changed, iterations < 16 {
+            changed = false
+            iterations += 1
+            for block in parsed.blockRuns {
+                if case .listItem = block.kind { continue }
+                if case .tableRow = block.kind { continue }
+                guard NSIntersectionRange(block.range, region).length > 0 else { continue }
+                let lo = min(region.location, block.range.location)
+                let hi = max(region.upperBound, block.range.upperBound)
+                if lo != region.location || hi != region.upperBound {
+                    region = NSRange(location: lo, length: hi - lo)
+                    changed = true
+                }
+            }
+        }
+        return region
+    }
+
     @MainActor
     static func render(inputPath: String, outPath: String, dark: Bool) {
         let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)!
@@ -106,7 +139,22 @@ struct Snapshot {
             if foldable.indices.contains(n) { collapsed.insert(foldable[n].anchor) }
         }
         renderer.collapsedAnchors = collapsed
-        let attributed = renderer.render(source: source, parsed: parsed)
+
+        // --caret <offset>: reveal the block at this character offset, the
+        // way the live editor shows the caret's raw markdown, dimmed.
+        var revealRange: NSRange?
+        if let i = args.firstIndex(of: "--caret"), i + 1 < args.count,
+           let caret = Int(args[i + 1]) {
+            revealRange = revealRegion(caret: caret, source: source, parsed: parsed)
+        }
+        var presented = parsed
+        if let reveal = revealRange {
+            presented.markerRanges = parsed.markerRanges.filter { marker in
+                guard NSIntersectionRange(marker, reveal).length > 0 else { return true }
+                return parsed.images.contains { NSIntersectionRange(marker, $0.range).length > 0 }
+            }
+        }
+        let attributed = renderer.render(source: source, parsed: presented)
 
         let width: CGFloat = 760
         let inset: CGFloat = 24
@@ -115,6 +163,17 @@ struct Snapshot {
         layout.markerColor = .secondaryLabelColor
         layout.bulletFont = .systemFont(ofSize: 16)
         let theme = Theme(zoom: 1.0)
+        // Revealed markers render as literal text in their construct's style —
+        // repaint them in the secondary color, mirroring
+        // `EditorController.dimRevealedMarkers`, so syntax reads as chrome.
+        if let reveal = revealRange {
+            for marker in parsed.markerRanges {
+                let revealed = NSIntersectionRange(marker, reveal)
+                guard revealed.length > 0 else { continue }
+                if parsed.images.contains(where: { NSIntersectionRange(marker, $0.range).length > 0 }) { continue }
+                storage.addAttribute(.foregroundColor, value: theme.secondaryColor, range: revealed)
+            }
+        }
         layout.tables = parsed.tables
         layout.tableRowHeight = theme.tableRowHeight
         layout.tableFont = theme.tableFont
@@ -185,6 +244,22 @@ struct Snapshot {
         }
 
         layout.drawGlyphs(forGlyphRange: glyphRange, at: origin)
+
+        // --caret <offset>: draw an insertion-point bar so the reveal above
+        // reads as "the caret is here", not as a rendering glitch.
+        if let i = args.firstIndex(of: "--caret"), i + 1 < args.count,
+           let caret = Int(args[i + 1]), layout.numberOfGlyphs > 0 {
+            var actual = NSRange(location: 0, length: 0)
+            _ = layout.glyphRange(forCharacterRange: NSRange(location: min(caret, storage.length), length: 0),
+                                  actualCharacterRange: &actual)
+            let glyphIndex = min(layout.glyphIndexForCharacter(at: actual.location), layout.numberOfGlyphs - 1)
+            let fragment = layout.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+            let glyphLocation = layout.location(forGlyphAt: glyphIndex)
+            let caretRect = NSRect(x: origin.x + glyphLocation.x, y: origin.y + fragment.minY,
+                                   width: 2, height: fragment.height)
+            NSColor.controlAccentColor.setFill()
+            NSBezierPath(rect: caretRect).fill()
+        }
 
         NSGraphicsContext.restoreGraphicsState()
         cg.restoreGState()
