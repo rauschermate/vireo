@@ -18,6 +18,9 @@ public final class EditorController: ObservableObject {
     public var onOpenLink: ((String) -> Void)?
 
     @Published public var zoom: CGFloat = 1.0 { didSet { restyle() } }
+    @Published public var fontFamily: Theme.FontFamily = .sans {
+        didSet { if oldValue != fontFamily { restyle() } }
+    }
 
     private let incremental = IncrementalParser()
     public private(set) var parsed = ParsedMarkdown()
@@ -126,7 +129,7 @@ public final class EditorController: ObservableObject {
         }
     }
 
-    var theme: Theme { Theme(zoom: zoom) }
+    var theme: Theme { Theme(zoom: zoom, family: fontFamily) }
 
     // MARK: Styling
 
@@ -264,6 +267,13 @@ public final class EditorController: ObservableObject {
     public func normalizedSelection(_ proposed: NSRange,
                                     previous: NSRange? = nil,
                                     affinity explicitAffinity: MarkerAffinity? = nil) -> NSRange {
+        // AppKit validates the selection inside `didChangeText`, before the
+        // restyle rebuilds the index. Applied then, the pre-edit ranges clamp
+        // the caret onto a marker the edit already moved.
+        if let length = textView?.textStorage?.length,
+           markerIndex.sourceLength != length {
+            return proposed
+        }
         if proposed.length > 0 { return markerIndex.atomicSelection(proposed) }
         let affinity: MarkerAffinity
         if let explicitAffinity {

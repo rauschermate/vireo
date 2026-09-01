@@ -309,22 +309,28 @@ private struct Accumulator {
         // on the trailing newline, so continuing a list never flashes raw
         // syntax or shifts the text when content arrives.
         let anchor: Int
-        let markerLen: Int
+        let markerRange: NSRange
         if let firstChild = item.children.first(where: { $0.range != nil }),
            let childRange = map.nsRange(firstChild.range) {
-            markerLen = childRange.location - itemRange.location
+            markerRange = NSRange(location: itemRange.location,
+                                  length: childRange.location - itemRange.location)
             anchor = childRange.location
         } else {
-            markerLen = scanMarkerLength(in: itemRange)
-            anchor = itemRange.location + markerLen
+            // On an empty item cmark's range starts at the line, not at the
+            // marker. Hide from the marker on, or the leading indent hides too
+            // and the revealed line jumps right by its width.
+            let scan = ListMarkerScanner.scan(ns, in: itemRange)
+            let markerStart = scan?.markerStart ?? itemRange.location
+            anchor = scan?.contentStart ?? itemRange.location
+            markerRange = NSRange(location: markerStart, length: anchor - markerStart)
             guard anchor < ns.length else {
                 // nothing (not even a newline) to carry the drawn marker —
                 // leave the raw `- ` visible rather than losing it entirely
                 return
             }
         }
-        if markerLen > 0 {
-            result.markerRanges.append(NSRange(location: itemRange.location, length: markerLen))
+        if markerRange.length > 0 {
+            result.markerRanges.append(markerRange)
         }
 
         let subtree = subtreeRange(of: itemRange, afterFirstLineFrom: anchor)
@@ -333,7 +339,7 @@ private struct Accumulator {
             result.tasks.append(TaskMark(anchor: anchor, checked: box == .checked,
                                          subtreeRange: subtree))
         } else if ordered {
-            let raw = ns.substring(with: NSRange(location: itemRange.location, length: max(0, markerLen)))
+            let raw = ns.substring(with: markerRange)
                 .trimmingCharacters(in: .whitespaces)
             let delimiter = raw.hasSuffix(")") ? ")" : "."
             result.listMarkers.append(ListMarker(anchor: anchor,
@@ -377,10 +383,13 @@ private struct Accumulator {
         guard scan.isMarkerOnly, scan.lineEnd < ns.length else { return false }
         let anchor = scan.lineEnd
 
-        result.markerRanges.append(NSRange(location: line.location,
-                                           length: anchor - line.location))
-        result.blockRuns.append(BlockRun(range: NSRange(location: line.location,
-                                                        length: anchor - line.location),
+        // Start at the marker, where a real item's range starts. Reaching the
+        // line's first character would hide the indent, and would put this
+        // item's own depth — not its parent's — on the paragraph style.
+        let itemRange = NSRange(location: scan.markerStart,
+                                length: anchor - scan.markerStart)
+        result.markerRanges.append(itemRange)
+        result.blockRuns.append(BlockRun(range: itemRange,
                                          kind: .listItem(depth: listDepth,
                                                          ordered: scan.isOrdered)))
         if let checked = scan.taskChecked {
@@ -397,15 +406,6 @@ private struct Accumulator {
                                                  depth: listDepth))
         }
         return true
-    }
-
-    /// Indent + bullet/number + spacing (+ task box) at the start of an item
-    /// that has no parsed children (empty item). The task box counts: without
-    /// it the box syntax stays visible next to the drawn checkbox until the
-    /// first character of content arrives.
-    private func scanMarkerLength(in itemRange: NSRange) -> Int {
-        guard let scan = ListMarkerScanner.scan(ns, in: itemRange) else { return 0 }
-        return scan.contentStart - itemRange.location
     }
 
     /// Everything below the item's first line — hidden when collapsed.
