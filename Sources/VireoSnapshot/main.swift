@@ -160,6 +160,13 @@ struct Snapshot {
         let attributed = renderer.render(source: source, parsed: presented)
 
         let width: CGFloat = 760
+        // --inset <n>: side padding around the text column. The top and bottom
+        // keep the default so only the measure changes.
+        var insetX: CGFloat = 24
+        if let i = args.firstIndex(of: "--inset"), i + 1 < args.count,
+           let n = Double(args[i + 1]), n >= 0, n < Double(width) / 2 {
+            insetX = CGFloat(n)
+        }
         let inset: CGFloat = 24
         let storage = NSTextStorage(attributedString: attributed)
         let layout = MarkdownLayoutManager()
@@ -187,15 +194,25 @@ struct Snapshot {
         layout.collapsedAnchors = collapsed
         layout.imageProvider = { loader.image(forSource: $0, baseURL: URL(fileURLWithPath: inputPath).deletingLastPathComponent()) }
         storage.addLayoutManager(layout)
-        let container = NSTextContainer(size: NSSize(width: width - inset * 2, height: 100_000))
+        let container = NSTextContainer(size: NSSize(width: width - insetX * 2, height: 100_000))
         container.lineFragmentPadding = 8
         layout.addTextContainer(container)
         layout.ensureLayout(for: container)
         let used = layout.usedRect(for: container)
         let height = ceil(used.height) + inset * 2
 
+        // --scale <n>: draw the same layout into an n× bitmap. Text is rendered
+        // at the higher resolution rather than upscaled, so the PNG stays sharp
+        // on a retina display.
+        var scale: CGFloat = 1
+        if let i = args.firstIndex(of: "--scale"), i + 1 < args.count,
+           let n = Double(args[i + 1]), n >= 1, n <= 4 {
+            scale = CGFloat(n)
+        }
+
         guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil,
-                                         pixelsWide: Int(width), pixelsHigh: Int(height),
+                                         pixelsWide: Int(width * scale),
+                                         pixelsHigh: Int(height * scale),
                                          bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
                                          isPlanar: false, colorSpaceName: .deviceRGB,
                                          bytesPerRow: 0, bitsPerPixel: 0),
@@ -209,6 +226,7 @@ struct Snapshot {
         // matching a real (flipped) NSTextView.
         let cg = ctx.cgContext
         cg.saveGState()
+        cg.scaleBy(x: scale, y: scale)
         cg.translateBy(x: 0, y: height)
         cg.scaleBy(x: 1, y: -1)
         let flipped = NSGraphicsContext(cgContext: cg, flipped: true)
@@ -219,7 +237,7 @@ struct Snapshot {
         NSRect(x: 0, y: 0, width: width, height: height).fill()
 
         let glyphRange = layout.glyphRange(for: container)
-        let origin = NSPoint(x: inset, y: inset)
+        let origin = NSPoint(x: insetX, y: inset)
         layout.drawBackground(forGlyphRange: glyphRange, at: origin)
 
         // --select A,B: draw a selection highlight over character range [A,B),
@@ -268,7 +286,7 @@ struct Snapshot {
 
         guard let png = rep.representation(using: .png, properties: [:]) else { exit(1) }
         try? png.write(to: URL(fileURLWithPath: outPath))
-        print("wrote \(outPath) (\(Int(width))×\(Int(height)))")
+        print("wrote \(outPath) (\(Int(width * scale))×\(Int(height * scale)))")
     }
 }
 

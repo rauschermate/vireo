@@ -1,19 +1,19 @@
-# Meeting notes — Q3 kickoff
+# Markdown used to be fun
 
-Vireo renders your markdown as **clean, formatted text** — the block you're editing shows its raw syntax, dimmed, and everything else stays clean.
+Then it grew *vaults*. And **subscriptions**. And a preview pane, so you could read your writing in one window while you typed it in another.
 
-## Agenda
+## What that cost us
 
-- Ship the v1 release candidate
-- Review the *native* rendering pipeline
-- Decide on launch date
+- Text that just looked like text
+- An app that opened before you finished blinking
+- Files you can still read in 2040
 
-## Action items
+## What we did instead
 
-- [x] Parse GFM markdown
-- [x] Reveal syntax only where you're editing
-- [ ] Ship version 1
+- [x] Formatting you click, not syntax you memorize
+- [x] Leave every file plain `.md` on disk
+- [ ] Become your default, quietly
 
-> The best way to predict the future is to invent it.
+> Your notes are not a database. They are a folder.
 
-Everything above is just plain markdown on disk. You never see the markup — except right here, in this one paragraph.
+No vaults. No plugins. No monthly rent on your own writing. Just **your words**, the way you meant them — with the markup out of sight, except in the one paragraph you're editing.
