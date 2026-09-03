@@ -46,7 +46,15 @@ struct VireoApp: App {
             Button("New File") { state.createNewFile() }.keyboardShortcut("n")
             Button("New Tab") { state.newDocument() }.keyboardShortcut("t")
             Button("Open…") { state.openFilePanel() }.keyboardShortcut("o")
+            Button("Open Folder…") { state.openFolderPanel() }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
             RecentMenu()
+            Divider()
+            Button("Search Files…") { state.sidebar.quickOpenPresented.toggle() }
+                .keyboardShortcut("p")
+                .disabled(state.workspaceRoot == nil)
+            Button("Close Workspace") { state.closeWorkspace() }
+                .disabled(state.workspaceRoot == nil)
         }
         CommandGroup(replacing: .saveItem) {
             Button("Save") {
@@ -182,6 +190,7 @@ func applyAppearance(_ option: AppearanceOption) {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
         applyAppearance(Preferences.shared.appearance)
+        if SidebarSnapshot.runIfRequested() { exit(0) }
         let args = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }
         for path in args {
             let url = URL(fileURLWithPath: path)
@@ -197,9 +206,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let state = AppState.shared
         guard state.documents.isEmpty else { return }
+        // The sidebar remembers its workspace across launches; a file opened
+        // with no workspace adopts its folder instead.
+        if let workspace = Preferences.shared.lastWorkspace,
+           (try? workspace.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+            state.openWorkspace(workspace, revealSidebar: false)
+        }
         let pending = state.pendingURLs
         state.pendingURLs = []
-        for url in pending { state.requestOpen(url) }
+        for url in pending { open(url, in: state) }
         if state.documents.isEmpty { state.newDocument() }
         ensureWindowVisible()
         // Begin watching for updates. Kicks off Sparkle's scheduled checks so the
@@ -230,8 +245,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Mutating observed state during open-event delivery can cancel the
         // window's presentation — defer to the next runloop turn.
         DispatchQueue.main.async { [weak self] in
-            for url in urls { AppState.shared.requestOpen(url) }
+            for url in urls { self?.open(url, in: AppState.shared) }
             self?.ensureWindowVisible()
+        }
+    }
+
+    /// A folder becomes the sidebar workspace; a file opens in a tab.
+    @MainActor
+    private func open(_ url: URL, in state: AppState) {
+        if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+            state.openWorkspace(url)
+        } else {
+            state.requestOpen(url)
         }
     }
 
@@ -278,6 +303,16 @@ struct PreferencesView: View {
             }
             .pickerStyle(.menu)
             Text("Whether the table of contents starts open. Dynamic opens it only for longer documents. Applies to documents opened afterwards.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Picker("Sidebar labels", selection: $prefs.sidebarFileLabel) {
+                ForEach(SidebarFileLabel.allCases) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+            .pickerStyle(.menu)
+            Text("What file rows in the sidebar show: the document title (frontmatter or first heading) or the file name.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

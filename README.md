@@ -132,8 +132,10 @@ the caret walks real characters and backspace deletes the character you see.
 - Centered reading column, OS light/dark, proportional zoom (⌘+/⌘−/⌘0).
 - Floating format toolbar on selection + ⌘B/⌘I/⌘K + Format menu.
 - Obsidian-style tabs (min/max-width, content-derived titles for untitled tabs,
-  inline rename, double-click full screen, ⌘T/⌘W/⌘N), folder sidebar, TOC
-  sidebar, focus mode, in-document find (⌘F).
+  inline rename, double-click full screen, ⌘T/⌘W/⌘N), workspace sidebar
+  (Pinned / Recents / Everything tree, ⌘P quick-open, drag-to-move, inline
+  rename, context menus, resizable), TOC sidebar, focus mode, in-document
+  find (⌘F).
 - Auto-save (default) or explicit ⌘S mode; external-change reload with conflict prompt.
 - Registers `.md`/`.markdown` document types (open from Finder / command line).
 - **Quick Look preview extension** (`VireoQuickLook.appex`, embedded in the app)

@@ -21,25 +21,30 @@ extension EditorFontOption {
 final class AppState: ObservableObject {
     static let shared = AppState()
 
-    /// Width of the file panel — shared so the tab strip can inset itself past
-    /// the full-height sidebar.
-    static let sidebarWidth: CGFloat = 260
-
     /// Auto-updater (Sparkle-backed). Drives the update pill; dormant on
     /// unconfigured dev builds. Started once from the app delegate.
     let updater = UpdateController()
 
     @Published private(set) var documents: [DocumentModel] = []
     @Published var selectedID: UUID?
+
+    /// The folder the sidebar browses. Explicit, like an editor workspace: it
+    /// changes only when the user opens a folder, never when tabs switch.
+    @Published private(set) var workspaceRoot: URL?
     @Published var rootFolder: FileNode?
     @Published private(set) var isLoadingFileTree = false
     @Published private(set) var fileTreeError: String?
 
-    /// The last folder the user explicitly opened — used as a fallback root
-    /// when the active tab is untitled (has no containing folder to follow).
-    @Published var pinnedFolder: URL?
+    /// Transient sidebar state (expansion, selection, pins, drag).
+    let sidebar = SidebarModel()
 
-    @Published var showFileSidebar = false
+    @Published var showFileSidebar: Bool {
+        didSet { Preferences.shared.sidebarVisible = showFileSidebar }
+    }
+    /// Width of the file panel; the tab strip insets itself past it.
+    @Published var sidebarWidth: CGFloat {
+        didSet { Preferences.shared.sidebarWidth = Double(sidebarWidth) }
+    }
     @Published var focusMode = false
     @Published var zoom: CGFloat = 1.0 { didSet { applyZoom() } }
     /// Window content width — drives how many tabs fit before overflow.
@@ -51,9 +56,24 @@ final class AppState: ObservableObject {
     private let fileTreeService = FileTreeService()
     private var fileTreeTask: Task<Void, Never>?
     private var fileTreeGeneration = 0
+    private var workspaceWatcher: WorkspaceWatcher?
+
+    init() {
+        let prefs = Preferences.shared
+        showFileSidebar = prefs.sidebarVisible
+        sidebarWidth = CGFloat(prefs.sidebarWidth)
+    }
 
     var activeDocument: DocumentModel? {
         documents.first { $0.id == selectedID }
+    }
+
+    /// How far the tab strip slides right to clear the sidebar. The toggle
+    /// button stays put beside the traffic lights (its box ends 126pt into
+    /// the window, plus the strip's 6pt gap), so the strip starts 12pt past
+    /// the sidebar's right edge.
+    var tabStripInset: CGFloat {
+        showFileSidebar && !focusMode ? max(0, sidebarWidth - 120) : 0
     }
 
     private func applyZoom() {
@@ -128,12 +148,22 @@ final class AppState: ObservableObject {
     /// Prompt-close a single tab. Returns false when the user cancelled.
     private func close(_ doc: DocumentModel) -> Bool {
         guard prepareToClose(doc) else { return false }
-        guard let idx = documents.firstIndex(where: { $0.id == doc.id }) else { return true }
+        remove(doc)
+        return true
+    }
+
+    /// Close a tab with no save prompt — its file is being deleted.
+    func discard(_ doc: DocumentModel) {
+        remove(doc)
+        if documents.isEmpty { newDocument() }
+    }
+
+    private func remove(_ doc: DocumentModel) {
+        guard let idx = documents.firstIndex(where: { $0.id == doc.id }) else { return }
         documents.remove(at: idx)
         if selectedID == doc.id {
             selectedID = documents.indices.contains(idx) ? documents[idx].id : documents.last?.id
         }
-        return true
     }
 
     /// Save-changes prompt when closing would lose work. Returns true when
@@ -267,6 +297,7 @@ final class AppState: ObservableObject {
 
     /// Rename a tab (inline rename / context menu); shows an alert on failure.
     func rename(_ doc: DocumentModel, to name: String) {
+        let oldURL = doc.url
         if let message = doc.rename(to: name) {
             let alert = NSAlert()
             alert.messageText = "Couldn't rename"
@@ -274,15 +305,39 @@ final class AppState: ObservableObject {
             alert.runModal()
             return
         }
-        if showFileSidebar { refreshFileTree() } // refresh sidebar
+        if let oldURL, let newURL = doc.url, oldURL != newURL {
+            sidebar.rewrite(from: oldURL, to: newURL)
+        }
+        refreshFileTree()
+    }
+
+    /// What a sidebar row shows for `node`: folders their name; files the
+    /// document title (live for open tabs) or, by preference, the file name.
+    func sidebarLabel(for node: FileNode) -> String {
+        if node.isDirectory { return node.name }
+        if Preferences.shared.sidebarFileLabel == .filename { return node.stem }
+        if let open = documents.first(where: { $0.url == node.url }),
+           let first = open.toc.first, first.level == 1,
+           !first.title.isEmpty {
+            return first.title
+        }
+        if let title = node.title, !title.isEmpty { return title }
+        return node.stem
     }
 
     // MARK: Opening
 
     /// Open a URL in a tab — focusing it if already open, adopting a pristine
-    /// untitled tab if one is selected, else appending a new tab.
+    /// untitled tab if one is selected, else appending a new tab. With no
+    /// workspace open yet, the file's folder becomes the workspace.
     @discardableResult
     func requestOpen(_ url: URL) -> DocumentModel? {
+        let url = url.standardizedFileURL
+        defer {
+            if workspaceRoot == nil, documents.contains(where: { $0.url == url }) {
+                openWorkspace(url.deletingLastPathComponent(), revealSidebar: false)
+            }
+        }
         if let existing = documents.first(where: { $0.url == url }) {
             selectedID = existing.id
             return existing
@@ -307,9 +362,9 @@ final class AppState: ObservableObject {
     }
 
     /// ⌘N: create a real `.md` on disk — in the active document's folder, else
-    /// the opened sidebar folder, else wherever the user picks — and open it.
+    /// the workspace root, else wherever the user picks — and open it.
     func createNewFile() {
-        let folder = activeDocument?.url?.deletingLastPathComponent() ?? pinnedFolder
+        let folder = activeDocument?.url?.deletingLastPathComponent() ?? workspaceRoot
         if let folder {
             let url = availableUntitledURL(in: folder)
             do {
@@ -321,7 +376,7 @@ final class AppState: ObservableObject {
                 alert.runModal()
                 return
             }
-            if showFileSidebar { refreshFileTree() } // refresh sidebar
+            refreshFileTree()
             Preferences.shared.addRecent(url)
             requestOpen(url)
         } else {
@@ -356,46 +411,87 @@ final class AppState: ObservableObject {
         panel.message = "Open markdown files, or choose a folder to browse."
         guard panel.runModal() == .OK else { return }
         for url in panel.urls {
-            if isDirectory(url) { openFolder(url) } else { requestOpen(url) }
+            if isDirectory(url) { openWorkspace(url) } else { requestOpen(url) }
         }
+    }
+
+    /// File ▸ Open Folder…: pick a workspace for the sidebar.
+    func openFolderPanel() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Open"
+        panel.message = "Choose a folder to browse in the sidebar."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        openWorkspace(url)
     }
 
     private func isDirectory(_ url: URL) -> Bool {
         (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? url.hasDirectoryPath
     }
 
-    // MARK: File sidebar
+    // MARK: Workspace / file sidebar
 
-    /// Toggle the left file panel. When opening, (re)build the tree from the
-    /// active document's containing folder.
+    /// Toggle the left file panel.
     func toggleFileSidebar() {
         showFileSidebar.toggle()
-        if showFileSidebar { refreshFileTree() }
+        if showFileSidebar, rootFolder == nil { refreshFileTree() }
     }
 
-    /// Rebuild the sidebar tree so it follows the active tab: root at the active
-    /// document's containing folder, falling back to the last opened folder when
-    /// the tab is untitled. `nil` when there's nothing to browse (empty state).
-    func refreshFileTree() {
-        if let folder = activeDocument?.url?.deletingLastPathComponent() ?? pinnedFolder {
-            loadFileTree(folder)
-        } else {
-            fileTreeTask?.cancel()
-            fileTreeTask = nil
-            fileTreeGeneration += 1
+    /// Browse `url` in the sidebar. Remembered across launches and listed in the
+    /// workspace switcher.
+    func openWorkspace(_ url: URL, revealSidebar: Bool = true) {
+        let root = url.standardizedFileURL
+        let prefs = Preferences.shared
+        if workspaceRoot != root {
+            workspaceRoot = root
+            sidebar.reset(for: root, pinned: prefs.pinnedFiles(for: root))
             rootFolder = nil
-            isLoadingFileTree = false
-            fileTreeError = nil
+            workspaceWatcher?.stop()
+            workspaceWatcher = WorkspaceWatcher(root: root) { [weak self] in
+                Task { @MainActor in self?.refreshFileTree() }
+            }
         }
+        prefs.addRecentWorkspace(root)
+        prefs.lastWorkspace = root
+        if revealSidebar { showFileSidebar = true }
+        loadFileTree(root)
     }
 
-    /// Open a folder in the sidebar: reveal the panel and show its markdown-only
-    /// tree now. It's remembered as the fallback root; from here the sidebar
-    /// follows the active tab.
-    func openFolder(_ url: URL) {
-        pinnedFolder = url
-        showFileSidebar = true
-        loadFileTree(url)
+    func closeWorkspace() {
+        workspaceWatcher?.stop()
+        workspaceWatcher = nil
+        fileTreeTask?.cancel()
+        fileTreeTask = nil
+        fileTreeGeneration += 1
+        workspaceRoot = nil
+        rootFolder = nil
+        isLoadingFileTree = false
+        fileTreeError = nil
+        sidebar.reset(for: nil, pinned: [])
+        Preferences.shared.lastWorkspace = nil
+    }
+
+    /// Rebuild the tree for the current workspace (after a file change on
+    /// disk or a sidebar action). `completion` runs once the new tree is in.
+    func refreshFileTree(completion: (() -> Void)? = nil) {
+        guard let root = workspaceRoot else { completion?(); return }
+        loadFileTree(root, completion: completion)
+    }
+
+    /// Tab context menu → "Reveal in Sidebar": show the panel, expand every
+    /// folder down to the file, and scroll its row into view. A file outside
+    /// the workspace is left alone, like the reference.
+    func revealInSidebar(_ url: URL) {
+        let url = url.standardizedFileURL
+        if !showFileSidebar { showFileSidebar = true }
+        guard let root = workspaceRoot, SidebarTree.isDescendant(url, of: root) else { return }
+        sidebar.everythingCollapsed = false
+        for ancestor in SidebarTree.ancestors(of: url, below: root) {
+            sidebar.expand(ancestor)
+        }
+        sidebar.revealTarget = url
     }
 
     func saveActiveAs() {
@@ -415,7 +511,7 @@ final class AppState: ObservableObject {
         return types
     }
 
-    private func loadFileTree(_ url: URL) {
+    private func loadFileTree(_ url: URL, completion: (() -> Void)? = nil) {
         fileTreeTask?.cancel()
         fileTreeGeneration += 1
         let generation = fileTreeGeneration
@@ -447,6 +543,7 @@ final class AppState: ObservableObject {
             switch result {
             case .success(let root):
                 self.rootFolder = root
+                completion?()
             case .failure(let error) where error is CancellationError:
                 break
             case .failure(let error):

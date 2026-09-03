@@ -10,32 +10,45 @@ struct DocumentWindowView: View {
     @EnvironmentObject private var state: AppState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    private var sidebarVisible: Bool { state.showFileSidebar && !state.focusMode }
+
     var body: some View {
-        HStack(spacing: 0) {
-            if state.showFileSidebar && !state.focusMode {
-                FileSidebar()
-                    .frame(width: AppState.sidebarWidth)
-                    // A rounded glass card floating in the window (Finder-style),
-                    // inset 8pt from the edges with the traffic lights above it.
-                    .padding(8)
-                    .transition(reduceMotion ? .identity : .move(edge: .leading))
+        GeometryReader { geometry in
+            ZStack(alignment: .topLeading) {
+                HStack(spacing: 0) {
+                    // The sidebar runs the full window height, under the
+                    // titlebar, with the traffic lights floating over it. It
+                    // keeps its width while hidden and is clipped to zero, so
+                    // its content stays put as the panel slides.
+                    FileSidebar(topInset: geometry.safeAreaInsets.top)
+                        .frame(width: state.sidebarWidth)
+                        .frame(width: sidebarVisible ? state.sidebarWidth : 0, alignment: .leading)
+                        .clipped()
+                        .ignoresSafeArea(.container, edges: .top)
+                    if let doc = state.activeDocument {
+                        EditorPane(doc: doc)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        Color(nsColor: .textBackgroundColor)
+                    }
+                }
+                if sidebarVisible {
+                    // Kept inside the sidebar's last 8pt: the editor's AppKit
+                    // scroll view would take any hit on its own side.
+                    SidebarResizeHandle(state: state, windowWidth: geometry.size.width)
+                        .offset(x: state.sidebarWidth - 8)
+                        .ignoresSafeArea(.container, edges: .top)
+                }
             }
-            if let doc = state.activeDocument {
-                EditorPane(doc: doc)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                Color(nsColor: .textBackgroundColor)
+            .onChange(of: geometry.size.width, initial: true) { _, width in
+                let clamped = SidebarMetrics.clampWidth(state.sidebarWidth, windowWidth: width)
+                if clamped != state.sidebarWidth { state.sidebarWidth = clamped }
             }
         }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2),
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.14),
                    value: state.showFileSidebar)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18),
                    value: state.focusMode)
-        // The panel always mirrors the active tab's containing folder: switch
-        // tabs and the tree re-roots to the new document's folder.
-        .onChange(of: state.selectedID) { _, _ in
-            if state.showFileSidebar { state.refreshFileTree() }
-        }
         // The tab strip lives in a titlebar *accessory* — inside the titlebar
         // hierarchy next to the traffic lights (like Xcode's tabs): native
         // glass and dragging, and none of NSToolbar's » item-overflow, which
@@ -47,12 +60,22 @@ struct DocumentWindowView: View {
                                        url: state.activeDocument?.url,
                                        edited: state.activeDocument?.isDirty ?? false,
                                        chromeHidden: state.focusMode))
-        // The auto-update pill floats in the bottom-left corner of the window.
+        // The auto-update pill floats in the bottom-left corner of the editor.
         .overlay(alignment: .bottomLeading) {
             UpdatePill(model: state.updater.model)
-                .padding(.leading, 12)
+                .padding(.leading, 12 + (sidebarVisible ? state.sidebarWidth : 0))
                 .padding(.bottom, 10)
                 .allowsHitTesting(true)
+        }
+        // Sidebar drag ghost and the ⌘P panel float over everything, in the
+        // window's own coordinate space (they ignore the titlebar inset so
+        // pointer positions measured in global space line up).
+        .overlay {
+            SidebarDragOverlay(state: state, model: state.sidebar)
+                .ignoresSafeArea()
+        }
+        .overlay {
+            QuickOpenHost(state: state, model: state.sidebar)
         }
     }
 }

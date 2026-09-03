@@ -306,7 +306,36 @@ Where the shipped implementation intentionally differs from the sections above:
     fixture. The combined gate includes parsing, direct live application,
     initial viewport layout, and visible drawing.
 - **Liquid Glass (§8.0).** The floating toolbar uses `NSGlassEffectView` on
-  macOS 26+ (material fallback on 15); sidebars use standard system materials.
+  macOS 26+ (material fallback on 15). The TOC sidebar uses standard system
+  materials; the file sidebar does not (next bullet).
+- **File sidebar (§8) — Writer-style workspace panel, not `List`/`OutlineGroup`.**
+  Modeled on the left nav of [writer.computer](https://github.com/joelbqz/writer-computer)
+  (behaviour re-implemented in SwiftUI; no code copied — it is GPL). The panel
+  runs the full window height, flush left, on the document's own background with
+  a hairline on its right edge and the traffic lights floating over it. It is a
+  flat list, not an outline view: the tree is flattened into 32pt rows (8pt
+  corners, 20pt icon box, 12pt indent per level) with the reference's glyphs
+  drawn from SVG path data (`SidebarIcons.swift`). Contents, top to bottom: a
+  search button (⌘P quick-open over the workspace), `Pinned` (per-workspace,
+  persisted), `Recents` (by mtime, shown for workspaces of 10+ files, 4 per
+  page), `Everything` (the tree), and a workspace switcher menu. Interactions:
+  single click opens a file / toggles a folder, ⌘-click and ⇧-click select,
+  Escape clears, drag-to-move with a 1:1 ghost row and a container highlight on
+  the drop folder, inline rename, native context menus (file / folder / bulk /
+  empty area), "Reveal in Sidebar" from a tab. The sidebar shows an explicit
+  **workspace** (`AppState.workspaceRoot`): it no longer re-roots when the
+  active tab changes; opening a file with no workspace adopts its folder.
+  Width (220–420pt, resizable at the edge) and visibility persist. The tree
+  refreshes from an FSEvents watcher (`WorkspaceWatcher`); file titles come
+  from frontmatter `title:` or a leading `# H1`, cached by mtime+size in
+  `FileTreeService`. Folders with only non-markdown files stay hidden; empty
+  folder trees show (so a new folder can be created and named). Not ported:
+  `.gitignore` filtering.
+  - *Verifying.* `build/Vireo.app/Contents/MacOS/Vireo --snapshot-sidebar <folder> <out.png> [--dark] [--window]`
+    renders the panel (or the whole window content) headlessly. For the live
+    window, the accessibility tree exposes every row with its frame, and
+    synthetic CGEvents (click / right-click / drag / type) drive it — see
+    `CLAUDE.md`.
 - **Quick Look thumbnail extension** (§9 stretch) not built.
 - **Auto-updater (§11) — Sparkle, with a custom pill.** Two SPM libs keep the
   Sparkle plumbing out of the app: `VireoUpdater` owns the `SPUUpdater` and a

@@ -75,8 +75,22 @@ architecture (§14 documents as-built deviations).
 ## Gotchas
 
 - Verifying a **SwiftUI-chrome** change (tabs, sidebars) can't be done via
-  VireoSnapshot (that only renders the editor pipeline). Build the app bundle and
-  launch it; inspect window/tab bounds via `CGWindowListCopyWindowInfo` if needed.
+  VireoSnapshot (that only renders the editor pipeline). Two routes that work:
+  - `build/Vireo.app/Contents/MacOS/Vireo --snapshot-sidebar <folder> <out.png>
+    [--dark] [--window]` renders the file sidebar (or the whole window content)
+    headlessly to PNG and exits.
+  - For the live window, the **accessibility tree** (`AXUIElementCreateApplication`
+    + `kAXChildrenAttribute`, frames via `kAXPositionAttribute`/`kAXSizeAttribute`)
+    lists every row, button and menu item with its frame, and **synthetic
+    CGEvents** (`CGEvent(mouseEventSource:…)`, `.post(tap: .cghidEventTap)`) can
+    click, right-click, drag and type. Compile a small Swift driver with `swiftc`
+    and script the checks. Menu items appear as `AXMenuItem`s while a context
+    menu is open.
+- If the user's own Vireo is already running, don't `open -a` a dev build with the
+  same bundle id (LaunchServices routes to the running app). Give the dev bundle
+  its own id first: `plutil -replace CFBundleIdentifier -string
+  com.materauscher.vireo.dev build/Vireo.app/Contents/Info.plist` then re-sign
+  with `codesign --force --deep --sign -`. It also isolates its UserDefaults.
 - On open-file launches the AppDelegate must order the main window front itself
   (SwiftUI creates but never orders-in the window). Never mutate `@Published`
   state during open-event delivery — defer a runloop turn.
