@@ -224,12 +224,18 @@ final class DocumentModel: ObservableObject, Identifiable {
         } catch {
             return error.localizedDescription
         }
-        self.url = dest
-        self.title = dest.lastPathComponent
-        controller.baseURL = dest.deletingLastPathComponent()
-        startWatching() // re-arm on the new path
-        Preferences.shared.addRecent(dest)
+        relocate(to: dest)
         return nil
+    }
+
+    /// The file moved on disk (sidebar rename or drag): follow it without
+    /// touching the buffer.
+    func relocate(to newURL: URL) {
+        url = newURL
+        title = newURL.lastPathComponent
+        controller.baseURL = newURL.deletingLastPathComponent()
+        startWatching() // re-arm on the new path
+        Preferences.shared.addRecent(newURL)
     }
 
     /// Load a file into a pristine untitled document (Finder open reuses the

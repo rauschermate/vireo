@@ -5,32 +5,16 @@ import AppKit
 /// always-present overflow chevron pinned right.
 struct ChromeRow: View {
     @EnvironmentObject private var state: AppState
-
-    /// How far to slide the tab strip right so it clears the full-height
-    /// sidebar (the toggle stays pinned at the sidebar's top-left, by the
-    /// traffic lights). Measured from the toggle to the panel's right edge.
-    static let tabInset: CGFloat = 150
-
-    private var sidebarOpen: Bool { state.showFileSidebar && !state.focusMode }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 6) {
-            Button {
-                state.toggleFileSidebar()
-            } label: {
-                Image(systemName: "sidebar.left")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(state.showFileSidebar ? Color.accentColor : .secondary)
-                    .frame(width: 26, height: 26)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(state.showFileSidebar ? "Hide file sidebar"
-                                                      : "Show file sidebar")
-            .help(state.showFileSidebar ? "Hide file sidebar" : "Show file sidebar")
+            SidebarToggleButton(state: state)
 
-            if sidebarOpen {
-                Color.clear.frame(width: Self.tabInset)
+            // Slide the tab strip right so it clears the full-height sidebar
+            // (the toggle stays pinned by the traffic lights).
+            if state.tabStripInset > 0 {
+                Color.clear.frame(width: state.tabStripInset)
             }
 
             TabStrip()
@@ -40,8 +24,39 @@ struct ChromeRow: View {
             TabOverflowMenu()
                 .padding(.trailing, 10)
         }
-        .padding(.leading, 4)
+        // The accessory starts 78pt into the window; 14pt more puts the
+        // toggle at x=92, clear of the traffic lights.
+        .padding(.leading, 14)
         .frame(maxHeight: .infinity)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.14),
+                   value: state.showFileSidebar)
+    }
+}
+
+/// The sidebar toggle by the traffic lights: a quiet outline glyph that
+/// brightens and gains a soft fill on hover.
+private struct SidebarToggleButton: View {
+    @ObservedObject var state: AppState
+    @State private var hovering = false
+
+    var body: some View {
+        Button {
+            state.toggleFileSidebar()
+        } label: {
+            SidebarIcon.sidebarLeft.view(size: 18)
+                .foregroundStyle(Color.primary)
+                .opacity(hovering ? 1 : SidebarPalette.dimmed)
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(hovering ? SidebarPalette.hover : .clear)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityLabel(state.showFileSidebar ? "Hide sidebar" : "Show sidebar")
+        .help(state.showFileSidebar ? "Hide sidebar" : "Show sidebar")
     }
 }
 
@@ -66,7 +81,7 @@ struct TabStrip: View {
     private static let dividerWidth: CGFloat = 1
 
     var body: some View {
-        let sidebarInset = (state.showFileSidebar && !state.focusMode) ? ChromeRow.tabInset : 0
+        let sidebarInset = state.tabStripInset
         let stripWidth = max(Self.minTabWidth + Self.plusButtonWidth,
                              state.contentWidth - Self.reservedChrome - sidebarInset)
         let widths = tabWidths(stripWidth: stripWidth)
@@ -346,6 +361,15 @@ private struct TabItem: View {
                 Label("Close Tabs to the Right", systemImage: "arrow.right.to.line")
             }
             .disabled(state.documents.last?.id == doc.id)
+            if let url = doc.url {
+                Divider()
+                Button { state.revealInSidebar(url) } label: {
+                    Label("Reveal in Sidebar", systemImage: "sidebar.left")
+                }
+                Button { state.copyToPasteboard(url.path) } label: {
+                    Label("Copy Path", systemImage: "doc.on.doc")
+                }
+            }
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.12),
                    value: hovering)
