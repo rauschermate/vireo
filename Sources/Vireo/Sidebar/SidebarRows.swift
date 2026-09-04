@@ -221,18 +221,22 @@ struct SidebarSection<Content: View>: View {
     }
 }
 
-/// "Show More" at the end of a paged section.
+/// A "Show More" / "Show Less" affordance at the end of a section.
 struct ShowMoreRow: View {
+    var title = "Show More"
+    var icon = SidebarIcon.ellipsis
+    var iconRotation: Double = 0
     let action: () -> Void
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: SidebarMetrics.iconGap) {
-                SidebarIcon.ellipsis.view(size: SidebarMetrics.iconSize)
+                icon.view(size: SidebarMetrics.iconSize)
+                    .rotationEffect(.degrees(iconRotation))
                     .frame(width: SidebarMetrics.iconBox, height: SidebarMetrics.iconBox)
                     .opacity(hovering ? 1 : SidebarPalette.dimmed)
-                Text("Show More")
+                Text(title)
                     .font(.system(size: SidebarMetrics.fontSize))
                     .lineLimit(1)
                     .opacity(hovering ? 1 : SidebarPalette.dimmed)

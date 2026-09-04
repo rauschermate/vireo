@@ -18,6 +18,38 @@ struct FileSidebar: View {
     }
 }
 
+/// The sidebar's translucent backdrop: a `.behindWindow` sidebar-material blur
+/// so the desktop shows softly through the panel (like Finder's sidebar and
+/// Writer's nav), while the editor stays opaque "paper". Falls back to an
+/// opaque fill when the system reduces transparency.
+private struct SidebarBackdrop: View {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    var body: some View {
+        if reduceTransparency {
+            Color(nsColor: .windowBackgroundColor)
+        } else {
+            SidebarVibrancy()
+        }
+    }
+}
+
+private struct SidebarVibrancy: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        view.isEmphasized = true
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+    }
+}
+
 private struct SidebarSurface: View {
     @ObservedObject var state: AppState
     @ObservedObject var model: SidebarModel
@@ -34,7 +66,7 @@ private struct SidebarSurface: View {
                 .padding(SidebarMetrics.surfacePadding)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(SidebarBackdrop())
         .overlay(alignment: .trailing) {
             Rectangle()
                 .fill(SidebarPalette.divider)
@@ -142,11 +174,7 @@ private struct SidebarNavigator: View {
                     }
                 }
                 if !recents.isEmpty {
-                    SidebarSection(title: "Recents") {
-                        flatRows(Array(recents.prefix(model.recentsVisibleCount)), label: "Recents",
-                                 showMore: recents.count > model.recentsVisibleCount
-                                    ? { model.recentsVisibleCount += SidebarModel.recentsPageSize } : nil)
-                    }
+                    SidebarSection(title: "Recents") { recentsBody(recents) }
                 }
                 SidebarSection(title: "Everything", collapsed: $model.everythingCollapsed) {
                     FileTreeView(state: state, model: model, root: root, proxy: proxy)
@@ -192,27 +220,62 @@ private struct SidebarNavigator: View {
             }
     }
 
-    /// Flat file rows (Pinned, Recents): open on click, no selection, no drag.
-    /// "Show More" sits in the same 1pt-gapped column as the rows.
+    /// One flat file row (Pinned, Recents): open on click, no selection, no drag.
+    private func flatRow(_ node: FileNode) -> some View {
+        SidebarRow(node: node, depth: 0,
+                   label: state.sidebarLabel(for: node),
+                   isExpanded: false,
+                   isActive: state.activeDocument?.url == node.url,
+                   isSelected: false,
+                   hoverSuspended: model.drag?.started == true)
+            .onTapGesture { state.requestOpen(node.url) }
+            .contextMenu { FileRowMenu(state: state, model: model, node: node, inlineRename: false) }
+    }
+
+    /// A column of flat rows with an optional "Show More" at the end. Used by
+    /// Pinned; Recents has its own expand-to-scroll body below.
     private func flatRows(_ nodes: [FileNode], label: String,
                           showMore: (() -> Void)?) -> some View {
         VStack(spacing: SidebarMetrics.rowGap) {
-            ForEach(nodes) { node in
-                SidebarRow(node: node, depth: 0,
-                           label: state.sidebarLabel(for: node),
-                           isExpanded: false,
-                           isActive: state.activeDocument?.url == node.url,
-                           isSelected: false,
-                           hoverSuspended: model.drag?.started == true)
-                    .onTapGesture { state.requestOpen(node.url) }
-                    .contextMenu { FileRowMenu(state: state, model: model, node: node, inlineRename: false) }
-            }
+            ForEach(nodes) { flatRow($0) }
             if let showMore {
                 ShowMoreRow(action: showMore)
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(label)
+    }
+
+    /// Recents: three rows collapsed, or every row in a fixed-height scroll box
+    /// (five rows tall) with "Show Less" pinned below it.
+    @ViewBuilder
+    private func recentsBody(_ recents: [FileNode]) -> some View {
+        if model.recentsExpanded {
+            VStack(spacing: SidebarMetrics.rowGap) {
+                ScrollView(.vertical) {
+                    VStack(spacing: SidebarMetrics.rowGap) {
+                        ForEach(recents) { flatRow($0) }
+                    }
+                }
+                .scrollIndicators(.hidden)
+                .frame(height: SidebarMetrics.listHeight(
+                    rows: min(recents.count, SidebarModel.recentsExpandedRows)))
+                ShowMoreRow(title: "Show Less", icon: SidebarIcon.caret, iconRotation: -90) {
+                    model.recentsExpanded = false
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Recents")
+        } else {
+            VStack(spacing: SidebarMetrics.rowGap) {
+                ForEach(Array(recents.prefix(SidebarModel.recentsCollapsedCount))) { flatRow($0) }
+                if recents.count > SidebarModel.recentsCollapsedCount {
+                    ShowMoreRow { model.recentsExpanded = true }
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Recents")
+        }
     }
 }
 

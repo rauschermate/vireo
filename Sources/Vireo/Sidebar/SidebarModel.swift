@@ -28,6 +28,12 @@ enum SidebarMetrics {
         depth == 0 ? 10 : CGFloat(depth) * 12 + 6
     }
 
+    /// The height of a run of `rows` list rows, including the 1pt gaps.
+    static func listHeight(rows: Int) -> CGFloat {
+        guard rows > 0 else { return 0 }
+        return CGFloat(rows) * rowHeight + CGFloat(rows - 1) * rowGap
+    }
+
     static func maxWidth(forWindowWidth width: CGFloat) -> CGFloat {
         max(280, min(420, floor(width * 0.35)))
     }
@@ -155,7 +161,10 @@ enum SidebarTree {
 /// or dragged. Reset whenever the workspace changes.
 @MainActor
 final class SidebarModel: ObservableObject {
-    static let recentsPageSize = 4
+    /// Recents shows this many rows collapsed; "Show More" then reveals the
+    /// rest in a scrollable box `recentsExpandedRows` tall.
+    static let recentsCollapsedCount = 3
+    static let recentsExpandedRows = 5
     static let pinnedPageSize = 6
     static let recentsMinimumFileCount = 10
 
@@ -166,7 +175,7 @@ final class SidebarModel: ObservableObject {
     @Published var renaming: URL?
     @Published private(set) var pinned: [URL] = []
     @Published var everythingCollapsed = false
-    @Published var recentsVisibleCount = SidebarModel.recentsPageSize
+    @Published var recentsExpanded = false
     @Published var pinnedVisibleCount = SidebarModel.pinnedPageSize
     @Published var quickOpenPresented = false
     /// Set by "Reveal in Sidebar"; the tree scrolls to it once the row exists.
@@ -208,7 +217,7 @@ final class SidebarModel: ObservableObject {
         renaming = nil
         self.pinned = pinned
         everythingCollapsed = false
-        recentsVisibleCount = Self.recentsPageSize
+        recentsExpanded = false
         pinnedVisibleCount = Self.pinnedPageSize
         revealTarget = nil
         stopDragTimer()
