@@ -32,6 +32,23 @@ struct DocumentWindowView: View {
                         Color(nsColor: .textBackgroundColor)
                     }
                 }
+                // The tab strip sits in the titlebar over the editor, where the
+                // content is opaque "paper". Lay the same glass under it so the
+                // chrome reads as one continuous translucent surface with the
+                // sidebar (the sidebar already paints its own top). The band
+                // spans the safe-area strip the editor leaves clear, so no
+                // document text sits under it.
+                if !state.focusMode {
+                    HStack(spacing: 0) {
+                        Color.clear.frame(width: sidebarVisible ? state.sidebarWidth : 0)
+                        ChromeBackdrop()
+                            .frame(maxWidth: .infinity)
+                    }
+                    .frame(height: geometry.safeAreaInsets.top)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .ignoresSafeArea(.container, edges: .top)
+                    .allowsHitTesting(false)
+                }
                 if sidebarVisible {
                     // Kept inside the sidebar's last 8pt: the editor's AppKit
                     // scroll view would take any hit on its own side.

@@ -18,23 +18,23 @@ struct FileSidebar: View {
     }
 }
 
-/// The sidebar's translucent backdrop: a `.behindWindow` sidebar-material blur
-/// so the desktop shows softly through the panel (like Finder's sidebar and
-/// Writer's nav), while the editor stays opaque "paper". Falls back to an
-/// opaque fill when the system reduces transparency.
-private struct SidebarBackdrop: View {
+/// The translucent chrome backdrop: a `.behindWindow` sidebar-material blur so
+/// the desktop shows softly through the app's chrome (the sidebar and the top
+/// bar, like Finder's sidebar and Writer's nav), while the editor stays opaque
+/// "paper". Falls back to an opaque fill when the system reduces transparency.
+struct ChromeBackdrop: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
         if reduceTransparency {
             Color(nsColor: .windowBackgroundColor)
         } else {
-            SidebarVibrancy()
+            ChromeVibrancy()
         }
     }
 }
 
-private struct SidebarVibrancy: NSViewRepresentable {
+struct ChromeVibrancy: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
         view.material = .sidebar
@@ -66,7 +66,7 @@ private struct SidebarSurface: View {
                 .padding(SidebarMetrics.surfacePadding)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(SidebarBackdrop())
+        .background(ChromeBackdrop())
         .overlay(alignment: .trailing) {
             Rectangle()
                 .fill(SidebarPalette.divider)
