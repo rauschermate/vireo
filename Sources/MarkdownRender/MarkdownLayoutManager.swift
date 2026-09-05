@@ -436,6 +436,17 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let visibleCharacters = characterRange(forGlyphRange: glyphsToShow,
                                                actualGlyphRange: nil)
         let full = NSRange(location: 0, length: storage.length)
+        // Non-contiguous layout can position a below-fold block against a
+        // transitional layout on the first paint, drawing its surface / quote
+        // bar / rule at the wrong Y (near the top) until an interaction forces
+        // a redraw. Ensure contiguous layout from the start through the drawn
+        // range so every decoration's line-fragment geometry is final. Bounded
+        // by the drawn range, so a scrolled viewport never lays out the whole
+        // document.
+        if visibleCharacters.length > 0 {
+            ensureLayout(forCharacterRange: NSRange(location: 0,
+                                                    length: visibleCharacters.upperBound))
+        }
 
         func decorations(for key: NSAttributedString.Key)
             -> [(range: NSRange, color: NSColor)] {
