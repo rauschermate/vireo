@@ -356,13 +356,75 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
 
     // MARK: Draw bullets / checkboxes / images
 
+    /// Origin of the current background pass, so `fillBackgroundRectArray`
+    /// can map the text container's content edges into the same view space to
+    /// clamp inline-code pills at the margins.
+    private var backgroundDrawOrigin: NSPoint = .zero
+
     public override func drawBackground(forGlyphRange glyphsToShow: NSRange,
                                         at origin: NSPoint) {
         codeBlockRects.removeAll(keepingCapacity: true)
         quoteBarRects.removeAll(keepingCapacity: true)
         thematicRuleRects.removeAll(keepingCapacity: true)
+        backgroundDrawOrigin = origin
         drawBlockDecorations(forGlyphRange: glyphsToShow, origin: origin)
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+    }
+
+    /// Inline `code` renders as a padded, rounded, bordered pill (matching the
+    /// fenced code-block surface) instead of the flat glyph background TextKit
+    /// draws for a plain `.backgroundColor`. TextKit still computes the
+    /// per-line-fragment rects for the span and hands them here, so a wrapped
+    /// inline span splits into one pill per line. Other backgrounds (the
+    /// `==highlight==` mark) fall through to the default fill.
+    public override func fillBackgroundRectArray(_ rectArray: UnsafePointer<NSRect>,
+                                                 count rectCount: Int,
+                                                 forCharacterRange charRange: NSRange,
+                                                 color: NSColor) {
+        guard let storage = textStorage, charRange.location < storage.length,
+              storage.attribute(.vireoInlineCode, at: charRange.location,
+                                effectiveRange: nil) != nil else {
+            super.fillBackgroundRectArray(rectArray, count: rectCount,
+                                          forCharacterRange: charRange, color: color)
+            return
+        }
+        let font = storage.attribute(.font, at: charRange.location,
+                                     effectiveRange: nil) as? NSFont
+        let textHeight = font.map { $0.ascender - $0.descender } ?? 14
+        let radius: CGFloat = 4
+        // Internal padding drawn into the space RenderPlan kerns around the
+        // span; the rest of that kern is the external gap to neighbouring text.
+        // These track `inlineCodePadKern` (6pt = hInset + externalGap).
+        let hInset: CGFloat = 3
+        let externalGap: CGFloat = 3
+        let vPad: CGFloat = 2
+        let pillHeight = textHeight + vPad * 2
+        // Content edges in the pass's view space, so a pill at the start or end
+        // of a line keeps its full border instead of bleeding into the margin
+        // (where the fragment background clip cuts it off).
+        let padding = textContainers.first?.lineFragmentPadding ?? 0
+        let contentLeft = backgroundDrawOrigin.x + padding
+        let contentRight = backgroundDrawOrigin.x
+            + (textContainers.first?.size.width ?? .greatestFiniteMagnitude) - padding
+        color.setFill()
+        NSColor.separatorColor.withAlphaComponent(0.35).setStroke()
+        for index in 0..<rectCount {
+            let fragment = rectArray[index]
+            // The trailing kern sits inside the last fragment's rect, so pull
+            // the pill's right edge back off it to leave the external gap;
+            // earlier fragments (a wrapped span) run to the line edge.
+            let isLast = index == rectCount - 1
+            let left = max(fragment.minX - hInset, contentLeft)
+            let rawRight = isLast ? fragment.maxX - externalGap : fragment.maxX + hInset
+            let right = min(rawRight, contentRight)
+            guard right > left else { continue }
+            let pill = NSRect(x: left, y: fragment.midY - pillHeight / 2,
+                              width: right - left, height: pillHeight)
+            let path = NSBezierPath(roundedRect: pill, xRadius: radius, yRadius: radius)
+            path.fill()
+            path.lineWidth = 0.5
+            path.stroke()
+        }
     }
 
     /// Draw block-level surfaces behind glyph backgrounds and selection. Work

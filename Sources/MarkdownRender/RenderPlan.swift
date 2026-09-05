@@ -23,6 +23,11 @@ struct RenderPlan {
     let baseAttributes: [NSAttributedString.Key: Any]
     private var mutations: [Mutation] = []
     private static let trueValue = NSNumber(value: true)
+    /// Space reserved on each side of an inline-code pill so it clears the
+    /// surrounding text. The layout manager draws the pill 3pt into this on
+    /// each side (its internal padding); the remaining 3pt is the visible gap.
+    /// Kept in step with `hInset`/`externalGap` in `fillBackgroundRectArray`.
+    static let inlineCodePadKern = NSNumber(value: 6.0)
 
     init(source: String, parsed: ParsedMarkdown, theme: Theme,
          baseURL: URL?, imageLoader: ImageLoader?, isDark: Bool,
@@ -92,6 +97,23 @@ struct RenderPlan {
             var attributes: [NSAttributedString.Key: Any]
             if run.code {
                 attributes = styles.inlineCodeAttributes
+                // Reserve real space on both sides of the pill so it isn't
+                // crowded against neighbouring text. Leading space kerns the
+                // character ahead of the (zero-width) opening backticks;
+                // trailing space kerns the last code character. A span at line
+                // start has a newline before it — skip that side; the pill
+                // clamps to the margin instead.
+                var before = run.range.location - 1
+                while before >= 0, ns.character(at: before) == 0x60 { before -= 1 }
+                if before >= 0 {
+                    let ch = ns.character(at: before)
+                    if ch != 0x0A, ch != 0x0D {
+                        add(NSRange(location: before, length: 1),
+                            [.kern: Self.inlineCodePadKern])
+                    }
+                }
+                add(NSRange(location: run.range.upperBound - 1, length: 1),
+                    [.kern: Self.inlineCodePadKern])
             } else {
                 attributes = [.font: styles.inlineFont(bold: run.bold, italic: run.italic)]
             }

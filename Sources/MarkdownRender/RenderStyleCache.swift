@@ -84,8 +84,11 @@ struct RenderStyleCache {
         codeFenceParagraph = codeFence
         inlineCodeAttributes = [
             .font: theme.codeFont,
-            .foregroundColor: theme.codeColor,
+            .foregroundColor: theme.inlineCodeColor,
+            // The layout manager draws the pill; `.backgroundColor` stays so
+            // TextKit still hands per-line-fragment rects to fillBackgroundRectArray.
             .backgroundColor: theme.codeBackground,
+            .vireoInlineCode: true,
         ]
         tableHeaderRowAttributes = [
             .font: theme.tableHeaderFont,
