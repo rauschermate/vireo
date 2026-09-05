@@ -636,11 +636,16 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
                 drawImageFallback(alt: alt, atCharIndex: range.location, origin: origin)
             }
         }
-        storage.enumerateAttribute(.vireoTable, in: charRange) { value, range, _ in
-            guard let n = value as? NSNumber,
-                  let info = tablesByAnchor[n.intValue],
-                  !isCollapsedAway(range.location) else { return }
-            drawTable(info, atCharIndex: range.location, origin: origin, storage: storage)
+        // Draw every table whose range overlaps this pass, anchored to its own
+        // start — not just tables whose anchor char lands in `charRange`. A
+        // scroll issues partial draws clipped to a band; a band that covers the
+        // lower rows but not the header must still redraw the whole table
+        // (clipped), or those rows paint blank until the next full redraw.
+        for info in tables where info.anchor < storage.length {
+            guard NSIntersectionRange(info.range, charRange).length > 0,
+                  storage.attribute(.vireoTable, at: info.anchor, effectiveRange: nil) != nil,
+                  !isCollapsedAway(info.anchor) else { continue }
+            drawTable(info, atCharIndex: info.anchor, origin: origin, storage: storage)
         }
         storage.enumerateAttribute(.vireoSourceBlock, in: charRange) { value, range, _ in
             guard let label = value as? String, !isCollapsedAway(range.location) else { return }
