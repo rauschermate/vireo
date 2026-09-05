@@ -471,12 +471,19 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         }
 
         for decoration in decorations(for: .vireoBlockQuote) {
-            guard let bounds = decorationBounds(
+            guard let bounds = quoteBarBounds(
                 for: decoration.range, visibleCharacters: visibleCharacters
             ) else { continue }
-            let rect = NSRect(x: origin.x + bounds.minX + 5,
-                              y: origin.y + bounds.minY + 2,
-                              width: 3, height: max(1, bounds.height - 4))
+            // `bounds.minX` is the quote text's left edge (its head indent).
+            // Sit the bar a fixed gap to the left of it, and extend it a little
+            // past the text top and bottom.
+            let barWidth: CGFloat = 3
+            let barGap: CGFloat = 8
+            let overhang: CGFloat = 4
+            let rect = NSRect(x: origin.x + bounds.minX - barGap - barWidth,
+                              y: origin.y + bounds.minY - overhang,
+                              width: barWidth,
+                              height: max(1, bounds.height + overhang * 2))
             quoteBarRects[decoration.range.location] = rect
             decoration.color.setFill()
             NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5).fill()
@@ -500,6 +507,42 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
                 width: right - left, height: 1
             )
         }
+    }
+
+    /// Vertical extent for the block-quote bar. Hiding the `>` markers as null
+    /// glyphs leaves the quote's first source line split into a marker-only
+    /// fragment (unindented, above the text) plus the text fragment; unioning
+    /// every fragment would start the bar up in that empty fragment. So union
+    /// only the *used* rects of fragments that carry visible (non-marker) text.
+    /// The bounding box still spans any blank quote line between them, so the
+    /// bar stays continuous.
+    private func quoteBarBounds(for range: NSRange,
+                                visibleCharacters: NSRange) -> NSRect? {
+        guard let storage = textStorage else { return nil }
+        let visible = NSIntersectionRange(range, visibleCharacters)
+        guard visible.length > 0 else { return nil }
+        let glyphs = glyphRange(forCharacterRange: visible, actualCharacterRange: nil)
+        guard glyphs.length > 0 else { return nil }
+        let text = storage.string as NSString
+        var bounds: NSRect?
+        enumerateLineFragments(forGlyphRange: glyphs) { [weak self] _, used, _, lineGlyphs, _ in
+            guard let self else { return }
+            let clip = NSIntersectionRange(glyphs, lineGlyphs)
+            guard clip.length > 0 else { return }
+            let chars = self.characterRange(forGlyphRange: clip, actualGlyphRange: nil)
+            var hasVisibleText = false
+            storage.enumerateAttribute(.vireoMarker, in: chars) { marker, run, stop in
+                guard marker == nil else { return } // markers are hidden
+                if !text.substring(with: run)
+                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    hasVisibleText = true
+                    stop.pointee = true
+                }
+            }
+            guard hasVisibleText else { return }
+            bounds = bounds.map { NSUnionRect($0, used) } ?? used
+        }
+        return bounds
     }
 
     private func decorationBounds(for range: NSRange,
