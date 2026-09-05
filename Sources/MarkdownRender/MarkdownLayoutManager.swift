@@ -456,7 +456,7 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         }
 
         for decoration in decorations(for: .vireoCodeBlock) {
-            guard let bounds = decorationBounds(
+            guard let bounds = codeSurfaceBounds(
                 for: decoration.range, visibleCharacters: visibleCharacters
             ) else { continue }
             let rect = bounds.offsetBy(dx: origin.x, dy: origin.y)
@@ -541,6 +541,31 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
             }
             guard hasVisibleText else { return }
             bounds = bounds.map { NSUnionRect($0, used) } ?? used
+        }
+        return bounds
+    }
+
+    /// Bounds for the fenced-code surface. The opening fence's zero-width null
+    /// glyphs attach to the preceding (blank) line's fragment, so unioning
+    /// every fragment would start the surface up in that line and give the
+    /// block a much larger top padding than bottom. Skip any fragment that
+    /// begins before the code block's own characters; the fence's kept newline
+    /// then supplies symmetric top and bottom padding.
+    private func codeSurfaceBounds(for range: NSRange,
+                                   visibleCharacters: NSRange) -> NSRect? {
+        let visible = NSIntersectionRange(range, visibleCharacters)
+        guard visible.length > 0 else { return nil }
+        let glyphs = glyphRange(forCharacterRange: visible, actualCharacterRange: nil)
+        guard glyphs.length > 0 else { return nil }
+        var bounds: NSRect?
+        enumerateLineFragments(forGlyphRange: glyphs) { [weak self] fragment, _, _, lineGlyphs, _ in
+            guard let self else { return }
+            guard NSIntersectionRange(glyphs, lineGlyphs).length > 0 else { return }
+            let fragmentChars = self.characterRange(forGlyphRange: lineGlyphs, actualGlyphRange: nil)
+            // Fragment carrying the preceding line's text plus the attached
+            // opening-fence glyphs — its own padding line covers the top.
+            guard fragmentChars.location >= range.location else { return }
+            bounds = bounds.map { NSUnionRect($0, fragment) } ?? fragment
         }
         return bounds
     }

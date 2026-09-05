@@ -40,6 +40,11 @@ struct RenderPlan {
         baseAttributes = styles.bodyAttributes
         guard length > 0 else { return }
 
+        // Hidden-syntax ranges. Reflects the reveal window (revealed markers are
+        // dropped by `presentedMarkerRanges`), so fence lines can tell whether
+        // they are currently hidden or shown.
+        let markerSet = RangeSet(parsed.markerRanges)
+
         // cmark extends a list item's source range through the blank lines
         // that follow it. A blank between two siblings must keep the list's
         // compact spacing, but blanks after the *last* item belong to the
@@ -68,7 +73,8 @@ struct RenderPlan {
                 add(range, styles.codeBlockAttributes)
                 addFencePadding(in: range, source: ns,
                                 paragraph: styles.codeFenceParagraph,
-                                surfaceColor: theme.codeBackground)
+                                surfaceColor: theme.codeBackground,
+                                hiddenMarkers: markerSet)
             case .listItem(let depth, _):
                 if let paragraph = styles.listParagraphs[depth] {
                     let styled = listItemStarts.contains(range.upperBound)
@@ -263,10 +269,15 @@ struct RenderPlan {
             ])
         }
 
-        // 10. Coalesced hidden syntax ranges.
-        let markers = RangeSet(parsed.markerRanges)
-        for range in markers.ranges where range.upperBound <= length {
-            add(range, [.vireoMarker: Self.trueValue])
+        // 10. Coalesced hidden syntax ranges. Clip to the slice rather than
+        // dropping a marker that runs past its end: a windowed restyle can end
+        // one character inside a fence marker (its range carries the trailing
+        // newline), and dropping it would leave that fence revealed.
+        let markers = markerSet
+        for range in markers.ranges {
+            let clipped = NSIntersectionRange(range, NSRange(location: 0, length: length))
+            guard clipped.length > 0 else { continue }
+            add(clipped, [.vireoMarker: Self.trueValue])
         }
 
         // 11. Typographic prose arrows, classified from source ranges rather
@@ -316,12 +327,16 @@ struct RenderPlan {
         }
     }
 
-    /// Fence glyphs stay hidden but keep a short line fragment that becomes
-    /// the code surface's vertical padding. Indented code blocks have no fence
-    /// lines and retain their normal block geometry.
+    /// A hidden fence line keeps a short line fragment that becomes the code
+    /// surface's vertical padding; every fence glyph is null-hidden. When a
+    /// fence is revealed (the caret is in the block), its markers are no longer
+    /// in `hiddenMarkers`, so it keeps the normal code line height and reads as
+    /// an ordinary first/last line inside the surface. Indented code blocks
+    /// have no fence lines and retain their normal block geometry.
     mutating private func addFencePadding(in range: NSRange, source: NSString,
                                           paragraph: NSParagraphStyle,
-                                          surfaceColor: NSColor) {
+                                          surfaceColor: NSColor,
+                                          hiddenMarkers: RangeSet) {
         let firstLine = source.lineRange(
             for: NSRange(location: range.location, length: 0)
         )
@@ -336,14 +351,13 @@ struct RenderPlan {
         let lastLine = source.lineRange(
             for: NSRange(location: lastCharacter, length: 0)
         )
-        let paddingAttributes: [NSAttributedString.Key: Any] = [
-            .paragraphStyle: paragraph,
-            .vireoCodeBlock: surfaceColor,
-        ]
-        add(firstLine, paddingAttributes)
-        if lastLine.location != firstLine.location,
-           isFenceLine(lastLine, in: source) {
-            add(lastLine, paddingAttributes)
+        func compress(_ line: NSRange) {
+            guard hiddenMarkers.contains(line.location) else { return }
+            add(line, [.paragraphStyle: paragraph, .vireoCodeBlock: surfaceColor])
+        }
+        compress(firstLine)
+        if lastLine.location != firstLine.location, isFenceLine(lastLine, in: source) {
+            compress(lastLine)
         }
     }
 
