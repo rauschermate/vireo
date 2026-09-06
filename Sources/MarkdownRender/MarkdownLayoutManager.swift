@@ -356,9 +356,8 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
 
     // MARK: Draw bullets / checkboxes / images
 
-    /// Origin of the current background pass, so `fillBackgroundRectArray`
-    /// can map the text container's content edges into the same view space to
-    /// clamp inline-code pills at the margins.
+    /// Origin of the current background pass, read by `fillBackgroundRectArray`
+    /// to clamp inline-code pills to the content edges in the same view space.
     private var backgroundDrawOrigin: NSPoint = .zero
 
     public override func drawBackground(forGlyphRange glyphsToShow: NSRange,
@@ -371,12 +370,10 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
     }
 
-    /// Inline `code` renders as a padded, rounded, bordered pill (matching the
-    /// fenced code-block surface) instead of the flat glyph background TextKit
-    /// draws for a plain `.backgroundColor`. TextKit still computes the
-    /// per-line-fragment rects for the span and hands them here, so a wrapped
-    /// inline span splits into one pill per line. Other backgrounds (the
-    /// `==highlight==` mark) fall through to the default fill.
+    /// Draw a bordered pill behind inline `code` instead of the flat glyph
+    /// background. TextKit hands one rect per line fragment, so a wrapped span
+    /// splits into a pill per line; every other `.backgroundColor` (the
+    /// `==highlight==` mark) falls through to the default fill.
     public override func fillBackgroundRectArray(_ rectArray: UnsafePointer<NSRect>,
                                                  count rectCount: Int,
                                                  forCharacterRange charRange: NSRange,
@@ -392,16 +389,15 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
                                      effectiveRange: nil) as? NSFont
         let textHeight = font.map { $0.ascender - $0.descender } ?? 14
         let radius: CGFloat = 4
-        // Internal padding drawn into the space RenderPlan kerns around the
-        // span; the rest of that kern is the external gap to neighbouring text.
-        // These track `inlineCodePadKern` (6pt = hInset + externalGap).
+        // hInset + externalGap must equal `inlineCodePadKern`: RenderPlan kerns
+        // that much space around the span, the pill grows `hInset` into it, and
+        // `externalGap` is left as the visible gap to neighbouring text.
         let hInset: CGFloat = 3
         let externalGap: CGFloat = 3
         let vPad: CGFloat = 2
         let pillHeight = textHeight + vPad * 2
-        // Content edges in the pass's view space, so a pill at the start or end
-        // of a line keeps its full border instead of bleeding into the margin
-        // (where the fragment background clip cuts it off).
+        // Clamp to the content edges so a pill at a line start/end keeps its
+        // border instead of bleeding under the fragment-background clip.
         let padding = textContainers.first?.lineFragmentPadding ?? 0
         let contentLeft = backgroundDrawOrigin.x + padding
         let contentRight = backgroundDrawOrigin.x
@@ -410,9 +406,9 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         NSColor.separatorColor.withAlphaComponent(0.35).setStroke()
         for index in 0..<rectCount {
             let fragment = rectArray[index]
-            // The trailing kern sits inside the last fragment's rect, so pull
-            // the pill's right edge back off it to leave the external gap;
-            // earlier fragments (a wrapped span) run to the line edge.
+            // The trailing kern falls inside the last fragment, so pull its
+            // right edge back to leave the gap; wrapped earlier fragments run
+            // to the line edge.
             let isLast = index == rectCount - 1
             let left = max(fragment.minX - hInset, contentLeft)
             let rawRight = isLast ? fragment.maxX - externalGap : fragment.maxX + hInset
@@ -436,13 +432,11 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let visibleCharacters = characterRange(forGlyphRange: glyphsToShow,
                                                actualGlyphRange: nil)
         let full = NSRange(location: 0, length: storage.length)
-        // Non-contiguous layout can position a below-fold block against a
-        // transitional layout on the first paint, drawing its surface / quote
-        // bar / rule at the wrong Y (near the top) until an interaction forces
-        // a redraw. Ensure contiguous layout from the start through the drawn
-        // range so every decoration's line-fragment geometry is final. Bounded
-        // by the drawn range, so a scrolled viewport never lays out the whole
-        // document.
+        // Without this, non-contiguous layout can place a below-fold block
+        // against a transitional first-paint layout and draw its decoration at
+        // the wrong Y. Ensuring layout up to the drawn range fixes the geometry;
+        // it stays bounded by that range, so a scrolled viewport never lays out
+        // the whole document.
         if visibleCharacters.length > 0 {
             ensureLayout(forCharacterRange: NSRange(location: 0,
                                                     length: visibleCharacters.upperBound))
@@ -485,9 +479,8 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
             guard let bounds = quoteBarBounds(
                 for: decoration.range, visibleCharacters: visibleCharacters
             ) else { continue }
-            // `bounds.minX` is the quote text's left edge (its head indent).
-            // Sit the bar a fixed gap to the left of it, and extend it a little
-            // past the text top and bottom.
+            // `bounds.minX` is the text's left edge; sit the bar a gap to its
+            // left with a small overhang past the top and bottom.
             let barWidth: CGFloat = 3
             let barGap: CGFloat = 8
             let overhang: CGFloat = 4
@@ -520,13 +513,11 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         }
     }
 
-    /// Vertical extent for the block-quote bar. Hiding the `>` markers as null
-    /// glyphs leaves the quote's first source line split into a marker-only
-    /// fragment (unindented, above the text) plus the text fragment; unioning
-    /// every fragment would start the bar up in that empty fragment. So union
-    /// only the *used* rects of fragments that carry visible (non-marker) text.
-    /// The bounding box still spans any blank quote line between them, so the
-    /// bar stays continuous.
+    /// Vertical extent for the block-quote bar. Hiding the `>` markers splits
+    /// the first source line into a marker-only fragment above the text, so
+    /// union only the used rects of fragments that carry visible text — else
+    /// the bar starts up in that empty fragment. The union still spans a blank
+    /// quote line between paragraphs, keeping the bar continuous.
     private func quoteBarBounds(for range: NSRange,
                                 visibleCharacters: NSRange) -> NSRect? {
         guard let storage = textStorage else { return nil }
@@ -543,7 +534,7 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
             let chars = self.characterRange(forGlyphRange: clip, actualGlyphRange: nil)
             var hasVisibleText = false
             storage.enumerateAttribute(.vireoMarker, in: chars) { marker, run, stop in
-                guard marker == nil else { return } // markers are hidden
+                guard marker == nil else { return }
                 if !text.substring(with: run)
                     .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     hasVisibleText = true
@@ -556,12 +547,11 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         return bounds
     }
 
-    /// Bounds for the fenced-code surface. The opening fence's zero-width null
-    /// glyphs attach to the preceding (blank) line's fragment, so unioning
-    /// every fragment would start the surface up in that line and give the
-    /// block a much larger top padding than bottom. Skip any fragment that
-    /// begins before the code block's own characters; the fence's kept newline
-    /// then supplies symmetric top and bottom padding.
+    /// Bounds for the fenced-code surface. The opening fence's zero-width
+    /// glyphs attach to the preceding line's fragment, so skip any fragment
+    /// starting before the block's own characters — else the surface reaches up
+    /// into that line and the top padding dwarfs the bottom. The fence's kept
+    /// newline supplies the symmetric padding.
     private func codeSurfaceBounds(for range: NSRange,
                                    visibleCharacters: NSRange) -> NSRect? {
         let visible = NSIntersectionRange(range, visibleCharacters)
@@ -573,8 +563,6 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
             guard let self else { return }
             guard NSIntersectionRange(glyphs, lineGlyphs).length > 0 else { return }
             let fragmentChars = self.characterRange(forGlyphRange: lineGlyphs, actualGlyphRange: nil)
-            // Fragment carrying the preceding line's text plus the attached
-            // opening-fence glyphs — its own padding line covers the top.
             guard fragmentChars.location >= range.location else { return }
             bounds = bounds.map { NSUnionRect($0, fragment) } ?? fragment
         }
@@ -647,11 +635,10 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
                 drawImageFallback(alt: alt, atCharIndex: range.location, origin: origin)
             }
         }
-        // Draw every table whose range overlaps this pass, anchored to its own
-        // start — not just tables whose anchor char lands in `charRange`. A
-        // scroll issues partial draws clipped to a band; a band that covers the
-        // lower rows but not the header must still redraw the whole table
-        // (clipped), or those rows paint blank until the next full redraw.
+        // Match on range overlap, not on the anchor char landing in `charRange`:
+        // a scroll draws the table in clipped bands, and a band over the lower
+        // rows but not the header must still redraw (from the anchor) or those
+        // rows paint blank.
         for info in tables where info.anchor < storage.length {
             guard NSIntersectionRange(info.range, charRange).length > 0,
                   storage.attribute(.vireoTable, at: info.anchor, effectiveRange: nil) != nil,

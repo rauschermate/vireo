@@ -35,8 +35,7 @@ public extension NSAttributedString.Key {
     static let vireoMetadata = NSAttributedString.Key("vireoMetadata")
     /// Drawn replacement for an unsupported inline HTML tag / `<br>` (NSString).
     static let vireoInlineHTML = NSAttributedString.Key("vireoInlineHTML")
-    /// Marks an inline `code` span so the layout manager draws a padded,
-    /// rounded, bordered pill instead of the flat text background (NSNumber bool).
+    /// Inline `code` span; the layout manager draws a bordered pill for it (NSNumber bool).
     static let vireoInlineCode = NSAttributedString.Key("vireoInlineCode")
 }
 
@@ -123,8 +122,7 @@ public struct Theme: Sendable {
     }
     public var codeColor: NSColor { Self.sharedCodeColor }
     public var codeBackground: NSColor { Self.sharedCodeBackground }
-    /// Inline `code` text — the red from the code syntax highlighter (strings),
-    /// kept legible in both appearances.
+    /// Inline `code` text: the syntax highlighter's string red, softened in dark.
     private static let sharedInlineCodeColor = NSColor(name: nil) {
         $0.isDark ? NSColor(srgbRed: 1.0, green: 0.44, blue: 0.42, alpha: 1)
                   : .systemRed

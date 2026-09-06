@@ -85,8 +85,8 @@ struct RenderStyleCache {
         inlineCodeAttributes = [
             .font: theme.codeFont,
             .foregroundColor: theme.inlineCodeColor,
-            // The layout manager draws the pill; `.backgroundColor` stays so
-            // TextKit still hands per-line-fragment rects to fillBackgroundRectArray.
+            // Kept though the pill is custom-drawn: it's what makes TextKit call
+            // fillBackgroundRectArray with the per-line-fragment rects.
             .backgroundColor: theme.codeBackground,
             .vireoInlineCode: true,
         ]
