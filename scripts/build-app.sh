@@ -19,6 +19,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Framewor
 cp "$BIN" "$APP/Contents/MacOS/Vireo"
 cp "$ROOT/scripts/Info.plist" "$APP/Contents/Info.plist"
 [ -f "$ROOT/Resources/AppIcon.icns" ] && cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/"
+# The welcome tour shown on first launch (see AppDelegate.welcomeSampleSource).
+cp "$ROOT/samples/welcome.md" "$APP/Contents/Resources/welcome.md"
 
 # Embed Sparkle.framework. The executable links it as @rpath/Sparkle.framework/…;
 # SPM drops the built framework next to the binary. Copy it into the standard

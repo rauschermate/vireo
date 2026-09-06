@@ -29,6 +29,9 @@ targets:
       - Sources/Vireo
       - path: Resources
         buildPhase: resources
+      # The welcome tour shown on first launch (AppDelegate.welcomeSampleSource).
+      - path: samples/welcome.md
+        buildPhase: resources
     dependencies:
       - package: VireoKit
         product: MarkdownEngine

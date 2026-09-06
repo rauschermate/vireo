@@ -100,6 +100,15 @@ final class AppState: ObservableObject {
         return doc
     }
 
+    /// Open the bundled welcome tour as an editable, unsaved tab on first launch.
+    func openWelcome(_ source: String) {
+        let doc = DocumentModel(untitled: source)
+        doc.isEphemeralWelcome = true
+        register(doc)
+        documents.append(doc)
+        selectedID = doc.id
+    }
+
     private func register(_ doc: DocumentModel) {
         doc.controller.zoom = zoom
         doc.controller.fontFamily = Preferences.shared.editorFont.themeFamily
@@ -178,7 +187,9 @@ final class AppState: ObservableObject {
     func confirmDiscardIfNeeded(_ doc: DocumentModel) -> Bool {
         let needsPrompt: Bool
         if doc.url == nil {
-            needsPrompt = !doc.source.isEmpty
+            // The pristine first-launch welcome tour is discardable; once the
+            // user actually edits it, treat it like any untitled draft.
+            needsPrompt = doc.isEphemeralWelcome ? doc.isDirty : !doc.source.isEmpty
         } else {
             needsPrompt = doc.isDirty
         }

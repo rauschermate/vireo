@@ -37,6 +37,9 @@ final class DocumentModel: ObservableObject, Identifiable {
     @Published var showTOC = true
     @Published private(set) var isDirty = false
     @Published private(set) var saveState: DocumentSaveState = .saved
+    /// The bundled welcome tour, opened on first launch. It closes without a
+    /// save prompt until the user edits it (see `confirmDiscardIfNeeded`).
+    var isEphemeralWelcome = false
     /// User-chosen tab title (rename) for untitled buffers.
     @Published var customTitle: String?
     /// Title derived from the content of an untitled buffer (H1 → first line).

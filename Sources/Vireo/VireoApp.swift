@@ -215,7 +215,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let pending = state.pendingURLs
         state.pendingURLs = []
         for url in pending { open(url, in: state) }
-        if state.documents.isEmpty { state.newDocument() }
+        if state.documents.isEmpty {
+            if !Preferences.shared.hasOpenedWelcome, let welcome = Self.welcomeSampleSource() {
+                Preferences.shared.hasOpenedWelcome = true
+                state.openWelcome(welcome)
+            } else {
+                state.newDocument()
+            }
+        }
         ensureWindowVisible()
         // Begin watching for updates. Kicks off Sparkle's scheduled checks so the
         // pill surfaces on its own when a new version is published. No-op on
@@ -248,6 +255,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             for url in urls { self?.open(url, in: AppState.shared) }
             self?.ensureWindowVisible()
         }
+    }
+
+    /// The bundled welcome tour (`welcome.md` in Resources), shown once on
+    /// first launch. Nil in a bare `swift run Vireo` with no app bundle.
+    static func welcomeSampleSource() -> String? {
+        guard let url = Bundle.main.url(forResource: "welcome", withExtension: "md") else {
+            return nil
+        }
+        return try? String(contentsOf: url, encoding: .utf8)
     }
 
     /// A folder becomes the sidebar workspace; a file opens in a tab.
