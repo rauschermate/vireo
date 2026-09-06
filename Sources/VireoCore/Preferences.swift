@@ -72,6 +72,7 @@ public final class Preferences: ObservableObject {
         static let recentWorkspaces = "vireo.recentWorkspaces"
         static let lastWorkspace = "vireo.lastWorkspace"
         static let pinnedFiles = "vireo.sidebar.pinnedFiles"
+        static let hasOpenedWelcome = "vireo.hasOpenedWelcome"
     }
 
     nonisolated public static let defaultSidebarWidth: Double = 240
@@ -144,6 +145,13 @@ public final class Preferences: ObservableObject {
         var list = recentFiles.filter { $0 != url }
         list.insert(url, at: 0)
         recentFiles = list
+    }
+
+    /// Set once the app opens the bundled welcome document on first launch, so
+    /// it is shown only that first time.
+    public var hasOpenedWelcome: Bool {
+        get { defaults.bool(forKey: Keys.hasOpenedWelcome) }
+        set { defaults.set(newValue, forKey: Keys.hasOpenedWelcome) }
     }
 
     // MARK: Workspaces

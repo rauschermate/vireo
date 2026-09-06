@@ -1,60 +1,65 @@
 # Welcome to Vireo
 
-Vireo is a **fast**, *native* macOS markdown viewer and editor. It renders your
-document as clean, formatted text and *hides the syntax entirely* — even while
-you edit. Reading should feel like a well-typeset page, not like editing code.
+You're looking at a markdown file, but you'd never guess it. No `#` cluttering
+the margins, no `**asterisks**` shouting at you, no wall of punctuation between
+you and your words. Vireo shows you the finished page and keeps the plumbing
+out of sight.
 
-## Formatting basics
+Here's the trick — **click into this paragraph.** See the raw markdown fade in,
+dimmed, right where your cursor sits? That's the *only* place the syntax ever
+shows. Move away and the line tidies itself back up. You're editing real
+markdown the whole time; you just don't have to stare at it.
 
-You can write **bold**, *italic*, ***bold italic***, ~~strikethrough~~, and
-`inline code` without ever seeing the raw markers. Select any text to format it,
-or use ⌘B / ⌘I.
+## The usual suspects
 
-Here is a [link to Apple](https://apple.com) that opens in your browser.
+You get **bold**, *italic*, ***both at once***, and ~~the occasional regret~~.
+A bit of `inline code` gets its own little box. [Links](https://example.com)
+open on ⌘-click — a plain click just lets you edit them, because launching a
+browser mid-sentence would be rude.
 
-### Lists
+## Lists, since everyone keeps one
 
-- Reading is calm and centered
-- Syntax stays out of the wayt
-- Everything is just plain markdown on disk
-    - Nested items work too
-    - As deep as you like
+- The groceries, the grievances, the grand plans
+- Whatever you're avoiding right now
+    - Nested, for the truly organized
+    - Or the truly avoidant
+- Plain markdown on disk, all the way down
 
-1. First ordered item
-2. Second ordered item
-3. Third ordered item
+1. Ordered lists renumber themselves
+2. So you can rearrange without counting
+3. Press Enter on an empty item to climb back out
 
-### Task list
+### Things to actually do
 
-- [x] Parse GFM markdown
-- [x] Hide syntax while editing
-- [ ] Ship version 1
+- [x] Read this far
+- [x] Feel mildly impressed
+- [ ] Delete all of this and write something of your own
 
-## Code
-
-Fenced code blocks are highlighted and the fences are hidden:
+## Code, kept honest
 
 ```swift
-func greet(_ name: String) -> String {
-    // a friendly greeting
-    let message = "Hello, \(name)!"
-    return message
+func vireo() -> String {
+    // Fenced blocks keep their monospace and syntax colors.
+    // The fence markers stay hidden until you click in here.
+    return "your code, minus the ceremony"
 }
 ```
 
-## Quotes
+## A quote, for the wall
 
-> The best way to predict the future is to invent it.
-> Design is not just what it looks like — design is how it works.
+> Any fool can write markdown a machine will render.
+> The point is markdown a human actually wants to look at.
 
-## Table
+## And a table, for the spreadsheet-adjacent
 
-| Feature      | Status |
-|--------------|--------|
-| Viewing      | done   |
-| Editing      | done   |
-| Quick Look   | later  |
+| Thing              | Verdict            |
+|--------------------|--------------------|
+| Seeing raw syntax  | only where you edit |
+| Staring at `##`    | not on our watch    |
+| This file          | yours to wreck      |
 
 ---
 
-That's the tour. Start typing anywhere to edit.
+That's the tour. Every character here is plain markdown on disk — open it in
+any other editor and the asterisks are exactly where you left them. Now stop
+reading the demo and go write something.

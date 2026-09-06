@@ -138,6 +138,9 @@ the caret walks real characters and backspace deletes the character you see.
   find (⌘F).
 - Auto-save (default) or explicit ⌘S mode; external-change reload with conflict prompt.
 - Registers `.md`/`.markdown` document types (open from Finder / command line).
+- On first launch (no file passed), opens a bundled welcome tour
+  (`samples/welcome.md`, copied into `Contents/Resources`) as an editable,
+  unsaved tab; it closes without a save prompt until edited, and shows only once.
 - **Quick Look preview extension** (`VireoQuickLook.appex`, embedded in the app)
   that renders `.md` in Vireo's style when you press space in Finder, sharing the
   exact parse → render → layout pipeline.
