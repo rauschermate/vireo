@@ -356,13 +356,71 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
 
     // MARK: Draw bullets / checkboxes / images
 
+    /// Origin of the current background pass, read by `fillBackgroundRectArray`
+    /// to clamp inline-code pills to the content edges in the same view space.
+    private var backgroundDrawOrigin: NSPoint = .zero
+
     public override func drawBackground(forGlyphRange glyphsToShow: NSRange,
                                         at origin: NSPoint) {
         codeBlockRects.removeAll(keepingCapacity: true)
         quoteBarRects.removeAll(keepingCapacity: true)
         thematicRuleRects.removeAll(keepingCapacity: true)
+        backgroundDrawOrigin = origin
         drawBlockDecorations(forGlyphRange: glyphsToShow, origin: origin)
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+    }
+
+    /// Draw a bordered pill behind inline `code` instead of the flat glyph
+    /// background. TextKit hands one rect per line fragment, so a wrapped span
+    /// splits into a pill per line; every other `.backgroundColor` (the
+    /// `==highlight==` mark) falls through to the default fill.
+    public override func fillBackgroundRectArray(_ rectArray: UnsafePointer<NSRect>,
+                                                 count rectCount: Int,
+                                                 forCharacterRange charRange: NSRange,
+                                                 color: NSColor) {
+        guard let storage = textStorage, charRange.location < storage.length,
+              storage.attribute(.vireoInlineCode, at: charRange.location,
+                                effectiveRange: nil) != nil else {
+            super.fillBackgroundRectArray(rectArray, count: rectCount,
+                                          forCharacterRange: charRange, color: color)
+            return
+        }
+        let font = storage.attribute(.font, at: charRange.location,
+                                     effectiveRange: nil) as? NSFont
+        let textHeight = font.map { $0.ascender - $0.descender } ?? 14
+        let radius: CGFloat = 4
+        // hInset + externalGap must equal `inlineCodePadKern`: RenderPlan kerns
+        // that much space around the span, the pill grows `hInset` into it, and
+        // `externalGap` is left as the visible gap to neighbouring text.
+        let hInset: CGFloat = 3
+        let externalGap: CGFloat = 3
+        let vPad: CGFloat = 2
+        let pillHeight = textHeight + vPad * 2
+        // Clamp to the content edges so a pill at a line start/end keeps its
+        // border instead of bleeding under the fragment-background clip.
+        let padding = textContainers.first?.lineFragmentPadding ?? 0
+        let contentLeft = backgroundDrawOrigin.x + padding
+        let contentRight = backgroundDrawOrigin.x
+            + (textContainers.first?.size.width ?? .greatestFiniteMagnitude) - padding
+        color.setFill()
+        NSColor.separatorColor.withAlphaComponent(0.35).setStroke()
+        for index in 0..<rectCount {
+            let fragment = rectArray[index]
+            // The trailing kern falls inside the last fragment, so pull its
+            // right edge back to leave the gap; wrapped earlier fragments run
+            // to the line edge.
+            let isLast = index == rectCount - 1
+            let left = max(fragment.minX - hInset, contentLeft)
+            let rawRight = isLast ? fragment.maxX - externalGap : fragment.maxX + hInset
+            let right = min(rawRight, contentRight)
+            guard right > left else { continue }
+            let pill = NSRect(x: left, y: fragment.midY - pillHeight / 2,
+                              width: right - left, height: pillHeight)
+            let path = NSBezierPath(roundedRect: pill, xRadius: radius, yRadius: radius)
+            path.fill()
+            path.lineWidth = 0.5
+            path.stroke()
+        }
     }
 
     /// Draw block-level surfaces behind glyph backgrounds and selection. Work
@@ -374,6 +432,15 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         let visibleCharacters = characterRange(forGlyphRange: glyphsToShow,
                                                actualGlyphRange: nil)
         let full = NSRange(location: 0, length: storage.length)
+        // Without this, non-contiguous layout can place a below-fold block
+        // against a transitional first-paint layout and draw its decoration at
+        // the wrong Y. Ensuring layout up to the drawn range fixes the geometry;
+        // it stays bounded by that range, so a scrolled viewport never lays out
+        // the whole document.
+        if visibleCharacters.length > 0 {
+            ensureLayout(forCharacterRange: NSRange(location: 0,
+                                                    length: visibleCharacters.upperBound))
+        }
 
         func decorations(for key: NSAttributedString.Key)
             -> [(range: NSRange, color: NSColor)] {
@@ -394,7 +461,7 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         }
 
         for decoration in decorations(for: .vireoCodeBlock) {
-            guard let bounds = decorationBounds(
+            guard let bounds = codeSurfaceBounds(
                 for: decoration.range, visibleCharacters: visibleCharacters
             ) else { continue }
             let rect = bounds.offsetBy(dx: origin.x, dy: origin.y)
@@ -409,12 +476,18 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         }
 
         for decoration in decorations(for: .vireoBlockQuote) {
-            guard let bounds = decorationBounds(
+            guard let bounds = quoteBarBounds(
                 for: decoration.range, visibleCharacters: visibleCharacters
             ) else { continue }
-            let rect = NSRect(x: origin.x + bounds.minX + 5,
-                              y: origin.y + bounds.minY + 2,
-                              width: 3, height: max(1, bounds.height - 4))
+            // `bounds.minX` is the text's left edge; sit the bar a gap to its
+            // left with a small overhang past the top and bottom.
+            let barWidth: CGFloat = 3
+            let barGap: CGFloat = 8
+            let overhang: CGFloat = 4
+            let rect = NSRect(x: origin.x + bounds.minX - barGap - barWidth,
+                              y: origin.y + bounds.minY - overhang,
+                              width: barWidth,
+                              height: max(1, bounds.height + overhang * 2))
             quoteBarRects[decoration.range.location] = rect
             decoration.color.setFill()
             NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5).fill()
@@ -438,6 +511,62 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
                 width: right - left, height: 1
             )
         }
+    }
+
+    /// Vertical extent for the block-quote bar. Hiding the `>` markers splits
+    /// the first source line into a marker-only fragment above the text, so
+    /// union only the used rects of fragments that carry visible text — else
+    /// the bar starts up in that empty fragment. The union still spans a blank
+    /// quote line between paragraphs, keeping the bar continuous.
+    private func quoteBarBounds(for range: NSRange,
+                                visibleCharacters: NSRange) -> NSRect? {
+        guard let storage = textStorage else { return nil }
+        let visible = NSIntersectionRange(range, visibleCharacters)
+        guard visible.length > 0 else { return nil }
+        let glyphs = glyphRange(forCharacterRange: visible, actualCharacterRange: nil)
+        guard glyphs.length > 0 else { return nil }
+        let text = storage.string as NSString
+        var bounds: NSRect?
+        enumerateLineFragments(forGlyphRange: glyphs) { [weak self] _, used, _, lineGlyphs, _ in
+            guard let self else { return }
+            let clip = NSIntersectionRange(glyphs, lineGlyphs)
+            guard clip.length > 0 else { return }
+            let chars = self.characterRange(forGlyphRange: clip, actualGlyphRange: nil)
+            var hasVisibleText = false
+            storage.enumerateAttribute(.vireoMarker, in: chars) { marker, run, stop in
+                guard marker == nil else { return }
+                if !text.substring(with: run)
+                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    hasVisibleText = true
+                    stop.pointee = true
+                }
+            }
+            guard hasVisibleText else { return }
+            bounds = bounds.map { NSUnionRect($0, used) } ?? used
+        }
+        return bounds
+    }
+
+    /// Bounds for the fenced-code surface. The opening fence's zero-width
+    /// glyphs attach to the preceding line's fragment, so skip any fragment
+    /// starting before the block's own characters — else the surface reaches up
+    /// into that line and the top padding dwarfs the bottom. The fence's kept
+    /// newline supplies the symmetric padding.
+    private func codeSurfaceBounds(for range: NSRange,
+                                   visibleCharacters: NSRange) -> NSRect? {
+        let visible = NSIntersectionRange(range, visibleCharacters)
+        guard visible.length > 0 else { return nil }
+        let glyphs = glyphRange(forCharacterRange: visible, actualCharacterRange: nil)
+        guard glyphs.length > 0 else { return nil }
+        var bounds: NSRect?
+        enumerateLineFragments(forGlyphRange: glyphs) { [weak self] fragment, _, _, lineGlyphs, _ in
+            guard let self else { return }
+            guard NSIntersectionRange(glyphs, lineGlyphs).length > 0 else { return }
+            let fragmentChars = self.characterRange(forGlyphRange: lineGlyphs, actualGlyphRange: nil)
+            guard fragmentChars.location >= range.location else { return }
+            bounds = bounds.map { NSUnionRect($0, fragment) } ?? fragment
+        }
+        return bounds
     }
 
     private func decorationBounds(for range: NSRange,
@@ -506,11 +635,15 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
                 drawImageFallback(alt: alt, atCharIndex: range.location, origin: origin)
             }
         }
-        storage.enumerateAttribute(.vireoTable, in: charRange) { value, range, _ in
-            guard let n = value as? NSNumber,
-                  let info = tablesByAnchor[n.intValue],
-                  !isCollapsedAway(range.location) else { return }
-            drawTable(info, atCharIndex: range.location, origin: origin, storage: storage)
+        // Match on range overlap, not on the anchor char landing in `charRange`:
+        // a scroll draws the table in clipped bands, and a band over the lower
+        // rows but not the header must still redraw (from the anchor) or those
+        // rows paint blank.
+        for info in tables where info.anchor < storage.length {
+            guard NSIntersectionRange(info.range, charRange).length > 0,
+                  storage.attribute(.vireoTable, at: info.anchor, effectiveRange: nil) != nil,
+                  !isCollapsedAway(info.anchor) else { continue }
+            drawTable(info, atCharIndex: info.anchor, origin: origin, storage: storage)
         }
         storage.enumerateAttribute(.vireoSourceBlock, in: charRange) { value, range, _ in
             guard let label = value as? String, !isCollapsedAway(range.location) else { return }

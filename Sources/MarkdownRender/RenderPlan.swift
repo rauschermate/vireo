@@ -23,6 +23,10 @@ struct RenderPlan {
     let baseAttributes: [NSAttributedString.Key: Any]
     private var mutations: [Mutation] = []
     private static let trueValue = NSNumber(value: true)
+    /// Space kerned on each side of an inline-code pill so it clears the
+    /// surrounding text. Must equal `hInset + externalGap` in
+    /// `fillBackgroundRectArray`, which splits it into pill and gap.
+    static let inlineCodePadKern = NSNumber(value: 6.0)
 
     init(source: String, parsed: ParsedMarkdown, theme: Theme,
          baseURL: URL?, imageLoader: ImageLoader?, isDark: Bool,
@@ -34,6 +38,10 @@ struct RenderPlan {
                                       tableScrollerGutter: tableScrollerGutter)
         baseAttributes = styles.bodyAttributes
         guard length > 0 else { return }
+
+        // Hidden-syntax ranges, minus any the reveal window drops — so fence
+        // lines below can tell whether they are currently hidden or shown.
+        let markerSet = RangeSet(parsed.markerRanges)
 
         // cmark extends a list item's source range through the blank lines
         // that follow it. A blank between two siblings must keep the list's
@@ -63,7 +71,8 @@ struct RenderPlan {
                 add(range, styles.codeBlockAttributes)
                 addFencePadding(in: range, source: ns,
                                 paragraph: styles.codeFenceParagraph,
-                                surfaceColor: theme.codeBackground)
+                                surfaceColor: theme.codeBackground,
+                                hiddenMarkers: markerSet)
             case .listItem(let depth, _):
                 if let paragraph = styles.listParagraphs[depth] {
                     let styled = listItemStarts.contains(range.upperBound)
@@ -92,6 +101,21 @@ struct RenderPlan {
             var attributes: [NSAttributedString.Key: Any]
             if run.code {
                 attributes = styles.inlineCodeAttributes
+                // Kern space around the pill so it clears neighbouring text: the
+                // char before the (zero-width) opening backticks and the last
+                // code char. At a line start the char before is a newline — skip
+                // it; the pill clamps to the margin there instead.
+                var before = run.range.location - 1
+                while before >= 0, ns.character(at: before) == 0x60 { before -= 1 }
+                if before >= 0 {
+                    let ch = ns.character(at: before)
+                    if ch != 0x0A, ch != 0x0D {
+                        add(NSRange(location: before, length: 1),
+                            [.kern: Self.inlineCodePadKern])
+                    }
+                }
+                add(NSRange(location: run.range.upperBound - 1, length: 1),
+                    [.kern: Self.inlineCodePadKern])
             } else {
                 attributes = [.font: styles.inlineFont(bold: run.bold, italic: run.italic)]
             }
@@ -241,10 +265,14 @@ struct RenderPlan {
             ])
         }
 
-        // 10. Coalesced hidden syntax ranges.
-        let markers = RangeSet(parsed.markerRanges)
-        for range in markers.ranges where range.upperBound <= length {
-            add(range, [.vireoMarker: Self.trueValue])
+        // 10. Coalesced hidden syntax ranges. Clip, don't drop, a marker running
+        // past the slice: a windowed restyle can end mid-fence-marker (its range
+        // carries the trailing newline), and dropping it leaves the fence shown.
+        let markers = markerSet
+        for range in markers.ranges {
+            let clipped = NSIntersectionRange(range, NSRange(location: 0, length: length))
+            guard clipped.length > 0 else { continue }
+            add(clipped, [.vireoMarker: Self.trueValue])
         }
 
         // 11. Typographic prose arrows, classified from source ranges rather
@@ -294,12 +322,14 @@ struct RenderPlan {
         }
     }
 
-    /// Fence glyphs stay hidden but keep a short line fragment that becomes
-    /// the code surface's vertical padding. Indented code blocks have no fence
-    /// lines and retain their normal block geometry.
+    /// Give a hidden fence line a short fragment that becomes the surface's
+    /// vertical padding. A revealed fence (caret in the block) isn't in
+    /// `hiddenMarkers`, so it keeps the normal code line height and reads as an
+    /// ordinary line inside the surface. Indented code blocks have no fences.
     mutating private func addFencePadding(in range: NSRange, source: NSString,
                                           paragraph: NSParagraphStyle,
-                                          surfaceColor: NSColor) {
+                                          surfaceColor: NSColor,
+                                          hiddenMarkers: RangeSet) {
         let firstLine = source.lineRange(
             for: NSRange(location: range.location, length: 0)
         )
@@ -314,14 +344,13 @@ struct RenderPlan {
         let lastLine = source.lineRange(
             for: NSRange(location: lastCharacter, length: 0)
         )
-        let paddingAttributes: [NSAttributedString.Key: Any] = [
-            .paragraphStyle: paragraph,
-            .vireoCodeBlock: surfaceColor,
-        ]
-        add(firstLine, paddingAttributes)
-        if lastLine.location != firstLine.location,
-           isFenceLine(lastLine, in: source) {
-            add(lastLine, paddingAttributes)
+        func compress(_ line: NSRange) {
+            guard hiddenMarkers.contains(line.location) else { return }
+            add(line, [.paragraphStyle: paragraph, .vireoCodeBlock: surfaceColor])
+        }
+        compress(firstLine)
+        if lastLine.location != firstLine.location, isFenceLine(lastLine, in: source) {
+            compress(lastLine)
         }
     }
 
