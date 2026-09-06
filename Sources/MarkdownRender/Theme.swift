@@ -59,7 +59,7 @@ public struct Theme: Sendable {
     public var baseSize: CGFloat { 16 * zoom }
     public var codeSize: CGFloat { 14 * zoom }
     public var lineHeightMultiple: CGFloat { 1.35 }
-    public var contentMaxWidth: CGFloat { 640 }
+    public var contentMaxWidth: CGFloat { 720 }
 
     public func headingSize(_ level: Int) -> CGFloat {
         switch level {
