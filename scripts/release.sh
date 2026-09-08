@@ -46,8 +46,12 @@ DITTO_ZIP="build/Vireo.zip"
 xcrun notarytool submit "$DITTO_ZIP" --keychain-profile "$VIREO_NOTARY_PROFILE" --wait
 xcrun stapler staple "$APP"
 
-echo "==> Building dmg…"
+echo "==> Building, signing, notarizing, and stapling the dmg…"
 "$ROOT/scripts/make-dmg.sh" "$APP" "build/Vireo.dmg"
+# The app's ticket does not cover the disk image. Gatekeeper warns on an
+# unnotarized dmg, and stapler needs a ticket for the dmg itself.
+codesign --sign "$VIREO_SIGN_IDENTITY" --timestamp "build/Vireo.dmg"
+xcrun notarytool submit "build/Vireo.dmg" --keychain-profile "$VIREO_NOTARY_PROFILE" --wait
 xcrun stapler staple "build/Vireo.dmg"
 
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"

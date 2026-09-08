@@ -90,7 +90,7 @@ The script runs the whole chain:
 1. Regenerate the Xcode project.
 2. Archive the app, signed with the Developer ID.
 3. Notarize and staple the app.
-4. Build and staple `Vireo.dmg`.
+4. Build `Vireo.dmg`, sign it, notarize it, and staple it.
 5. EdDSA-sign the DMG and generate `appcast.xml`.
 6. Create the GitHub release `v<version>` and upload both files.
 
