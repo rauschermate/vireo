@@ -169,3 +169,7 @@ Implementation deviations from the eng-design are documented in
   actual notarized build can only be produced with your credentials.
 - **Quick Look thumbnail extension** (PRD stretch) not built; QL previews can't
   load local sibling images (sandbox grants only the previewed file).
+
+## License
+
+Vireo is released under the MIT License. See [LICENSE](LICENSE).
