@@ -22,3 +22,4 @@ Vireo.xcodeproj/
 # Secrets (notarization creds, API keys)
 .env
 *.p12
+*.pem
