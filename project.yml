@@ -53,6 +53,10 @@ targets:
         product: Sparkle
       - target: VireoQuickLook
         embed: true
+    postBuildScripts:
+      - name: Sign Sparkle helpers
+        script: '"$SRCROOT/scripts/sign-sparkle-helpers.sh"'
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.materauscher.vireo
