@@ -109,6 +109,13 @@ private struct EditorPane: View {
             MarkdownSourceView(session: doc.editorSession)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .id(doc.id)
+                .overlay(alignment: .bottomTrailing) {
+                    if let statistics = doc.textStatistics {
+                        WordCountBadge(statistics: statistics)
+                            .padding(.trailing, 14)
+                            .padding(.bottom, 10)
+                    }
+                }
             if doc.showTOC && !state.focusMode, !doc.toc.isEmpty {
                 TOCSidebar(document: doc).frame(width: 220)
             }

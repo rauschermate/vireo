@@ -282,57 +282,106 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct PreferencesView: View {
     @EnvironmentObject private var prefs: Preferences
+
+    private static let width: CGFloat = 460
+    private static let sidePadding: CGFloat = 24
+    private static let labelWidth: CGFloat = 110
+    private static let columnSpacing: CGFloat = 8
+    private static var contentWidth: CGFloat { width - 2 * sidePadding - labelWidth - columnSpacing }
+
     var body: some View {
-        Form {
-            Toggle("Auto-save changes", isOn: $prefs.autoSave)
-            Text("When off, use ⌘S to save. Vireo warns before closing documents with unsaved changes.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        // An explicit grid instead of `Form`: the Form grid sizes its content
+        // column from the captions' one-line width and overflows the padding.
+        Grid(alignment: .leading, horizontalSpacing: Self.columnSpacing, verticalSpacing: 8) {
+            GridRow {
+                emptyLabel
+                Toggle("Auto-save changes", isOn: $prefs.autoSave)
+            }
+            caption("When off, use ⌘S to save. Vireo warns before closing documents with unsaved changes.")
 
-            Picker("Appearance", selection: $prefs.appearance) {
-                ForEach(AppearanceOption.allCases) { option in
-                    Text(option.label).tag(option)
+            GridRow {
+                label("Appearance")
+                Picker("Appearance", selection: $prefs.appearance) {
+                    ForEach(AppearanceOption.allCases) { option in
+                        Text(option.label).tag(option)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .onChange(of: prefs.appearance) { _, newValue in
+                    applyAppearance(newValue)
+                }
+                .padding(.bottom, 10)
+            }
+
+            GridRow {
+                label("Font")
+                Picker("Font", selection: $prefs.editorFont) {
+                    ForEach(EditorFontOption.allCases) { option in
+                        Text(option.label).tag(option)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .onChange(of: prefs.editorFont) { _, _ in
+                    AppState.shared.applyEditorFont()
                 }
             }
-            .pickerStyle(.menu)
-            .onChange(of: prefs.appearance) { _, newValue in
-                applyAppearance(newValue)
-            }
+            caption("The typeface of the document text. Code blocks stay monospaced either way.")
 
-            Picker("Font", selection: $prefs.editorFont) {
-                ForEach(EditorFontOption.allCases) { option in
-                    Text(option.label).tag(option)
-                }
+            GridRow {
+                emptyLabel
+                Toggle("Show word count", isOn: $prefs.showWordCount)
             }
-            .pickerStyle(.menu)
-            .onChange(of: prefs.editorFont) { _, _ in
-                AppState.shared.applyEditorFont()
-            }
-            Text("The typeface of the document text. Code blocks stay monospaced either way.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            caption("Shows the word and character count in the bottom-right corner of the document.")
 
-            Picker("Table of contents", selection: $prefs.tocDefault) {
-                ForEach(TOCDefaultOption.allCases) { option in
-                    Text(option.label).tag(option)
+            GridRow {
+                label("Table of contents")
+                Picker("Table of contents", selection: $prefs.tocDefault) {
+                    ForEach(TOCDefaultOption.allCases) { option in
+                        Text(option.label).tag(option)
+                    }
                 }
+                .labelsHidden()
+                .pickerStyle(.menu)
             }
-            .pickerStyle(.menu)
-            Text("Whether the table of contents starts open. Dynamic opens it only for longer documents. Applies to documents opened afterwards.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            caption("Whether the table of contents starts open. Dynamic opens it only for longer documents. Applies to documents opened afterwards.")
 
-            Picker("Sidebar labels", selection: $prefs.sidebarFileLabel) {
-                ForEach(SidebarFileLabel.allCases) { option in
-                    Text(option.label).tag(option)
+            GridRow {
+                label("Sidebar labels")
+                Picker("Sidebar labels", selection: $prefs.sidebarFileLabel) {
+                    ForEach(SidebarFileLabel.allCases) { option in
+                        Text(option.label).tag(option)
+                    }
                 }
+                .labelsHidden()
+                .pickerStyle(.menu)
             }
-            .pickerStyle(.menu)
-            Text("What file rows in the sidebar show: the document title (frontmatter or first heading) or the file name.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            caption("What file rows in the sidebar show: the document title (frontmatter or first heading) or the file name.")
         }
-        .padding(20)
-        .frame(width: 360)
+        .padding(.vertical, 20)
+        .padding(.horizontal, Self.sidePadding)
+    }
+
+    private func label(_ text: String) -> some View {
+        Text(text).frame(width: Self.labelWidth, alignment: .trailing)
+    }
+
+    private var emptyLabel: some View {
+        Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+    }
+
+    /// The explanation under a setting. Its bottom padding is the gap between
+    /// settings.
+    private func caption(_ text: String) -> some View {
+        GridRow {
+            emptyLabel
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: Self.contentWidth, alignment: .leading)
+                .padding(.bottom, 10)
+        }
     }
 }

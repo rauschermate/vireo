@@ -40,6 +40,10 @@ enum SidebarSnapshot {
             }
         }
 
+        // Let asynchronous document state (statistics, parse results) settle
+        // before the render.
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.6))
+
         let image: NSImage
         if wholeWindow {
             image = render(DocumentWindowView().environmentObject(state),

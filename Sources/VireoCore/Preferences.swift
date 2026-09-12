@@ -73,6 +73,7 @@ public final class Preferences: ObservableObject {
         static let lastWorkspace = "vireo.lastWorkspace"
         static let pinnedFiles = "vireo.sidebar.pinnedFiles"
         static let hasOpenedWelcome = "vireo.hasOpenedWelcome"
+        static let showWordCount = "vireo.showWordCount"
     }
 
     nonisolated public static let defaultSidebarWidth: Double = 240
@@ -94,6 +95,12 @@ public final class Preferences: ObservableObject {
 
     @Published public var editorFont: EditorFontOption = .sans {
         didSet { defaults.set(editorFont.rawValue, forKey: Keys.editorFont) }
+    }
+
+    /// Off by default: the word and character count in the document's
+    /// bottom-right corner.
+    @Published public var showWordCount: Bool = false {
+        didSet { defaults.set(showWordCount, forKey: Keys.showWordCount) }
     }
 
     // MARK: Sidebar
@@ -124,6 +131,7 @@ public final class Preferences: ObservableObject {
         appearance = AppearanceOption(rawValue: defaults.string(forKey: Keys.appearance) ?? "") ?? .system
         tocDefault = TOCDefaultOption(rawValue: defaults.string(forKey: Keys.tocDefault) ?? "") ?? .dynamic
         editorFont = EditorFontOption(rawValue: defaults.string(forKey: Keys.editorFont) ?? "") ?? .sans
+        showWordCount = defaults.object(forKey: Keys.showWordCount) != nil && defaults.bool(forKey: Keys.showWordCount)
         sidebarVisible = defaults.object(forKey: Keys.sidebarVisible) as? Bool ?? true
         sidebarWidth = defaults.object(forKey: Keys.sidebarWidth) as? Double ?? Self.defaultSidebarWidth
         sidebarFileLabel = SidebarFileLabel(rawValue: defaults.string(forKey: Keys.sidebarFileLabel) ?? "") ?? .title
