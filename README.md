@@ -101,14 +101,15 @@ lists where the shipped app differs from the plan. Read
 
 ## Releases
 
-[`docs/releasing.md`](docs/releasing.md) explains how to cut a signed,
-notarized release with a working update feed. The short version:
+`scripts/release.sh` cuts a signed, notarized release with a working update
+feed. Its header lists the Developer ID variables it needs. The steps:
 
 1. Bump the version in `project.yml`.
-2. Run `./scripts/release.sh --publish` with your Developer ID variables set.
+2. Run `./scripts/release.sh --publish`.
 
 The script archives the app, notarizes the app and the disk image, signs the
-update, and publishes a GitHub release with the appcast.
+update, and publishes a GitHub release with the appcast. Run
+`./scripts/updater-keys.sh` once per release machine to create the Sparkle key.
 
 ## Known gaps
 
