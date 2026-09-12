@@ -285,9 +285,7 @@ struct PreferencesView: View {
     var body: some View {
         Form {
             Toggle("Auto-save changes", isOn: $prefs.autoSave)
-            Text("When off, use ⌘S to save. Vireo warns before closing documents with unsaved changes.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            SettingCaption("When off, use ⌘S to save. Vireo warns before closing documents with unsaved changes.")
 
             Picker("Appearance", selection: $prefs.appearance) {
                 ForEach(AppearanceOption.allCases) { option in
@@ -298,6 +296,7 @@ struct PreferencesView: View {
             .onChange(of: prefs.appearance) { _, newValue in
                 applyAppearance(newValue)
             }
+            .padding(.bottom, 10)
 
             Picker("Font", selection: $prefs.editorFont) {
                 ForEach(EditorFontOption.allCases) { option in
@@ -308,14 +307,10 @@ struct PreferencesView: View {
             .onChange(of: prefs.editorFont) { _, _ in
                 AppState.shared.applyEditorFont()
             }
-            Text("The typeface of the document text. Code blocks stay monospaced either way.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            SettingCaption("The typeface of the document text. Code blocks stay monospaced either way.")
 
             Toggle("Show word count", isOn: $prefs.showWordCount)
-            Text("Shows the word and character count in the bottom-right corner of the document.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            SettingCaption("Shows the word and character count in the bottom-right corner of the document.")
 
             Picker("Table of contents", selection: $prefs.tocDefault) {
                 ForEach(TOCDefaultOption.allCases) { option in
@@ -323,9 +318,7 @@ struct PreferencesView: View {
                 }
             }
             .pickerStyle(.menu)
-            Text("Whether the table of contents starts open. Dynamic opens it only for longer documents. Applies to documents opened afterwards.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            SettingCaption("Whether the table of contents starts open. Dynamic opens it only for longer documents. Applies to documents opened afterwards.")
 
             Picker("Sidebar labels", selection: $prefs.sidebarFileLabel) {
                 ForEach(SidebarFileLabel.allCases) { option in
@@ -333,12 +326,23 @@ struct PreferencesView: View {
                 }
             }
             .pickerStyle(.menu)
-            Text("What file rows in the sidebar show: the document title (frontmatter or first heading) or the file name.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            SettingCaption("What file rows in the sidebar show: the document title (frontmatter or first heading) or the file name.")
         }
         .padding(.vertical, 20)
-        .padding(.horizontal, 36)
-        .frame(width: 500)
+        .padding(.horizontal, 24)
+        .frame(width: 460)
+    }
+}
+
+/// The explanation under a setting. Its bottom padding is the gap between
+/// settings.
+private struct SettingCaption: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.bottom, 10)
     }
 }
