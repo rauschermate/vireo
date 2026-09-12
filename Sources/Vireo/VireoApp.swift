@@ -338,6 +338,6 @@ struct PreferencesView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(20)
-        .frame(width: 360)
+        .frame(width: 440)
     }
 }
