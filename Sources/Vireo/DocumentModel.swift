@@ -37,6 +37,8 @@ final class DocumentModel: ObservableObject, Identifiable {
     @Published var showTOC = true
     @Published private(set) var isDirty = false
     @Published private(set) var saveState: DocumentSaveState = .saved
+    /// Word and character counts of `source`. Nil while the preference is off.
+    @Published private(set) var textStatistics: TextStatistics?
     /// The bundled welcome tour, opened on first launch. It closes without a
     /// save prompt until the user edits it (see `confirmDiscardIfNeeded`).
     var isEphemeralWelcome = false
@@ -56,7 +58,9 @@ final class DocumentModel: ObservableObject, Identifiable {
 
     let controller = EditorController()
     lazy var editorSession = EditorSession(source: source, controller: controller)
-    private(set) var source: String
+    private(set) var source: String {
+        didSet { scheduleTextStatistics(enabled: preferences.showWordCount) }
+    }
     private let preferences: Preferences
     private let writer: DocumentWriter
     private let autosaveDelay: TimeInterval
@@ -64,6 +68,8 @@ final class DocumentModel: ObservableObject, Identifiable {
     private var watcher: FileWatcher?
     private var saveWork: DispatchWorkItem?
     private var preferenceObserver: AnyCancellable?
+    private var statisticsObserver: AnyCancellable?
+    private var statisticsTask: Task<Void, Never>?
     private var diskRevision: FileRevision?
     private var editGeneration = 0
     private var activeWriteID = 0
@@ -137,6 +143,11 @@ final class DocumentModel: ObservableObject, Identifiable {
         controller.onOpenLink = { [weak self] dest in self?.openLink(dest) }
         preferenceObserver = preferences.$autoSave.dropFirst().sink { [weak self] enabled in
             self?.autoSavePreferenceChanged(enabled)
+        }
+        // `$showWordCount` emits before the property changes, so pass the
+        // emitted value instead of reading the preference back.
+        statisticsObserver = preferences.$showWordCount.sink { [weak self] enabled in
+            self?.scheduleTextStatistics(enabled: enabled)
         }
     }
 
@@ -271,6 +282,24 @@ final class DocumentModel: ObservableObject, Identifiable {
             saveWork = nil
             saveAfterCurrentWrite = false
             if !writeInFlight { saveState = .unsaved }
+        }
+    }
+
+    /// Counts run off the main thread after a short pause, so typing in a
+    /// large document never waits on them.
+    private func scheduleTextStatistics(enabled: Bool) {
+        statisticsTask?.cancel()
+        guard enabled else {
+            textStatistics = nil
+            return
+        }
+        let text = source
+        statisticsTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled else { return }
+            let stats = await Task.detached(priority: .utility) { TextStatistics.measure(text) }.value
+            guard !Task.isCancelled else { return }
+            self?.textStatistics = stats
         }
     }
 

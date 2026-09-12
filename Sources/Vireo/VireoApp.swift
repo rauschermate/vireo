@@ -312,6 +312,11 @@ struct PreferencesView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            Toggle("Show word count", isOn: $prefs.showWordCount)
+            Text("Shows the word and character count in the bottom-right corner of the document.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             Picker("Table of contents", selection: $prefs.tocDefault) {
                 ForEach(TOCDefaultOption.allCases) { option in
                     Text(option.label).tag(option)
