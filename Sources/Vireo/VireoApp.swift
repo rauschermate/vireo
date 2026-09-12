@@ -337,7 +337,8 @@ struct PreferencesView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .padding(20)
-        .frame(width: 440)
+        .padding(.vertical, 20)
+        .padding(.horizontal, 36)
+        .frame(width: 500)
     }
 }
