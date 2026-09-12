@@ -57,7 +57,7 @@ xcrun stapler staple "build/Vireo.dmg"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
 TAG="v$VERSION"
 
-echo "==> Signing update + generating appcast for $TAG…"
+echo "==> Signing update + generating appcast for ${TAG}…"
 if ! grep -q '<string>[A-Za-z0-9+/=]\{20,\}</string>' project/App-Info.plist; then
     echo "error: SUPublicEDKey looks empty in project/App-Info.plist — run scripts/updater-keys.sh first." >&2
     exit 1
@@ -78,7 +78,7 @@ echo "    build/Vireo.dmg           (notarized + stapled)"
 echo "    $APPCAST_DIR/appcast.xml  (Sparkle feed)"
 
 if [[ "$PUBLISH" == "1" ]]; then
-    echo "==> Publishing GitHub release $TAG…"
+    echo "==> Publishing GitHub release ${TAG}…"
     if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
         gh release upload "$TAG" "build/Vireo.dmg" "$APPCAST_DIR/appcast.xml" \
             --repo "$REPO" --clobber
