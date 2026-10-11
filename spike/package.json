@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "vite --port 1420",
     "build": "tsc --noEmit && vite build",
-    "fixtures": "./scripts/fixtures.sh"
+    "fixtures": "./scripts/fixtures.sh",
+    "tauri": "tauri",
+    "bench": "bun scripts/bench.ts"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

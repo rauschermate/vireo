@@ -106,10 +106,38 @@ results.addEventListener("dblclick", () => results.classList.remove("is-open"));
 (window as any).__vireo = { view, open, bench, setZoom, toggleTheme, syntaxTree, previewStats };
 
 const params = new URLSearchParams(location.search);
-await open(params.get("file") ?? "welcome.md");
+let startup = params.get("file");
+if (inTauri) {
+  const { invoke } = await import("@tauri-apps/api/core");
+  startup ??= await invoke<string | null>("startup_file");
+}
+await open(startup ?? "welcome.md");
 let autoBench = params.has("bench");
 if (inTauri) {
   const { invoke } = await import("@tauri-apps/api/core");
   autoBench ||= await invoke<boolean>("bench_mode");
 }
 if (autoBench) bench();
+
+// Memory scenarios for the shell to sample: wait, then scroll to the end or
+// type, then stay idle.
+if (inTauri) {
+  const { invoke } = await import("@tauri-apps/api/core");
+  const name = await invoke<string | null>("scenario");
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  if (name === "scroll" || name === "scroll-slow") {
+    await wait(3000);
+    const step = name === "scroll" ? 3000 : 100;
+    while (view.scrollDOM.scrollTop + view.scrollDOM.clientHeight < view.scrollDOM.scrollHeight - 10) {
+      view.scrollDOM.scrollTop += step;
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    status.textContent = "scenario: scrolled to end";
+  } else if (name === "reopen") {
+    for (let i = 0; i < 6; i++) {
+      await wait(1500);
+      await open(startup ?? "welcome.md");
+    }
+    status.textContent = "scenario: reopened 6 times";
+  }
+}
