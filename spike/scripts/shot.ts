@@ -29,6 +29,14 @@ if (caret) {
   }, caret);
   await page.waitForTimeout(100);
 }
+const scroll = opt("--scroll");
+if (scroll) {
+  await page.evaluate((pos) => {
+    const v = (window as any).__vireo.view;
+    v.scrollDOM.scrollTop = v.lineBlockAt(Number(pos)).top;
+  }, scroll);
+  await page.waitForTimeout(1000);
+}
 await page.screenshot({ path: out });
 await browser.close();
 console.log(out);

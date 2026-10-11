@@ -1,10 +1,8 @@
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { syntaxHighlighting, syntaxTree } from "@codemirror/language";
-import { languages } from "@codemirror/language-data";
-import { EditorState } from "@codemirror/state";
+import { markdownKeymap, markdownLanguage } from "@codemirror/lang-markdown";
+import { LanguageSupport, syntaxTree } from "@codemirror/language";
+import { EditorState, Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
-import { classHighlighter } from "@lezer/highlight";
 import { blockField } from "./blocks";
 import { livePreview } from "./livePreview";
 import { focusTracking } from "./reveal";
@@ -51,8 +49,10 @@ export function createState(doc: string): EditorState {
     extensions: [
       history(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
-      markdown({ base: markdownLanguage, codeLanguages: languages }),
-      syntaxHighlighting(classHighlighter),
+      // markdown() would wrap the parser in a mixed parse for code and HTML,
+      // which re-walks the whole tree per keystroke. See codeHighlight.ts.
+      new LanguageSupport(markdownLanguage),
+      Prec.high(keymap.of(markdownKeymap)),
       EditorView.lineWrapping,
       EditorView.contentAttributes.of({ spellcheck: "true", autocorrect: "on", autocapitalize: "on" }),
       focusTracking,

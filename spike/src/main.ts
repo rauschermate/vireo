@@ -1,6 +1,8 @@
+import { syntaxTree } from "@codemirror/language";
 import { EditorView } from "@codemirror/view";
 import { FixtureResult, Harness, format, nextPaint, runFixture, stats } from "./bench";
 import { createState } from "./editor";
+import { previewStats } from "./livePreview";
 import "./style.css";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
@@ -101,7 +103,7 @@ $("theme").addEventListener("click", toggleTheme);
 $("bench").addEventListener("click", () => bench());
 results.addEventListener("dblclick", () => results.classList.remove("is-open"));
 
-(window as any).__vireo = { view, open, bench, setZoom, toggleTheme };
+(window as any).__vireo = { view, open, bench, setZoom, toggleTheme, syntaxTree, previewStats };
 
 const params = new URLSearchParams(location.search);
 await open(params.get("file") ?? "welcome.md");

@@ -65,9 +65,14 @@ async function measure(op: () => void) {
   const t0 = performance.now();
   op();
   const t1 = performance.now();
-  const frameStart = await frame();
-  const t2 = performance.now();
-  const painted = await nextPaint();
+  const { frameStart, t2, painted } = await new Promise<{ frameStart: number; t2: number; painted: number }>((resolve) =>
+    requestAnimationFrame((frameStart) => {
+      const t2 = performance.now();
+      const channel = new MessageChannel();
+      channel.port1.onmessage = () => resolve({ frameStart, t2, painted: performance.now() });
+      channel.port2.postMessage(null);
+    }),
+  );
   return { work: t1 - t0 + Math.max(0, t2 - frameStart), latency: painted - t0 };
 }
 
@@ -123,7 +128,7 @@ export async function runFixture(h: Harness, name: string): Promise<FixtureResul
   const scans: number[] = [];
   const typing = await repeat(100, () => {
     view.dispatch(view.state.replaceSelection("a"), { userEvent: "input.type", scrollIntoView: true });
-    scans.push(blockStats.lastScanMs);
+    scans.push(blockStats.lastUpdateMs);
   });
 
   view.dispatch({ selection: EditorSelection.cursor(line.from), scrollIntoView: true });
@@ -165,7 +170,7 @@ export function format(results: FixtureResult[]): string {
       [
         `${r.fixture} (${(r.bytes / 1048576).toFixed(2)} MiB)`,
         `  open           sync ${r.openSync} ms | to pixel ${r.openToPixel} ms`,
-        `  typing         ${s(r.typing)}   (block scan p95 ${r.blockScanMs})`,
+        `  typing         ${s(r.typing)}   (block field p95 ${r.blockScanMs})`,
         `  caret right    ${s(r.caretRight)}`,
         `  caret down     ${s(r.caretDown)}`,
         `  zoom step      ${s(r.zoom)}`,

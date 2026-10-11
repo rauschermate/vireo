@@ -2,6 +2,7 @@ import { syntaxTree } from "@codemirror/language";
 import { EditorState, Range } from "@codemirror/state";
 import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate, WidgetType } from "@codemirror/view";
 import { SyntaxNode } from "@lezer/common";
+import { highlightCode, languageLoaded } from "./codeHighlight";
 import { focusField, lineRevealed, revealed } from "./reveal";
 
 const hide = Decoration.replace({});
@@ -95,7 +96,30 @@ class ImageWidget extends WidgetType {
   }
 }
 
+// Visits the start of every line of [from, to] that lies in the viewport. A
+// multi-megabyte code block must not cost a decoration per line it contains.
+function eachLine(state: EditorState, viewport: { from: number; to: number }, from: number, to: number, f: (lineFrom: number) => void) {
+  let pos = Math.max(from, viewport.from);
+  const end = Math.min(to, viewport.to);
+  while (pos <= end) {
+    const line = state.doc.lineAt(pos);
+    f(line.from);
+    pos = line.to + 1;
+  }
+}
+
+export const previewStats = { lastBuildMs: 0, decorations: 0 };
+
 function build(view: EditorView): DecorationSet {
+  const t0 = performance.now();
+  try {
+    return buildInner(view);
+  } finally {
+    previewStats.lastBuildMs = performance.now() - t0;
+  }
+}
+
+function buildInner(view: EditorView): DecorationSet {
   const { state } = view;
   const out: Range<Decoration>[] = [];
   const doc = state.doc;
@@ -117,11 +141,7 @@ function build(view: EditorView): DecorationSet {
         const mark = node.getChild("HeaderMark");
         const level = name.endsWith("1") ? 1 : 2;
         const end = mark ? doc.lineAt(mark.from).from - 1 : node.to;
-        for (let pos = node.from; pos <= end; ) {
-          const line = doc.lineAt(pos);
-          out.push(headingLine[level - 1].range(line.from));
-          pos = line.to + 1;
-        }
+        eachLine(state, view.viewport, node.from, end, (at) => out.push(headingLine[level - 1].range(at)));
         if (mark && revealed(state, node.from, node.to)) out.push(dim.range(mark.from, mark.to));
         return;
       }
@@ -155,14 +175,11 @@ function build(view: EditorView): DecorationSet {
           listMark(state, node, out);
           return false;
         case "Blockquote":
-          for (let pos = node.from; pos <= node.to; ) {
-            const line = doc.lineAt(pos);
-            if (!quoteLines.has(line.from)) {
-              quoteLines.add(line.from);
-              out.push(quoteLine.range(line.from));
-            }
-            pos = line.to + 1;
-          }
+          eachLine(state, view.viewport, node.from, node.to, (at) => {
+            if (quoteLines.has(at)) return;
+            quoteLines.add(at);
+            out.push(quoteLine.range(at));
+          });
           return;
         case "QuoteMark": {
           if (lineRevealed(state, node.from)) out.push(dim.range(node.from, node.to));
@@ -171,15 +188,11 @@ function build(view: EditorView): DecorationSet {
         }
         case "FencedCode":
         case "CodeBlock":
-          codeBlock(state, node, out);
+          codeBlock(view, node, out);
           return false;
         case "Table":
           if (revealed(state, node.from, node.to)) {
-            for (let pos = node.from; pos <= node.to; ) {
-              const line = doc.lineAt(pos);
-              out.push(tableSourceLine.range(line.from));
-              pos = line.to + 1;
-            }
+            eachLine(state, view.viewport, node.from, node.to, (at) => out.push(tableSourceLine.range(at)));
           }
           return;
         case "TableDelimiter":
@@ -196,6 +209,7 @@ function build(view: EditorView): DecorationSet {
     },
   });
 
+  previewStats.decorations = out.length;
   return Decoration.set(out, true);
 }
 
@@ -288,7 +302,8 @@ function listMark(state: EditorState, node: SyntaxNode, out: Range<Decoration>[]
   out.push(Decoration.replace({ widget: new BulletWidget(depth) }).range(node.from, text));
 }
 
-function codeBlock(state: EditorState, node: SyntaxNode, out: Range<Decoration>[]) {
+function codeBlock(view: EditorView, node: SyntaxNode, out: Range<Decoration>[]) {
+  const { state, viewport } = view;
   const doc = state.doc;
   let first = doc.lineAt(node.from).number;
   let last = doc.lineAt(node.to).number;
@@ -299,14 +314,18 @@ function codeBlock(state: EditorState, node: SyntaxNode, out: Range<Decoration>[
     if (marks.length > 0 && first < last) first++;
     if (marks.length > 1 && last > first) last--;
   }
-  for (let n = first; n <= last; n++) {
+  const visibleFirst = Math.max(first, doc.lineAt(Math.max(node.from, viewport.from)).number);
+  const visibleLast = Math.min(last, doc.lineAt(Math.min(node.to, viewport.to)).number);
+  for (let n = visibleFirst; n <= visibleLast; n++) {
     const line = doc.line(n);
     const deco = first === last ? codeLine.only : n === first ? codeLine.first : n === last ? codeLine.last : codeLine.middle;
     out.push(deco.range(line.from));
   }
+  const info = node.getChild("CodeInfo");
+  const code = node.getChild("CodeText");
+  if (info && code) highlightCode(view, doc.sliceString(info.from, info.to), code.from, code.to, out);
   if (revealed(state, node.from, node.to)) {
     for (const m of node.getChildren("CodeMark")) out.push(dim.range(m.from, m.to));
-    const info = node.getChild("CodeInfo");
     if (info) out.push(dim.range(info.from, info.to));
   }
 }
@@ -329,7 +348,8 @@ export const livePreview = ViewPlugin.fromClass(
         update.viewportChanged ||
         update.selectionSet ||
         update.startState.field(focusField, false) !== update.state.field(focusField, false) ||
-        syntaxTree(update.startState) !== syntaxTree(update.state)
+        syntaxTree(update.startState) !== syntaxTree(update.state) ||
+        update.transactions.some((tr) => tr.effects.some((e) => e.is(languageLoaded)))
       ) {
         this.decorations = build(update.view);
       }
