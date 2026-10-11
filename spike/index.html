@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vireo Spike</title>
+  </head>
+  <body>
+    <div id="toolbar">
+      <select id="fixture">
+        <option value="welcome.md">welcome.md</option>
+        <option value="formatting-dense.md">formatting-dense.md (1.7 MB)</option>
+        <option value="single-code-block.md">single-code-block.md (3.4 MB)</option>
+      </select>
+      <button id="zoom-out" title="Zoom out (⌘-)">A−</button>
+      <button id="zoom-in" title="Zoom in (⌘=)">A+</button>
+      <button id="theme" title="Toggle theme (⌘⇧D)">Theme</button>
+      <button id="bench">Run bench</button>
+      <span id="status"></span>
+    </div>
+    <div id="editor"></div>
+    <pre id="results"></pre>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

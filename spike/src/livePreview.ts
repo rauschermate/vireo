@@ -1,0 +1,339 @@
+import { syntaxTree } from "@codemirror/language";
+import { EditorState, Range } from "@codemirror/state";
+import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate, WidgetType } from "@codemirror/view";
+import { SyntaxNode } from "@lezer/common";
+import { focusField, lineRevealed, revealed } from "./reveal";
+
+const hide = Decoration.replace({});
+const dim = Decoration.mark({ class: "cm-md-syntax" });
+const inlineMarks: Record<string, Decoration> = {
+  Emphasis: Decoration.mark({ class: "cm-md-em" }),
+  StrongEmphasis: Decoration.mark({ class: "cm-md-strong" }),
+  Strikethrough: Decoration.mark({ class: "cm-md-strike" }),
+  InlineCode: Decoration.mark({ class: "cm-md-inline-code" }),
+};
+const delimiterOf: Record<string, string> = {
+  Emphasis: "EmphasisMark",
+  StrongEmphasis: "EmphasisMark",
+  Strikethrough: "StrikethroughMark",
+  InlineCode: "CodeMark",
+};
+const link = Decoration.mark({ class: "cm-md-link" });
+const listNumber = Decoration.mark({ class: "cm-md-list-number" });
+const taskDone = Decoration.mark({ class: "cm-md-task-done" });
+const headingLine = [1, 2, 3, 4, 5, 6].map((n) => Decoration.line({ class: `cm-md-h cm-md-h${n}` }));
+const quoteLine = Decoration.line({ class: "cm-md-quote" });
+const tableSourceLine = Decoration.line({ class: "cm-md-table-source" });
+const codeLine = {
+  only: Decoration.line({ class: "cm-md-code cm-md-code-first cm-md-code-last" }),
+  first: Decoration.line({ class: "cm-md-code cm-md-code-first" }),
+  middle: Decoration.line({ class: "cm-md-code" }),
+  last: Decoration.line({ class: "cm-md-code cm-md-code-last" }),
+};
+
+class BulletWidget extends WidgetType {
+  constructor(readonly depth: number) {
+    super();
+  }
+  eq(other: BulletWidget) {
+    return other.depth === this.depth;
+  }
+  toDOM() {
+    const span = document.createElement("span");
+    span.className = "cm-md-bullet";
+    span.textContent = ["•", "◦", "▪"][this.depth % 3];
+    return span;
+  }
+}
+
+class CheckboxWidget extends WidgetType {
+  constructor(readonly checked: boolean) {
+    super();
+  }
+  eq(other: CheckboxWidget) {
+    return other.checked === this.checked;
+  }
+  toDOM(view: EditorView) {
+    const box = document.createElement("span");
+    box.className = "cm-md-checkbox" + (this.checked ? " is-checked" : "");
+    box.setAttribute("role", "checkbox");
+    box.setAttribute("aria-checked", String(this.checked));
+    box.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      // The widget DOM survives edits elsewhere, so look its position up on
+      // click instead of caching it at creation time.
+      const pos = view.posAtDOM(box);
+      const marker = view.state.doc.sliceString(pos, pos + 12).indexOf("[");
+      if (marker < 0) return;
+      const at = pos + marker + 1;
+      view.dispatch({
+        changes: { from: at, to: at + 1, insert: this.checked ? " " : "x" },
+        userEvent: "input.toggle",
+      });
+    });
+    return box;
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+
+class ImageWidget extends WidgetType {
+  constructor(readonly src: string, readonly alt: string) {
+    super();
+  }
+  eq(other: ImageWidget) {
+    return other.src === this.src && other.alt === this.alt;
+  }
+  toDOM(view: EditorView) {
+    const img = document.createElement("img");
+    img.className = "cm-md-image";
+    img.alt = this.alt;
+    img.src = this.src;
+    img.addEventListener("load", () => view.requestMeasure());
+    return img;
+  }
+}
+
+function build(view: EditorView): DecorationSet {
+  const { state } = view;
+  const out: Range<Decoration>[] = [];
+  const doc = state.doc;
+  const quoteLines = new Set<number>();
+  const { from, to } = view.viewport;
+
+  syntaxTree(state).iterate({
+    from,
+    to,
+    enter: (ref) => {
+      const node = ref.node;
+      const name = node.name;
+
+      if (name.startsWith("ATXHeading")) {
+        heading(state, node, +name.slice(-1), out);
+        return;
+      }
+      if (name.startsWith("SetextHeading")) {
+        const mark = node.getChild("HeaderMark");
+        const level = name.endsWith("1") ? 1 : 2;
+        const end = mark ? doc.lineAt(mark.from).from - 1 : node.to;
+        for (let pos = node.from; pos <= end; ) {
+          const line = doc.lineAt(pos);
+          out.push(headingLine[level - 1].range(line.from));
+          pos = line.to + 1;
+        }
+        if (mark && revealed(state, node.from, node.to)) out.push(dim.range(mark.from, mark.to));
+        return;
+      }
+
+      switch (name) {
+        case "Emphasis":
+        case "StrongEmphasis":
+        case "Strikethrough":
+        case "InlineCode":
+          delimited(state, node, inlineMarks[name], delimiterOf[name], out);
+          return name !== "InlineCode";
+        case "Link":
+          linkNode(state, node, out);
+          return;
+        case "Autolink": {
+          const url = node.getChild("URL");
+          if (url) out.push(link.range(url.from, url.to));
+          const show = revealed(state, node.from, node.to);
+          for (const m of node.getChildren("LinkMark")) out.push((show ? dim : hide).range(m.from, m.to));
+          return false;
+        }
+        case "URL":
+          if (node.parent?.name === "Paragraph" || node.parent?.name === "TableCell") {
+            out.push(link.range(node.from, node.to));
+          }
+          return false;
+        case "Image":
+          image(state, node, out);
+          return false;
+        case "ListMark":
+          listMark(state, node, out);
+          return false;
+        case "Blockquote":
+          for (let pos = node.from; pos <= node.to; ) {
+            const line = doc.lineAt(pos);
+            if (!quoteLines.has(line.from)) {
+              quoteLines.add(line.from);
+              out.push(quoteLine.range(line.from));
+            }
+            pos = line.to + 1;
+          }
+          return;
+        case "QuoteMark": {
+          if (lineRevealed(state, node.from)) out.push(dim.range(node.from, node.to));
+          else out.push(hide.range(node.from, afterSpace(state, node.to)));
+          return false;
+        }
+        case "FencedCode":
+        case "CodeBlock":
+          codeBlock(state, node, out);
+          return false;
+        case "Table":
+          if (revealed(state, node.from, node.to)) {
+            for (let pos = node.from; pos <= node.to; ) {
+              const line = doc.lineAt(pos);
+              out.push(tableSourceLine.range(line.from));
+              pos = line.to + 1;
+            }
+          }
+          return;
+        case "TableDelimiter":
+          if (node.parent?.name !== "Table") out.push(dim.range(node.from, node.to));
+          return false;
+        case "Escape":
+          if (!revealed(state, node.from, node.to)) out.push(hide.range(node.from, node.from + 1));
+          return false;
+        case "HTMLTag":
+        case "Comment":
+          out.push(dim.range(node.from, node.to));
+          return false;
+      }
+    },
+  });
+
+  return Decoration.set(out, true);
+}
+
+function heading(state: EditorState, node: SyntaxNode, level: number, out: Range<Decoration>[]) {
+  const line = state.doc.lineAt(node.from);
+  out.push(headingLine[level - 1].range(line.from));
+  const show = revealed(state, line.from, line.to);
+  for (const mark of node.getChildren("HeaderMark")) {
+    if (show) {
+      out.push(dim.range(mark.from, mark.to));
+      continue;
+    }
+    let from = mark.from;
+    let to = mark.to;
+    if (from === line.from) to = afterSpace(state, to);
+    else while (from > line.from && /\s/.test(state.doc.sliceString(from - 1, from))) from--;
+    if (to > from) out.push(hide.range(from, to));
+  }
+}
+
+function delimited(state: EditorState, node: SyntaxNode, style: Decoration, mark: string, out: Range<Decoration>[]) {
+  out.push(style.range(node.from, node.to));
+  const show = revealed(state, node.from, node.to);
+  for (const m of node.getChildren(mark)) {
+    if (m.to > m.from) out.push((show ? dim : hide).range(m.from, m.to));
+  }
+}
+
+function linkNode(state: EditorState, node: SyntaxNode, out: Range<Decoration>[]) {
+  const marks = node.getChildren("LinkMark");
+  if (marks.length < 2) return;
+  const [open, close] = marks;
+  if (close.from > open.to) out.push(link.range(open.to, close.from));
+  if (revealed(state, node.from, node.to)) {
+    out.push(dim.range(open.from, open.to));
+    out.push(dim.range(close.from, node.to));
+  } else {
+    out.push(hide.range(open.from, open.to));
+    out.push(hide.range(close.from, node.to));
+  }
+}
+
+function image(state: EditorState, node: SyntaxNode, out: Range<Decoration>[]) {
+  if (revealed(state, node.from, node.to)) {
+    out.push(dim.range(node.from, node.to));
+    return;
+  }
+  const marks = node.getChildren("LinkMark");
+  const url = node.getChild("URL");
+  if (!url || marks.length < 2) return;
+  const alt = state.doc.sliceString(marks[0].to, marks[1].from);
+  out.push(Decoration.replace({ widget: new ImageWidget(state.doc.sliceString(url.from, url.to), alt) }).range(node.from, node.to));
+}
+
+function listMark(state: EditorState, node: SyntaxNode, out: Range<Decoration>[]) {
+  const item = node.parent;
+  const list = item?.parent;
+  if (!item || !list) return;
+  const text = afterSpace(state, node.to);
+  const marker = item.getChild("Task")?.getChild("TaskMarker");
+  // The caret at the start of the item text keeps the bullet; only a caret on
+  // the marker itself reveals the source.
+  const inside = (to: number) => revealed(state, node.from, to);
+
+  if (marker && marker.from === text) {
+    const checked = state.doc.sliceString(marker.from + 1, marker.from + 2).toLowerCase() === "x";
+    const task = item.getChild("Task")!;
+    if (checked && task.to > marker.to) out.push(taskDone.range(afterSpace(state, marker.to), task.to));
+    if (inside(marker.to)) {
+      out.push(dim.range(node.from, node.to), dim.range(marker.from, marker.to));
+      return;
+    }
+    // Ordered tasks keep their number; bullet tasks show only the box.
+    const from = list.name === "OrderedList" ? marker.from : node.from;
+    if (list.name === "OrderedList") out.push(listNumber.range(node.from, node.to));
+    out.push(Decoration.replace({ widget: new CheckboxWidget(checked) }).range(from, afterSpace(state, marker.to)));
+    return;
+  }
+
+  if (list.name === "OrderedList") {
+    out.push(listNumber.range(node.from, node.to));
+    return;
+  }
+  if (inside(node.to)) {
+    out.push(dim.range(node.from, node.to));
+    return;
+  }
+  let depth = 0;
+  for (let p = list.parent; p; p = p.parent) if (p.name === "BulletList") depth++;
+  out.push(Decoration.replace({ widget: new BulletWidget(depth) }).range(node.from, text));
+}
+
+function codeBlock(state: EditorState, node: SyntaxNode, out: Range<Decoration>[]) {
+  const doc = state.doc;
+  let first = doc.lineAt(node.from).number;
+  let last = doc.lineAt(node.to).number;
+  // Fence lines are hidden by the block field unless the block is revealed,
+  // so round the corners of the first and last lines that stay visible.
+  if (node.name === "FencedCode" && !revealed(state, node.from, node.to)) {
+    const marks = node.getChildren("CodeMark");
+    if (marks.length > 0 && first < last) first++;
+    if (marks.length > 1 && last > first) last--;
+  }
+  for (let n = first; n <= last; n++) {
+    const line = doc.line(n);
+    const deco = first === last ? codeLine.only : n === first ? codeLine.first : n === last ? codeLine.last : codeLine.middle;
+    out.push(deco.range(line.from));
+  }
+  if (revealed(state, node.from, node.to)) {
+    for (const m of node.getChildren("CodeMark")) out.push(dim.range(m.from, m.to));
+    const info = node.getChild("CodeInfo");
+    if (info) out.push(dim.range(info.from, info.to));
+  }
+}
+
+function afterSpace(state: EditorState, pos: number): number {
+  const line = state.doc.lineAt(pos);
+  while (pos < line.to && state.doc.sliceString(pos, pos + 1) === " ") pos++;
+  return pos;
+}
+
+export const livePreview = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+    constructor(view: EditorView) {
+      this.decorations = build(view);
+    }
+    update(update: ViewUpdate) {
+      if (
+        update.docChanged ||
+        update.viewportChanged ||
+        update.selectionSet ||
+        update.startState.field(focusField, false) !== update.state.field(focusField, false) ||
+        syntaxTree(update.startState) !== syntaxTree(update.state)
+      ) {
+        this.decorations = build(update.view);
+      }
+    }
+  },
+  { decorations: (plugin) => plugin.decorations },
+);
