@@ -1,86 +1,42 @@
-# Vireo web spike (Phase 1)
+# Vireo (Tauri)
 
-This spike tests one question: does CodeMirror 6 in a Tauri shell give a smoother edit experience than the TextKit 1 app? The spike keeps Vireo's rules: the raw markdown string is the only source of truth, and syntax stays hidden until the caret touches it.
+The cross-platform rewrite of Vireo: Tauri v2, CodeMirror 6, and React for the chrome. It keeps Vireo's rules. The raw markdown string is the only source of truth, syntax stays hidden until the caret touches it, and a save writes the string back unchanged.
 
-## Run it
+The Swift app in the repository root stays the shipping app until this one replaces it. This app uses its own bundle id (`com.materauscher.vireo.next`, "Vireo Next"), so both run side by side.
+
+## Commands
 
 ```sh
 bun install
-./scripts/fixtures.sh            # exports Vireo's benchmark fixtures + welcome.md
-bun run dev                      # browser: http://localhost:1420/?file=welcome.md
-bunx tauri build --bundles app   # native app: src-tauri/target/release/bundle/macos/
+./scripts/fixtures.sh                 # benchmark fixtures + samples, served by the dev server
+bun run dev                           # http://localhost:1420 — the app on an in-memory file system
+bunx tauri build --bundles app        # src-tauri/target/release/bundle/macos/Vireo Next.app
+
+bun test                              # editor invariants, formatting, tables, app logic
+bun run e2e                           # 20 shell flows in headless WebKit (needs `bun run dev`)
+bun run selftest                      # the built app against a temp folder, with a real ⌘B
+(cd src-tauri && cargo test)          # file I/O, scan, Trash, watcher paths
 ```
 
-- `bun scripts/bench.ts webkit chromium` runs the bench in headless browsers.
-- `VIREO_BENCH=1 "src-tauri/target/release/bundle/macos/Vireo Spike.app/Contents/MacOS/vireo-spike"` runs it in WKWebView, prints the report, and quits.
-- `bun scripts/shot.ts out.png [--dark] [--file f.md] [--caret pos] [--scroll pos]` renders the page in headless WebKit to a PNG.
+- `bun scripts/shot-app.ts out.png [--dark] [--eval "js"]` renders the app to a PNG.
+- `bench.html` is the performance harness. `bun scripts/bench.ts webkit` runs it headless; `VIREO_BENCH=1` runs it inside the built app.
+- `FUZZ_SEEDS=3000 FUZZ_STEPS=300 bun test` runs the long incremental-parse fuzz.
 
-In the app, ⌘= and ⌘- zoom, ⌘⇧D toggles the theme, and the status bar shows live key-to-paint latency.
+## Layout
 
-## Acceptance moments (Phase 0)
+| Path | What |
+|---|---|
+| `src/editor/` | The editor core: live preview, block field, tables, formatting, find. No app knowledge; per-document hooks come in through `host.ts`. |
+| `src/app/` | The shell. `store.ts` owns documents, saving, the workspace and prefs, outside React. `commands.ts` is the one registry for menus and shortcuts. `backend.ts` is the host interface, with a Tauri and an in-memory implementation. |
+| `src/bench/` | The performance harness behind `bench.html`. |
+| `src-tauri/` | Rust: atomic save, workspace scan, file watcher, Trash and Finder actions, prefs, files opened from Finder, window state. |
 
-| # | Moment | Budget |
-|---|---|---|
-| 1 | Open the 1.7 MB dense fixture to first pixel | < 300 ms |
-| 2 | Type in the 1.7 MB file | work p95 < 16 ms; latency of 1 frame |
-| 3 | Move the caret through hidden syntax | work p95 < 8 ms; no caret jumps |
-| 4 | Zoom one step and toggle the theme on the 1.7 MB file | < 50 ms |
-| 5 | Scroll fast through the 1.7 MB file | no long frames |
-| 6 | Memory with the 1.7 MB file open | below Vireo (350–450 MB on 800 KB) |
-| 7 | It *feels* better than Vireo when you write in it | your call |
+## Rules that are easy to break
 
-## Results
+- **Incremental equals full.** The block field and the parser must give the same result as a fresh parse after any edit. `test/blocks.test.ts` fuzzes this. `src/editor/markdown.ts` works around two `@lezer/markdown` bugs that break it.
+- **Nothing per keystroke may scan the document.** Decorations stay in the viewport; the block field rescans only what an edit can change.
+- **The store never emits on plain keystrokes**, only when a tab turns dirty or clean. React re-renders the chrome, not the editor.
+- **Saving re-reads the disk first.** If the disk changed under unsaved edits, the user picks Keep Mine or Reload Disk. Never overwrite silently.
+- **A shortcut can reach both the menu and the web view.** `runCommand` drops the second delivery; `scripts/selftest.sh` checks it with a real key press.
 
-All results are from an Apple Silicon Mac, on the same fixtures that `VireoSnapshot --benchmark-suite` uses. "Work" is main-thread time for the change, including CodeMirror's measure pass. "Latency" is the time from the change to the painted frame.
-
-| Moment | Vireo (Swift) | Spike in WKWebView |
-|---|---|---|
-| Open 1.7 MB dense → pixel | 3,750 ms | **15 ms** |
-| Open 3.4 MB code block → pixel | 142 ms | **31 ms** |
-| Type, 1.7 MB dense | ~6 ms (800 KB) | **7 ms** p50, 11 ms p95 |
-| Caret right / down, 1.7 MB | — | **2 ms** p50, 3–4 ms p95 |
-| Zoom step, 1.7 MB | 265–900 ms (full restyle) | **20 ms** |
-| Theme toggle | full restyle | **< 1 ms** |
-| Scroll, 1.7 MB | — | 0 long frames smooth; 1 of 60 in a 2,000 px/frame flick |
-| Memory, idle with welcome.md | ~59 MB | ~121 MB (31 app + 75 WebContent + 15 GPU) — worse |
-| Memory, idle with 1.7 MB file | 350–450 MB (800 KB) | **~153 MB** (35 app + 103 WebContent + 15 GPU) |
-| Memory, sustained fast scroll | — | 300–450 MB sawtooth; back to ~200 MB at rest |
-| App bundle | — | 7.3 MB |
-| IPC read of a 1.7–3.4 MB file | — | 6 ms p50, 20 ms p95 |
-
-Moments 1–6 pass. The one regression is the idle floor: a web view costs about 60 MB more than AppKit on a small file. Moment 7 needs you.
-
-## What I learned
-
-1. **The win comes from lazy work, not from Rust.** CodeMirror parses and renders only around the viewport. After an edit, the parse stops a little past the viewport. The open-time gap (3.75 s → 15 ms) is this design, not a faster language.
-2. **Every per-edit pass must be incremental or limited to the viewport.** My first block field rebuilt ~10,000 table and fence decorations on each keystroke (28 ms). Now it maps blocks through the edit and rescans only the changed region or the newly parsed tail (~1 ms).
-3. **Do not use `markdown()` from `@codemirror/lang-markdown` as-is.** It always wraps the parser in `parseMixed` (for code and HTML), which re-walks the whole tree on every keystroke. I use `markdownLanguage` directly and highlight each visible code block with its own small parse. That cut typing at the end of the 1.7 MB file from 26 ms to 12 ms.
-4. **The remaining typing cost grows with the parsed length.** The cause is the Lezer markdown fragment reuse, the tree re-balance, and the height map: ~2 ms at 100 KB, ~12 ms at 1.7 MB (caret near the end). Real notes stay far below this. If we need more, the fix belongs upstream in `@lezer/markdown`.
-5. **WKWebView runs `requestAnimationFrame` at 60 Hz** (frame p50 = 16.7 ms), even on a ProMotion display. Native scroll still composites at 120 Hz, but JS-driven animation runs at 60 Hz. Check this when you try the app.
-6. **Memory sawtooth during scroll.** The live-preview plugin rebuilds all viewport decorations on every viewport change. That garbage explains the sawtooth. Phase 2 item: rebuild only the lines that entered the viewport.
-
-## Invariant: incremental equals full
-
-Vireo's Swift parser guarantees that incremental output equals a full re-parse. The spike keeps that rule, and `bun test` enforces it. A fuzz test applies random edits and, after every edit, compares two things with a fresh parse of the same text:
-
-- the Lezer tree, and
-- the block field (fences, tables, rules, setext underlines) with its decorations.
-
-`FUZZ_SEEDS=3000 FUZZ_STEPS=300 bun test` runs 900,000 edits (~80 s). The default run is 40 × 150.
-
-The fuzz test found two bugs in `@lezer/markdown`. In both, the incremental tree differs from a fresh parse. `src/markdown.ts` works around them: it stops block reuse three lines short of each edit.
-
-```js
-// TreeFragment.applyChanges(..., minGap = 0), then parse with the fragments:
-// 1. CommonMark: "    |\n|\n", delete chars 0-2 → incremental keeps a CodeBlock; fresh is one Paragraph.
-// 2. GFM: "p\n| a | b |\n|---|---|", type "-" at the end → incremental gives two Paragraphs; fresh gives one.
-```
-
-It also found three bugs in my block field. Each one rescanned too little after an edit that changes how *later* text parses. The fix grows each rescan range until both edges are top-level block starts in both the old and the new tree.
-
-## Gaps (on purpose, for Phase 2)
-
-- Images resolve relative to the page, not the file. Tauri needs the asset protocol for local images.
-- ⌘-click uses `window.open`. Tauri needs the opener plugin.
-- No tabs, sidebar, TOC, file watcher, autosave, or Quick Look. This spike tests only the editor core.
-- Native text services (spellcheck, autocorrect, dictation, IME) are enabled but not tested by hand yet.
+Phase 1 results and the reasoning behind the design are in `docs/spike-findings.md`.

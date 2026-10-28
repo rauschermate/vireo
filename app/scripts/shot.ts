@@ -17,7 +17,7 @@ const page = await browser.newPage({
 });
 page.on("pageerror", (e) => console.error("pageerror:", e.message));
 page.on("console", (m) => m.type() === "error" && console.error("console:", m.text()));
-await page.goto(`http://localhost:1420/?file=${opt("--file") ?? "welcome.md"}`);
+await page.goto(`http://localhost:1420/bench.html?file=${opt("--file") ?? "welcome.md"}`);
 await page.waitForFunction(() => (window as any).__vireo);
 await page.waitForTimeout(300);
 const caret = opt("--caret");

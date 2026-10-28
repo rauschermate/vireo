@@ -8,6 +8,20 @@ Xcode 26, Swift 6.
 See `README.md` for the feature list and `docs/eng-design.md` for the full
 architecture (§14 documents as-built deviations).
 
+## The Tauri rewrite (`app/`)
+
+`app/` is the cross-platform rewrite: Tauri v2 + CodeMirror 6 + React chrome,
+on the `spike/codemirror` branch. Its own `app/README.md` has the commands and
+the rules that are easy to break. The Swift app stays the shipping app until
+the rewrite replaces it.
+
+- Dev server port **1420** (`bun run dev`); the browser build runs on an
+  in-memory file system so Playwright can drive the whole shell.
+- Verify with `bun test`, `bun run e2e` (dev server up), `bun run selftest`
+  (built app, real keystroke), and `cargo test` in `app/src-tauri`.
+- Bundle id `com.materauscher.vireo.next` ("Vireo Next"), so it runs beside
+  the installed Swift Vireo.
+
 ## Workflow
 
 - **Commit after every meaningful change.** Once a logical chunk of work lands

@@ -12,7 +12,7 @@ for (const name of wanted) {
   const browser = await (name === "chromium" ? chromium : webkit).launch();
   const page = await browser.newPage({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: 2 });
   page.on("pageerror", (e) => console.error("pageerror:", e.message));
-  await page.goto("http://localhost:1420/");
+  await page.goto("http://localhost:1420/bench.html");
   await page.waitForFunction(() => (window as any).__vireo);
   await page.evaluate(() => (window as any).__vireo.bench());
   const text = await page.locator("#results").textContent();
