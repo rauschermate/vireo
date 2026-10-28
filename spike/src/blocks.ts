@@ -2,9 +2,11 @@ import { markdownLanguage } from "@codemirror/lang-markdown";
 import { syntaxTree } from "@codemirror/language";
 import { ChangeDesc, EditorSelection, EditorState, Range, StateField } from "@codemirror/state";
 import { Decoration, DecorationSet, EditorView, WidgetType } from "@codemirror/view";
-import { SyntaxNode, Tree } from "@lezer/common";
+import { Tree } from "@lezer/common";
 import { renderInline } from "./inline";
 import { focusField } from "./reveal";
+import { openCellEditor, tableSources } from "./table/cellEditor";
+import { parseTable } from "./table/model";
 
 type Block =
   | { kind: "fence"; from: number; to: number; open: [number, number]; close: [number, number] | null }
@@ -110,15 +112,24 @@ class TableWidget extends WidgetType {
     wrap.className = "cm-md-table";
     const table = document.createElement("table");
     wrap.append(table);
-    const node = markdownLanguage.parser.parse(this.source).topNode.getChild("Table");
-    if (node) fillTable(table, node, this.source);
-    wrap.addEventListener("mousedown", (event) => {
-      const cell = (event.target as HTMLElement).closest<HTMLElement>("td,th");
-      event.preventDefault();
-      const anchor = view.posAtDOM(wrap) + Number(cell?.dataset.offset ?? 0);
-      view.dispatch({ selection: { anchor } });
-      view.focus();
+    const model = parseTable(this.source);
+    const columns = model.align.length;
+    model.rows.forEach((row, r) => {
+      const tr = document.createElement("tr");
+      for (let c = 0; c < columns; c++) {
+        const td = document.createElement(r === 0 ? "th" : "td");
+        if (model.align[c]) td.style.textAlign = model.align[c];
+        renderCell(row[c]?.text ?? "", td);
+        td.addEventListener("mousedown", (event) => {
+          if (event.button !== 0 || td.classList.contains("is-editing")) return;
+          event.preventDefault();
+          openCellEditor(view, wrap, r, c);
+        });
+        tr.append(td);
+      }
+      table.append(tr);
     });
+    tableSources.set(wrap, this.source);
     return wrap;
   }
   ignoreEvent() {
@@ -126,31 +137,10 @@ class TableWidget extends WidgetType {
   }
 }
 
-function fillTable(table: HTMLTableElement, node: SyntaxNode, source: string) {
-  const align = alignments(node, source);
-  for (let row = node.firstChild; row; row = row.nextSibling) {
-    if (row.name !== "TableHeader" && row.name !== "TableRow") continue;
-    const tr = document.createElement("tr");
-    row.getChildren("TableCell").forEach((cell, column) => {
-      const td = document.createElement(row.name === "TableHeader" ? "th" : "td");
-      if (align[column]) td.style.textAlign = align[column];
-      td.dataset.offset = String(cell.to);
-      renderInline(source, cell, cell.from, cell.to, td);
-      tr.append(td);
-    });
-    table.append(tr);
-  }
-}
-
-function alignments(node: SyntaxNode, source: string): string[] {
-  const delimiter = node.getChildren("TableDelimiter")[0];
-  if (!delimiter) return [];
-  return source
-    .slice(delimiter.from, delimiter.to)
-    .split("|")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .map((s) => (s.startsWith(":") && s.endsWith(":") ? "center" : s.endsWith(":") ? "right" : s.startsWith(":") ? "left" : ""));
+function renderCell(text: string, td: HTMLElement) {
+  const paragraph = markdownLanguage.parser.parse(text).topNode.firstChild;
+  if (paragraph?.name === "Paragraph") renderInline(text, paragraph, paragraph.from, paragraph.to, td);
+  else td.textContent = text;
 }
 
 function decorationsFor(state: EditorState, block: Block, sel: EditorSelection | null): Range<Decoration>[] {

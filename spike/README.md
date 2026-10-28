@@ -80,7 +80,6 @@ It also found three bugs in my block field. Each one rescanned too little after 
 
 ## Gaps (on purpose, for Phase 2)
 
-- Tables reveal their source when you click in. Vireo's rich cell edit is not ported.
 - Images resolve relative to the page, not the file. Tauri needs the asset protocol for local images.
 - ⌘-click uses `window.open`. Tauri needs the opener plugin.
 - No tabs, sidebar, TOC, file watcher, autosave, or Quick Look. This spike tests only the editor core.

@@ -18,7 +18,7 @@ const command = (cmd: StateCommand) => (view: EditorView) => {
   cmd(view);
 };
 
-const items: Item[] = [
+const allItems: Item[] = [
   { label: "Heading 1", html: "H1", active: (f) => f.heading === 1, run: command(makeHeading(1)) },
   { label: "Heading 2", html: "H2", active: (f) => f.heading === 2, run: command(makeHeading(2)) },
   { label: "Heading 3", html: "H3", active: (f) => f.heading === 3, run: command(makeHeading(3)), separatorAfter: true },
@@ -70,11 +70,18 @@ function centeredOver(view: EditorView, dom: HTMLElement, from: number, to: numb
     : { left: mid - half, right: mid + half, top: y - lineHeight, bottom: y };
 }
 
+// A table cell holds inline content only, so its toolbar drops headings,
+// lists and quotes, as Vireo's cell toolbar does.
+const cellItems = allItems.filter((item) => !["Heading 1", "Heading 2", "Heading 3", "List", "Quote"].includes(item.label));
+
 class ToolbarView implements TooltipView {
   dom = document.createElement("div");
   private buttons: HTMLButtonElement[] = [];
 
-  constructor(private view: EditorView) {
+  constructor(
+    private view: EditorView,
+    private items: Item[],
+  ) {
     this.dom.className = "cm-vireo-toolbar";
     this.dom.setAttribute("role", "toolbar");
     for (const item of items) {
@@ -88,7 +95,7 @@ class ToolbarView implements TooltipView {
       button.addEventListener("click", () => item.run(this.view));
       this.dom.append(button);
       this.buttons.push(button);
-      if (item.separatorAfter) {
+      if (item.separatorAfter && item !== items[items.length - 1]) {
         const sep = document.createElement("span");
         sep.className = "cm-vireo-toolbar-sep";
         this.dom.append(sep);
@@ -108,11 +115,10 @@ class ToolbarView implements TooltipView {
 
   private refresh(state: EditorState) {
     const f = activeFormats(state);
-    items.forEach((item, i) => this.buttons[i].classList.toggle("is-active", item.active(f)));
+    this.items.forEach((item, i) => this.buttons[i].classList.toggle("is-active", item.active(f)));
   }
 }
 
-const createToolbar = (view: EditorView): TooltipView => new ToolbarView(view);
 
 const setLinkEditor = StateEffect.define<LinkTarget | null>();
 
@@ -183,22 +189,26 @@ function linkEditorView(target: LinkTarget) {
   };
 }
 
-function toolbarFor(state: EditorState): Tooltip | null {
-  const sel = state.selection.main;
-  if (sel.empty || !state.field(focusField, false) || state.field(linkEditorField)) return null;
-  return { pos: sel.from, above: true, create: createToolbar };
+function toolbarField(items: Item[]) {
+  // One create function per toolbar, so CodeMirror reuses the tooltip view
+  // across selection changes instead of rebuilding it.
+  const create = (view: EditorView): TooltipView => new ToolbarView(view, items);
+  const toolbarFor = (state: EditorState): Tooltip | null => {
+    const sel = state.selection.main;
+    if (sel.empty || !state.field(focusField, false) || state.field(linkEditorField)) return null;
+    return { pos: sel.from, above: true, create };
+  };
+  return StateField.define<Tooltip | null>({
+    create: toolbarFor,
+    update(value, tr) {
+      const focusChanged = tr.startState.field(focusField, false) !== tr.state.field(focusField, false);
+      const editorChanged = tr.startState.field(linkEditorField) !== tr.state.field(linkEditorField);
+      if (!tr.selection && !tr.docChanged && !focusChanged && !editorChanged) return value;
+      return toolbarFor(tr.state);
+    },
+    provide: (field) => showTooltip.from(field),
+  });
 }
-
-const toolbarField = StateField.define<Tooltip | null>({
-  create: toolbarFor,
-  update(value, tr) {
-    const focusChanged = tr.startState.field(focusField, false) !== tr.state.field(focusField, false);
-    const editorChanged = tr.startState.field(linkEditorField) !== tr.state.field(linkEditorField);
-    if (!tr.selection && !tr.docChanged && !focusChanged && !editorChanged) return value;
-    return toolbarFor(tr.state);
-  },
-  provide: (field) => showTooltip.from(field),
-});
 
 export const formatKeymap = keymap.of([
   { key: "Mod-b", run: wrapSelection("**") },
@@ -209,4 +219,14 @@ export const formatKeymap = keymap.of([
   { key: "Mod-Alt-3", run: makeHeading(3) },
 ]);
 
-export const formatting = [linkEditorField, toolbarField, formatKeymap];
+export const formatting = [linkEditorField, toolbarField(allItems), formatKeymap];
+
+export const cellFormatting = [
+  linkEditorField,
+  toolbarField(cellItems),
+  keymap.of([
+    { key: "Mod-b", run: wrapSelection("**") },
+    { key: "Mod-i", run: wrapSelection("*") },
+    { key: "Mod-k", run: (view) => (openLinkEditor(view), true) },
+  ]),
+];

@@ -264,6 +264,8 @@ body {
 }
 .cm-md-table th,
 .cm-md-table td {
+  position: relative;
+  min-width: 3em;
   border: 1px solid var(--rule);
   padding: 8px 12px;
   text-align: left;
@@ -411,4 +413,66 @@ body {
   background: var(--link);
   border-color: var(--link);
   color: #fff;
+}
+
+/* Table cell editor */
+.cm-md-table td.is-editing,
+.cm-md-table th.is-editing {
+  outline: 2px solid var(--link);
+  outline-offset: -2px;
+  padding-right: 28px;
+  cursor: text;
+}
+.cm-md-cell-menu {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--secondary);
+  font: 600 14px/1 var(--font-doc);
+  cursor: default;
+}
+.cm-md-cell-menu:hover {
+  background: var(--hover);
+}
+.cm-vireo-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 190px;
+  padding: 5px;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border: 0.5px solid var(--glass-border);
+  border-radius: 9px;
+  box-shadow: var(--glass-shadow);
+  font: 13px/1 var(--font-doc);
+}
+.cm-vireo-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+}
+.cm-vireo-menu button:hover:not(:disabled) {
+  background: var(--link);
+  color: #fff;
+}
+.cm-vireo-menu button:disabled {
+  color: var(--dim);
+}
+.cm-vireo-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--glass-border);
 }
