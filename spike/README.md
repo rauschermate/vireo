@@ -59,6 +59,25 @@ Moments 1–6 pass. The one regression is the idle floor: a web view costs about
 5. **WKWebView runs `requestAnimationFrame` at 60 Hz** (frame p50 = 16.7 ms), even on a ProMotion display. Native scroll still composites at 120 Hz, but JS-driven animation runs at 60 Hz. Check this when you try the app.
 6. **Memory sawtooth during scroll.** The live-preview plugin rebuilds all viewport decorations on every viewport change. That garbage explains the sawtooth. Phase 2 item: rebuild only the lines that entered the viewport.
 
+## Invariant: incremental equals full
+
+Vireo's Swift parser guarantees that incremental output equals a full re-parse. The spike keeps that rule, and `bun test` enforces it. A fuzz test applies random edits and, after every edit, compares two things with a fresh parse of the same text:
+
+- the Lezer tree, and
+- the block field (fences, tables, rules, setext underlines) with its decorations.
+
+`FUZZ_SEEDS=3000 FUZZ_STEPS=300 bun test` runs 900,000 edits (~80 s). The default run is 40 × 150.
+
+The fuzz test found two bugs in `@lezer/markdown`. In both, the incremental tree differs from a fresh parse. `src/markdown.ts` works around them: it stops block reuse three lines short of each edit.
+
+```js
+// TreeFragment.applyChanges(..., minGap = 0), then parse with the fragments:
+// 1. CommonMark: "    |\n|\n", delete chars 0-2 → incremental keeps a CodeBlock; fresh is one Paragraph.
+// 2. GFM: "p\n| a | b |\n|---|---|", type "-" at the end → incremental gives two Paragraphs; fresh gives one.
+```
+
+It also found three bugs in my block field. Each one rescanned too little after an edit that changes how *later* text parses. The fix grows each rescan range until both edges are top-level block starts in both the old and the new tree.
+
 ## Gaps (on purpose, for Phase 2)
 
 - Tables reveal their source when you click in. Vireo's rich cell edit is not ported.

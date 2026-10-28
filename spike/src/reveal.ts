@@ -1,7 +1,7 @@
 import { EditorState, StateEffect, StateField } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
-const focusEffect = StateEffect.define<boolean>();
+export const focusEffect = StateEffect.define<boolean>();
 
 // Block decorations live in a StateField, which cannot see `view.hasFocus`.
 // Mirror focus into state so the inline plugin and the block field agree.

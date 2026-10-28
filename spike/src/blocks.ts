@@ -15,7 +15,7 @@ type Block =
 const containers = new Set(["Document", "BulletList", "OrderedList", "ListItem", "Blockquote"]);
 const hideLine = Decoration.replace({ block: true });
 
-export const blockStats = { lastUpdateMs: 0, blocks: 0 };
+export const blockStats = { lastUpdateMs: 0, blocks: 0, rescanned: 0 };
 
 function scan(state: EditorState, tree: Tree, from: number, to: number): Block[] {
   const doc = state.doc;
@@ -186,8 +186,12 @@ interface BlockState {
 // Expands a range to whole top-level blocks of the new tree, so a rescan
 // never sees half a construct.
 function expand(tree: Tree, from: number, to: number): [number, number] {
-  const before = tree.topNode.childBefore(from);
-  const after = tree.topNode.childAfter(to);
+  // These pick the blocks that contain `from` and `to`, or the neighbors when
+  // a position sits between blocks. The obvious childBefore(from) and
+  // childAfter(to) step one block further out on each call, so `cover` would
+  // walk to both ends of the document.
+  const before = tree.topNode.childBefore(from + 1);
+  const after = tree.topNode.childAfter(Math.max(0, to - 1));
   return [before ? Math.min(before.from, from) : 0, after ? Math.max(after.to, to) : Math.max(tree.length, to)];
 }
 
@@ -203,6 +207,34 @@ function overlapping(blocks: Block[], from: number, to: number): [number, number
   let j = lo;
   while (j < blocks.length && blocks[j].from <= to) j++;
   return [lo, j];
+}
+
+// An edit can change how any later part of the file parses. Closing a fence
+// early inside a list ends the list sooner, and the paragraph after it can
+// become a table. Like Lezer itself, grow the range until both edges are
+// top-level block starts in the old and the new tree. From such a point on,
+// both parses read the same text in the same state, so nothing past it
+// differs.
+function cover(tree: Tree, oldTree: Tree, toOld: ChangeDesc | null, from: number, to: number): [number, number] {
+  const synced = (pos: number) => {
+    if (!toOld || pos >= tree.length) return true;
+    const old = toOld.mapPos(pos);
+    if (old >= oldTree.length) return true;
+    const child = oldTree.topNode.childAfter(old);
+    return !child || child.from === old;
+  };
+  let [a, b] = expand(tree, from, to);
+  while (a > 0 && !synced(a)) a = tree.topNode.childBefore(a)?.from ?? 0;
+  for (;;) {
+    const next = tree.topNode.childAfter(b);
+    if (!next) {
+      b = Math.max(b, tree.length);
+      break;
+    }
+    if (synced(next.from)) break;
+    b = next.to;
+  }
+  return [a, Math.min(b, Math.max(tree.length, to))];
 }
 
 function merge(ranges: [number, number][]): [number, number][] {
@@ -235,15 +267,17 @@ export const blockField = StateField.define<BlockState>({
     if (tr.docChanged) {
       blocks = blocks.map((b) => mapBlock(b, tr.changes));
       decorations = decorations.map(tr.changes);
-      tr.changes.iterChangedRanges((_fa, _ta, fromB, toB) => dirty.push([fromB, toB]));
+      tr.changes.iterChangedRanges((_fromA, _toA, fromB, toB) => dirty.push([fromB, toB]));
     }
     // The parser only runs a little past the viewport, so the tree grows as
     // the user scrolls. Scan only the newly parsed tail.
-    if (tree !== value.tree && tree.length > value.tree.length) {
-      dirty.push([tr.changes.mapPos(value.tree.length), tree.length]);
-    }
+    const grownFrom = tr.changes.mapPos(value.tree.length);
+    if (tree !== value.tree && tree.length > grownFrom) dirty.push([grownFrom, tree.length]);
 
-    const rescan = merge(dirty.map(([a, b]) => expand(tree, a, Math.min(b, tree.length))));
+    // Edits past the parsed tree wait until the tree grows over them.
+    const toOld = tr.docChanged ? tr.changes.invertedDesc : null;
+    const rescan = merge(dirty.filter(([a]) => a <= tree.length).map(([a, b]) => cover(tree, value.tree, toOld, a, Math.min(b, tree.length))));
+    blockStats.rescanned = rescan.reduce((n, [a, b]) => n + b - a, 0);
     if (rescan.length) blocks = blocks.slice();
     for (const [a, b] of rescan) {
       const [i, j] = overlapping(blocks, a, b);

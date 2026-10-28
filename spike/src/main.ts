@@ -3,6 +3,7 @@ import { EditorView } from "@codemirror/view";
 import { FixtureResult, Harness, format, nextPaint, runFixture, stats } from "./bench";
 import { createState } from "./editor";
 import { previewStats } from "./livePreview";
+import { blockStats } from "./blocks";
 import "./style.css";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
@@ -104,7 +105,7 @@ $("theme").addEventListener("click", toggleTheme);
 $("bench").addEventListener("click", () => bench());
 results.addEventListener("dblclick", () => results.classList.remove("is-open"));
 
-(window as any).__vireo = { view, open, bench, setZoom, toggleTheme, syntaxTree, previewStats };
+(window as any).__vireo = { view, open, bench, setZoom, toggleTheme, syntaxTree, previewStats, blockStats };
 
 const params = new URLSearchParams(location.search);
 let startup = params.get("file");

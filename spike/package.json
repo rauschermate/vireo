@@ -7,7 +7,8 @@
     "build": "tsc --noEmit && vite build",
     "fixtures": "./scripts/fixtures.sh",
     "tauri": "tauri",
-    "bench": "bun scripts/bench.ts"
+    "bench": "bun scripts/bench.ts",
+    "test": "bun test"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",
