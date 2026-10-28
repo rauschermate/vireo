@@ -57,6 +57,10 @@ fn main() {
             bench::startup_file,
             bench::scenario,
             bench::bench_report,
+            bench::selftest_dir,
+            bench::selftest_report,
+            bench::selftest_log,
+            bench::selftest_keys,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the Tauri app");

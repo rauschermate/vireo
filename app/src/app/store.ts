@@ -250,12 +250,12 @@ export class Store {
     }
   }
 
-  async openPath(path: string, anchor?: string) {
+  async openPath(path: string, anchor?: string, focus = true) {
     const existing = this.docs.find((d) => d.path === path);
     if (existing) {
       this.activate(existing.id);
       if (anchor) this.scrollToAnchor(existing, anchor);
-      this.focusEditor();
+      if (focus) this.focusEditor();
       return existing;
     }
     let file: FileText;
@@ -280,7 +280,7 @@ export class Store {
     this.activate(doc.id);
     this.updateWatch();
     if (anchor) requestAnimationFrame(() => this.scrollToAnchor(doc, anchor));
-    this.focusEditor();
+    if (focus) this.focusEditor();
     return doc;
   }
 
@@ -737,7 +737,8 @@ export class Store {
     }
     if (dir !== this.workspace.root) this.ui.expanded.add(dir);
     await this.rescan();
-    await this.openPath(path);
+    // The sidebar's name field takes focus for the rename, not the editor.
+    await this.openPath(path, undefined, false);
     this.ui.renaming = path;
     this.emit();
   }

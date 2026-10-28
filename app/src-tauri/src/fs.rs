@@ -187,7 +187,16 @@ pub fn rename_path(from: String, to: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn trash_path(path: String) -> Result<(), String> {
-    trash::delete(&path).map_err(err)
+    let mut ctx = trash::TrashContext::default();
+    // The default asks Finder over AppleScript, which needs an Automation
+    // permission and blocks on its prompt. NSFileManager needs none, and it
+    // is what Vireo's FileManager.trashItem uses.
+    #[cfg(target_os = "macos")]
+    {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        ctx.set_delete_method(DeleteMethod::NsFileManager);
+    }
+    ctx.delete(&path).map_err(err)
 }
 
 #[tauri::command]
@@ -307,6 +316,15 @@ mod tests {
         assert_eq!(title_from("\n\n# Heading ##\nbody").as_deref(), Some("Heading"));
         assert_eq!(title_from("Intro\n# Later").as_deref(), None);
         assert_eq!(title_from("## Two").as_deref(), None);
+    }
+
+    #[test]
+    fn trash_moves_the_file_out() {
+        let dir = temp_dir("trash");
+        let file = dir.join("gone.md");
+        fs::write(&file, "x").unwrap();
+        trash_path(file.to_string_lossy().into()).unwrap();
+        assert!(!file.exists());
     }
 
     #[test]

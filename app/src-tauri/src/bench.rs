@@ -35,3 +35,26 @@ pub fn bench_report(app: tauri::AppHandle, report: String) {
         app.exit(0);
     }
 }
+
+/// VIREO_SELFTEST=<empty dir> makes the app run src/app/selftest.ts against
+/// that folder, print the report and quit.
+#[tauri::command]
+pub fn selftest_dir() -> Option<String> {
+    std::env::var("VIREO_SELFTEST").ok()
+}
+
+#[tauri::command]
+pub fn selftest_report(app: tauri::AppHandle, report: String) {
+    println!("{report}");
+    app.exit(if report.contains("FAIL") { 1 } else { 0 });
+}
+
+#[tauri::command]
+pub fn selftest_log(line: String) {
+    eprintln!("{line}");
+}
+
+#[tauri::command]
+pub fn selftest_keys() -> bool {
+    std::env::var_os("VIREO_SELFTEST_KEYS").is_some()
+}

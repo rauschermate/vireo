@@ -1,5 +1,5 @@
 {
-  "name": "vireo-spike",
+  "name": "vireo-app",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,9 @@
     "fixtures": "./scripts/fixtures.sh",
     "tauri": "tauri",
     "bench": "bun scripts/bench.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "e2e": "bun scripts/e2e.ts",
+    "selftest": "./scripts/selftest.sh"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

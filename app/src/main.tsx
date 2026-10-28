@@ -44,6 +44,13 @@ async function start() {
   }
   store.syncWindow();
   store.focusEditor();
+
+  if (backend.kind === "tauri") {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const dir = await invoke<string | null>("selftest_dir");
+    if (dir) await invoke("selftest_log", { line: "selftest: start" });
+    if (dir) await (await import("./app/selftest")).selftest(store, dir);
+  }
 }
 
 void start();
