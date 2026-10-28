@@ -32,6 +32,7 @@ async function open(name: string) {
   view.setState(createState(text));
   const sync = performance.now() - t0;
   const toPixel = (await nextPaint()) - t0;
+  $<HTMLSelectElement>("fixture").value = name;
   status.textContent = `${name}: open ${toPixel.toFixed(0)} ms`;
   return { bytes: new TextEncoder().encode(text).length, sync, toPixel };
 }

@@ -20,7 +20,6 @@ const delimiterOf: Record<string, string> = {
   InlineCode: "CodeMark",
 };
 const link = Decoration.mark({ class: "cm-md-link" });
-const listNumber = Decoration.mark({ class: "cm-md-list-number" });
 const taskDone = Decoration.mark({ class: "cm-md-task-done" });
 const headingLine = [1, 2, 3, 4, 5, 6].map((n) => Decoration.line({ class: `cm-md-h cm-md-h${n}` }));
 const quoteLine = Decoration.line({ class: "cm-md-quote" });
@@ -47,6 +46,21 @@ class BulletWidget extends WidgetType {
   }
 }
 
+class NumberWidget extends WidgetType {
+  constructor(readonly label: string) {
+    super();
+  }
+  eq(other: NumberWidget) {
+    return other.label === this.label;
+  }
+  toDOM() {
+    const span = document.createElement("span");
+    span.className = "cm-md-number";
+    span.textContent = this.label;
+    return span;
+  }
+}
+
 class CheckboxWidget extends WidgetType {
   constructor(readonly checked: boolean) {
     super();
@@ -64,7 +78,7 @@ class CheckboxWidget extends WidgetType {
       // The widget DOM survives edits elsewhere, so look its position up on
       // click instead of caching it at creation time.
       const pos = view.posAtDOM(box);
-      const marker = view.state.doc.sliceString(pos, pos + 12).indexOf("[");
+      const marker = view.state.doc.sliceString(pos, view.state.doc.lineAt(pos).to).indexOf("[");
       if (marker < 0) return;
       const at = pos + marker + 1;
       view.dispatch({
@@ -174,6 +188,9 @@ function buildInner(view: EditorView): DecorationSet {
         case "ListMark":
           listMark(state, node, out);
           return false;
+        case "ListItem":
+          listContinuation(view, node, out);
+          return;
         case "Blockquote":
           eachLine(state, view.viewport, node.from, node.to, (at) => {
             if (quoteLines.has(at)) return;
@@ -264,42 +281,96 @@ function image(state: EditorState, node: SyntaxNode, out: Range<Decoration>[]) {
   out.push(Decoration.replace({ widget: new ImageWidget(state.doc.sliceString(url.from, url.to), alt) }).range(node.from, node.to));
 }
 
+// Vireo's list geometry: the text column sits at (depth + 1) × 1.375em, and
+// the marker draws in the 1.375em gutter to its left. Leading indent spaces
+// stay in the source but are hidden, so wrapped lines align with the text.
+const listLines = new Map<string, Decoration>();
+function listLine(kind: "item" | "cont", depth: number): Decoration {
+  const key = kind + depth;
+  let deco = listLines.get(key);
+  if (!deco) {
+    deco = Decoration.line({ class: kind === "item" ? "cm-md-li" : "cm-md-li-cont", attributes: { style: `--li-depth: ${depth}` } });
+    listLines.set(key, deco);
+  }
+  return deco;
+}
+const markerSource = Decoration.mark({ class: "cm-md-syntax cm-md-marker-source" });
+
+function itemDepth(item: SyntaxNode): number {
+  let depth = 0;
+  for (let p = item.parent; p; p = p.parent) if (p.name === "ListItem") depth++;
+  return depth;
+}
+
+// Ordered lists display renumbered from the first item, as Vireo does. The
+// source keeps whatever numbers the user typed.
+function ordinal(state: EditorState, mark: SyntaxNode, item: SyntaxNode, list: SyntaxNode): string {
+  const first = list.getChild("ListItem")?.getChild("ListMark");
+  const start = first ? parseInt(state.doc.sliceString(first.from, first.to), 10) || 0 : 1;
+  let index = 0;
+  for (let s = item.prevSibling; s; s = s.prevSibling) if (s.name === "ListItem") index++;
+  return `${start + index}${state.doc.sliceString(mark.to - 1, mark.to)}`;
+}
+
 function listMark(state: EditorState, node: SyntaxNode, out: Range<Decoration>[]) {
   const item = node.parent;
   const list = item?.parent;
   if (!item || !list) return;
+  const line = state.doc.lineAt(node.from);
+  // Inside a blockquote the prefix holds "> ", which QuoteMark handles.
+  const plain = /^[ \t]*$/.test(state.doc.sliceString(line.from, node.from));
+  const start = plain ? line.from : node.from;
+  if (plain) out.push(listLine("item", itemDepth(item)).range(line.from));
+
   const text = afterSpace(state, node.to);
-  const marker = item.getChild("Task")?.getChild("TaskMarker");
+  const task = item.getChild("Task");
+  const marker = task?.getChild("TaskMarker");
+  const isTask = !!marker && marker.from === text;
+  const checked = isTask && state.doc.sliceString(marker!.from + 1, marker!.from + 2).toLowerCase() === "x";
+  if (checked && task!.to > marker!.to) out.push(taskDone.range(afterSpace(state, marker!.to), task!.to));
+
   // The caret at the start of the item text keeps the bullet; only a caret on
   // the marker itself reveals the source.
-  const inside = (to: number) => revealed(state, node.from, to);
+  if (revealed(state, node.from, isTask ? marker!.to : node.to)) {
+    if (start < node.from) out.push(hide.range(start, node.from));
+    out.push(markerSource.range(node.from, isTask ? afterSpace(state, marker!.to) : text));
+    return;
+  }
+  let widget: WidgetType;
+  if (isTask) widget = new CheckboxWidget(checked);
+  else if (list.name === "OrderedList") widget = new NumberWidget(ordinal(state, node, item, list));
+  else {
+    let bullets = 0;
+    for (let p = list.parent; p; p = p.parent) if (p.name === "BulletList") bullets++;
+    widget = new BulletWidget(bullets);
+  }
+  out.push(Decoration.replace({ widget }).range(start, isTask ? afterSpace(state, marker!.to) : text));
+}
 
-  if (marker && marker.from === text) {
-    const checked = state.doc.sliceString(marker.from + 1, marker.from + 2).toLowerCase() === "x";
-    const task = item.getChild("Task")!;
-    if (checked && task.to > marker.to) out.push(taskDone.range(afterSpace(state, marker.to), task.to));
-    if (inside(marker.to)) {
-      out.push(dim.range(node.from, node.to), dim.range(marker.from, marker.to));
-      return;
+const notProse = new Set(["FencedCode", "CodeBlock", "Table", "HTMLBlock", "Blockquote"]);
+
+// Lines of an item after its marker line: lazy or indented continuations.
+function listContinuation(view: EditorView, item: SyntaxNode, out: Range<Decoration>[]) {
+  const { state } = view;
+  const doc = state.doc;
+  const markerLine = doc.lineAt(item.from).from;
+  const depth = itemDepth(item);
+  eachLine(state, view.viewport, item.from, item.to, (lineFrom) => {
+    if (lineFrom === markerLine) return;
+    const line = doc.lineAt(lineFrom);
+    const indent = /^[ \t]*/.exec(line.text)![0].length;
+    if (indent === line.length) return;
+    // Only the innermost item owns a line, and code keeps its own indent.
+    for (let n: SyntaxNode | null = syntaxTree(state).resolveInner(line.from + indent, 1); n; n = n.parent) {
+      if (notProse.has(n.name)) return;
+      if (n.name === "ListItem") {
+        if (n.from !== item.from) return;
+        break;
+      }
     }
-    // Ordered tasks keep their number; bullet tasks show only the box.
-    const from = list.name === "OrderedList" ? marker.from : node.from;
-    if (list.name === "OrderedList") out.push(listNumber.range(node.from, node.to));
-    out.push(Decoration.replace({ widget: new CheckboxWidget(checked) }).range(from, afterSpace(state, marker.to)));
-    return;
-  }
-
-  if (list.name === "OrderedList") {
-    out.push(listNumber.range(node.from, node.to));
-    return;
-  }
-  if (inside(node.to)) {
-    out.push(dim.range(node.from, node.to));
-    return;
-  }
-  let depth = 0;
-  for (let p = list.parent; p; p = p.parent) if (p.name === "BulletList") depth++;
-  out.push(Decoration.replace({ widget: new BulletWidget(depth) }).range(node.from, text));
+    out.push(listLine("cont", depth).range(line.from));
+    if (indent > 0) out.push(hide.range(line.from, line.from + indent));
+  });
 }
 
 function codeBlock(view: EditorView, node: SyntaxNode, out: Range<Decoration>[]) {

@@ -6,3 +6,4 @@ cd "$(dirname "$0")/../.."
 swift build -c release --product VireoSnapshot
 .build/release/VireoSnapshot --write-benchmark-fixtures spike/fixtures
 cp samples/welcome.md spike/fixtures/welcome.md
+cp spike/samples/lists.md spike/fixtures/lists.md

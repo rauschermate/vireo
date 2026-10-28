@@ -167,21 +167,36 @@ body {
   cursor: pointer;
   text-decoration: none;
 }
-.cm-editor .cm-md-list-number {
+.cm-editor .cm-line.cm-md-li {
+  padding-left: calc((var(--li-depth) + 1) * 1.375em);
+  text-indent: -1.375em;
+}
+.cm-editor .cm-line.cm-md-li-cont {
+  padding-left: calc((var(--li-depth) + 1) * 1.375em);
+}
+/* Gutter markers are inline blocks, which inherit the hanging text-indent. */
+.cm-editor .cm-md-bullet,
+.cm-editor .cm-md-number,
+.cm-editor .cm-md-marker-source {
+  display: inline-block;
+  min-width: 1.375em;
+  text-indent: 0;
   color: var(--secondary);
+}
+.cm-editor .cm-md-number {
   font-variant-numeric: tabular-nums;
 }
-.cm-editor .cm-md-bullet {
-  display: inline-block;
-  width: 1.1em;
-  color: var(--secondary);
+.cm-editor .cm-md-marker-source {
+  color: var(--dim);
+  white-space: pre;
 }
 .cm-editor .cm-md-checkbox {
   display: inline-block;
   box-sizing: border-box;
   width: 0.95em;
   height: 0.95em;
-  margin-right: 0.4em;
+  margin-right: 0.425em;
+  text-indent: 0;
   vertical-align: -0.12em;
   border: 1.5px solid var(--secondary);
   border-radius: 4px;

@@ -5,6 +5,7 @@ import { EditorState, Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { blockField } from "./blocks";
 import { livePreview } from "./livePreview";
+import { listIndentKeymap } from "./listIndent";
 import { focusTracking } from "./reveal";
 
 const theme = EditorView.theme({
@@ -52,7 +53,7 @@ export function createState(doc: string): EditorState {
       // markdown() would wrap the parser in a mixed parse for code and HTML,
       // which re-walks the whole tree per keystroke. See codeHighlight.ts.
       new LanguageSupport(markdownLanguage),
-      Prec.high(keymap.of(markdownKeymap)),
+      Prec.high(keymap.of([...listIndentKeymap, ...markdownKeymap])),
       EditorView.lineWrapping,
       EditorView.contentAttributes.of({ spellcheck: "true", autocorrect: "on", autocapitalize: "on" }),
       focusTracking,

@@ -62,7 +62,6 @@ Moments 1–6 pass. The one regression is the idle floor: a web view costs about
 ## Gaps (on purpose, for Phase 2)
 
 - Tables reveal their source when you click in. Vireo's rich cell edit is not ported.
-- Wrapped list items have no hanging indent.
 - Images resolve relative to the page, not the file. Tauri needs the asset protocol for local images.
 - ⌘-click uses `window.open`. Tauri needs the opener plugin.
 - No tabs, sidebar, TOC, file watcher, autosave, or Quick Look. This spike tests only the editor core.
