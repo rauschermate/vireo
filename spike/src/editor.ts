@@ -8,6 +8,7 @@ import { livePreview } from "./livePreview";
 import { listIndentKeymap } from "./listIndent";
 import { vireoMarkdown } from "./markdown";
 import { focusTracking } from "./reveal";
+import { formatting } from "./toolbar";
 
 const theme = EditorView.theme({
   "&": {
@@ -55,6 +56,7 @@ export function createState(doc: string): EditorState {
       // which re-walks the whole tree per keystroke. See codeHighlight.ts.
       new LanguageSupport(vireoMarkdown),
       Prec.high(keymap.of([...listIndentKeymap, ...markdownKeymap])),
+      Prec.high(formatting),
       EditorView.lineWrapping,
       EditorView.contentAttributes.of({ spellcheck: "true", autocorrect: "on", autocapitalize: "on" }),
       focusTracking,

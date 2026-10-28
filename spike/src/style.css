@@ -1,5 +1,9 @@
 :root {
   --zoom: 1;
+  --glass: rgba(250, 250, 252, 0.97);
+  --glass-border: rgba(0, 0, 0, 0.1);
+  --glass-shadow: 0 6px 24px rgba(0, 0, 0, 0.14), 0 1px 3px rgba(0, 0, 0, 0.08);
+  --hover: rgba(0, 0, 0, 0.06);
   --font-doc: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
   --bg: #ffffff;
@@ -31,6 +35,10 @@
     --rule: rgba(235, 235, 245, 0.18);
     --selection: rgba(74, 163, 255, 0.3);
     --toolbar-bg: #262626;
+    --glass: rgba(44, 44, 46, 0.97);
+    --glass-border: rgba(255, 255, 255, 0.12);
+    --glass-shadow: 0 6px 24px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.3);
+    --hover: rgba(255, 255, 255, 0.08);
     color-scheme: dark;
   }
 }
@@ -48,6 +56,10 @@
   --rule: rgba(235, 235, 245, 0.18);
   --selection: rgba(74, 163, 255, 0.3);
   --toolbar-bg: #262626;
+  --glass: rgba(44, 44, 46, 0.97);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-shadow: 0 6px 24px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.3);
+  --hover: rgba(255, 255, 255, 0.08);
   color-scheme: dark;
 }
 
@@ -302,3 +314,101 @@ body {
 :root[data-theme="dark"] .tok-typeName, :root[data-theme="dark"] .tok-className { color: #acf2e4; }
 :root[data-theme="dark"] .tok-definition { color: #6bdfff; }
 :root[data-theme="dark"] .tok-propertyName, :root[data-theme="dark"] .tok-variableName2 { color: #b281eb; }
+
+/* Floating format toolbar and link editor (CodeMirror tooltips). */
+.cm-editor .cm-tooltip.cm-vireo-toolbar,
+.cm-editor .cm-tooltip.cm-vireo-link-editor {
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border: 0.5px solid var(--glass-border);
+  border-radius: 10px;
+  box-shadow: var(--glass-shadow);
+  color: var(--fg);
+  font: 13px/1 var(--font-doc);
+}
+.cm-editor .cm-tooltip.cm-vireo-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  margin-top: -8px;
+}
+.cm-vireo-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: 600 13px/1 var(--font-doc);
+  cursor: default;
+}
+.cm-vireo-toolbar button:hover {
+  background: var(--hover);
+}
+.cm-vireo-toolbar button.is-active {
+  color: var(--link);
+}
+.cm-vireo-toolbar b,
+.cm-vireo-toolbar i,
+.cm-vireo-toolbar s {
+  font-size: 15px;
+  font-family: var(--font-doc);
+}
+.cm-vireo-toolbar i {
+  font-weight: 500;
+  font-family: Georgia, serif;
+}
+.cm-vireo-toolbar-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--glass-border);
+}
+.cm-editor .cm-tooltip.cm-vireo-link-editor {
+  display: grid;
+  gap: 6px;
+  width: 280px;
+  padding: 10px;
+  margin-top: 6px;
+}
+.cm-vireo-link-editor input {
+  font: 13px/1.3 var(--font-doc);
+  padding: 6px 8px;
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  outline: none;
+}
+.cm-vireo-link-editor input:focus {
+  border-color: var(--link);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--link) 25%, transparent);
+}
+.cm-vireo-link-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.cm-vireo-link-actions button {
+  font: 13px/1 var(--font-doc);
+  padding: 6px 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.cm-vireo-link-actions button.is-remove {
+  margin-right: auto;
+  color: #d70015;
+}
+.cm-vireo-link-actions button.is-primary {
+  background: var(--link);
+  border-color: var(--link);
+  color: #fff;
+}
