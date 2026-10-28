@@ -1,5 +1,7 @@
 :root {
   --zoom: 1;
+  --match: rgba(255, 204, 0, 0.28);
+  --match-current: rgba(255, 159, 10, 0.55);
   --glass: rgba(250, 250, 252, 0.97);
   --glass-border: rgba(0, 0, 0, 0.1);
   --glass-shadow: 0 6px 24px rgba(0, 0, 0, 0.14), 0 1px 3px rgba(0, 0, 0, 0.08);
@@ -475,4 +477,78 @@ body {
   height: 1px;
   margin: 4px 6px;
   background: var(--glass-border);
+}
+
+/* Find bar */
+.cm-editor .cm-panels {
+  background: var(--toolbar-bg);
+  color: var(--fg);
+}
+.cm-editor .cm-panels-top {
+  border-bottom: 1px solid var(--rule);
+}
+.cm-vireo-find {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 6px 24px;
+  font: 13px/1 var(--font-doc);
+}
+.cm-vireo-find-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.cm-vireo-replace-row {
+  margin-top: 6px;
+}
+.cm-vireo-find-row[hidden] {
+  display: none;
+}
+.cm-vireo-find input {
+  flex: 1;
+  min-width: 0;
+  font: 13px/1.3 var(--font-doc);
+  padding: 5px 8px;
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  outline: none;
+}
+.cm-vireo-find input:focus {
+  border-color: var(--link);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--link) 25%, transparent);
+}
+.cm-vireo-find.is-empty input[name="search"] {
+  border-color: #d70015;
+}
+.cm-vireo-find-count {
+  min-width: 70px;
+  padding: 0 6px;
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+.cm-vireo-find button {
+  font: 13px/1 var(--font-doc);
+  min-width: 28px;
+  padding: 5px 8px;
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.cm-vireo-find button.is-on {
+  background: var(--link);
+  border-color: var(--link);
+  color: #fff;
+}
+.cm-editor .cm-searchMatch {
+  background: var(--match);
+  border-radius: 2px;
+}
+.cm-editor .cm-searchMatch-selected,
+.cm-editor .cm-searchMatch.cm-searchMatch-selected {
+  background: var(--match-current);
 }

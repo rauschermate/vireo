@@ -9,6 +9,7 @@ import { listIndentKeymap } from "./listIndent";
 import { vireoMarkdown } from "./markdown";
 import { focusTracking } from "./reveal";
 import { formatting } from "./toolbar";
+import { find } from "./find";
 
 const theme = EditorView.theme({
   "&": {
@@ -57,6 +58,7 @@ export function createState(doc: string): EditorState {
       new LanguageSupport(vireoMarkdown),
       Prec.high(keymap.of([...listIndentKeymap, ...markdownKeymap])),
       Prec.high(formatting),
+      find,
       EditorView.lineWrapping,
       EditorView.contentAttributes.of({ spellcheck: "true", autocorrect: "on", autocapitalize: "on" }),
       focusTracking,
