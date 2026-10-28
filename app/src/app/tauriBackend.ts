@@ -3,14 +3,16 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { message, open, save } from "@tauri-apps/plugin-dialog";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
-import type { Backend, FileText, Node } from "./backend";
+import type { Backend, FileStat, FileText, Node } from "./backend";
 
 export function tauriBackend(): Backend {
   const win = getCurrentWindow();
   return {
     kind: "tauri",
     readText: (path) => invoke<FileText>("read_text", { path }),
-    writeText: (path, text) => invoke<number>("write_text", { path, text }),
+    writeText: (path, text) => invoke<FileStat>("write_text", { path, text }),
+    statText: (path) => invoke<FileStat>("stat_text", { path }),
+    fileInfo: (path) => invoke<{ title: string | null; mtime: number }>("file_info", { path }),
     scanWorkspace: (root) => invoke<Node[]>("scan_workspace", { root }),
     createFile: (path, text) => invoke("create_file", { path, text }),
     createDir: (path) => invoke("create_dir", { path }),

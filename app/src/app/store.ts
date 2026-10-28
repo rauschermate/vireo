@@ -2,7 +2,7 @@ import { EditorSelection, EditorState, StateEffect } from "@codemirror/state";
 import { EditorView, ViewUpdate } from "@codemirror/view";
 import { createState } from "../editor/editor";
 import { openLink, resolveResource } from "../editor/host";
-import type { Backend, FileText, Node } from "./backend";
+import type { Backend, FileStat, FileText, Node } from "./backend";
 import { currentHeading, Heading, outline, slug } from "./outline";
 import { basename, dirname, isMarkdown, join, resolve, stem, uniqueName, validateName } from "./paths";
 import { parsePrefs, Prefs, pushRecent, tocOpenByDefault } from "./prefs";
@@ -17,9 +17,9 @@ export interface Doc {
   customTitle: string | null;
   // The editor state while the tab is inactive; the view holds it otherwise.
   state: EditorState;
-  // The last disk content this tab read or wrote. A save compares the disk
+  // The disk version this tab last read or wrote. A save compares the disk
   // against it to detect a newer version written by someone else.
-  disk: FileText | null;
+  disk: FileStat | null;
   dirty: boolean;
   saveError: string | null;
   conflict: boolean;
@@ -128,7 +128,7 @@ export class Store {
     return state.update({ selection: EditorSelection.create(selection.ranges.map((r) => EditorSelection.range(clamp(r.anchor), clamp(r.head)))) }).state;
   }
 
-  private newDoc(path: string | null, text: string, disk: FileText | null, welcome = false): Doc {
+  private newDoc(path: string | null, text: string, disk: FileStat | null, welcome = false): Doc {
     const doc: Doc = {
       id: `doc-${nextId++}`,
       path,
@@ -265,7 +265,7 @@ export class Store {
       await this.backend.ask(errorText(e), { title: `Couldn't open “${basename(path)}”`, buttons: ["OK"] });
       return null;
     }
-    const doc = this.newDoc(path, file.text, file);
+    const doc = this.newDoc(path, file.text, { mtime: file.mtime, hash: file.hash });
     // An empty untitled tab gives way to the opened file instead of staying.
     const active = this.active;
     if (this.pristine(active)) {
@@ -339,17 +339,16 @@ export class Store {
       const path = doc.path!;
       const text = this.textOf(doc);
       try {
-        let current: FileText | null = null;
+        // Hashes, not text, cross the bridge on the common path.
+        let current: FileStat | null = null;
         try {
-          current = await this.backend.readText(path);
+          current = await this.backend.statText(path);
         } catch {}
-        if (!force && current && doc.disk && current.text !== doc.disk.text && current.text !== text) {
-          return await this.presentConflict(doc, current);
+        if (!force && current && doc.disk && current.hash !== doc.disk.hash) {
+          const disk = await this.backend.readText(path);
+          if (disk.text !== text) return await this.presentConflict(doc, disk);
         }
-        await this.backend.writeText(path, text);
-        const back = await this.backend.readText(path);
-        if (back.text !== text) throw new Error("The file on disk does not match the document after the save.");
-        doc.disk = back;
+        doc.disk = await this.backend.writeText(path, text);
         doc.saveError = null;
         doc.conflict = false;
         if (this.textOf(doc) === text) doc.dirty = false;
@@ -381,8 +380,7 @@ export class Store {
     if (!path) return false;
     const text = this.textOf(doc);
     try {
-      await this.backend.writeText(path, text);
-      doc.disk = await this.backend.readText(path);
+      doc.disk = await this.backend.writeText(path, text);
     } catch (e) {
       await this.alert(`Couldn't save “${title}”`, e);
       return false;
@@ -428,7 +426,7 @@ export class Store {
     });
     doc.prompting = false;
     if (choice === 0) {
-      doc.disk = disk;
+      doc.disk = { mtime: disk.mtime, hash: disk.hash };
       doc.conflict = false;
       return this.save(doc, true);
     }
@@ -445,7 +443,7 @@ export class Store {
     const isActive = doc.id === this.activeId && this.view;
     const scroll = isActive ? this.view!.scrollSnapshot() : doc.scroll;
     const state = this.makeState(disk.text, doc, this.stateOf(doc).selection);
-    doc.disk = disk;
+    doc.disk = { mtime: disk.mtime, hash: disk.hash };
     doc.dirty = false;
     doc.conflict = false;
     doc.saveError = null;
@@ -461,25 +459,57 @@ export class Store {
   }
 
   private async handleFsChange(paths: string[]) {
-    const root = this.workspace.root;
-    if (root && paths.some((p) => p === root || p.startsWith(root + "/"))) this.scheduleRescan();
+    void this.workspaceChanged(paths);
     for (const doc of this.docs) {
       if (doc.path && paths.includes(doc.path)) await this.checkDisk(doc);
     }
   }
 
+  // A changed file that the tree already shows only needs its title and
+  // date refreshed. Anything else (new, deleted, a folder) rescans.
+  private async workspaceChanged(paths: string[]) {
+    const root = this.workspace.root;
+    if (!root || this.workspace.status !== "ready") return;
+    // Other file types never show in the tree. A path without an extension
+    // may be a folder, so it counts.
+    const under = paths.filter((p) => (p === root || p.startsWith(root + "/")) && (isMarkdown(p) || !/\.[^/]+$/.test(basename(p))));
+    if (!under.length) return;
+    const nodes = new Map(this.files().map((f) => [f.path, f]));
+    for (const path of under) {
+      const node = nodes.get(path);
+      if (!node) {
+        this.stats.rescanCause = path;
+        return this.scheduleRescan();
+      }
+      try {
+        const info = await this.backend.fileInfo(path);
+        node.title = info.title;
+        node.mtime = info.mtime;
+      } catch {
+        return this.scheduleRescan();
+      }
+    }
+    this.emit();
+  }
+
   private async checkDisk(doc: Doc) {
     if (doc.saving) await doc.saving;
+    let stat: FileStat;
+    try {
+      stat = await this.backend.statText(doc.path!);
+    } catch {
+      return;
+    }
+    // Our own save, or a touch that kept the content.
+    if (doc.disk && stat.hash === doc.disk.hash) return;
     let disk: FileText;
     try {
       disk = await this.backend.readText(doc.path!);
     } catch {
       return;
     }
-    // Our own save, or a touch that kept the content.
-    if (doc.disk && disk.text === doc.disk.text) return;
     if (disk.text === this.textOf(doc)) {
-      doc.disk = disk;
+      doc.disk = { mtime: disk.mtime, hash: disk.hash };
       return;
     }
     if (!doc.dirty) this.reload(doc, disk);
@@ -666,9 +696,12 @@ export class Store {
     this.emit();
   }
 
+  stats = { rescans: 0, rescanCause: "" };
+
   async rescan() {
     const root = this.workspace.root;
     if (!root) return;
+    this.stats.rescans++;
     try {
       const tree = await this.backend.scanWorkspace(root);
       if (this.workspace.root !== root) return;

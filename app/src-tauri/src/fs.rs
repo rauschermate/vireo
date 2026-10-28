@@ -34,20 +34,48 @@ fn is_hidden(name: &str) -> bool {
 pub struct FileText {
     text: String,
     mtime: f64,
+    hash: String,
+}
+
+/// What the app needs to tell two versions of a file apart without moving
+/// the text across the bridge.
+#[derive(Serialize)]
+pub struct FileStat {
+    mtime: f64,
+    hash: String,
+}
+
+/// FNV-1a over the bytes. Only compared with other hashes from this process.
+pub fn hash_bytes(bytes: &[u8]) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in bytes {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("{h:016x}")
 }
 
 #[tauri::command]
 pub fn read_text(path: String) -> Result<FileText, String> {
     let bytes = fs::read(&path).map_err(err)?;
+    let hash = hash_bytes(&bytes);
     let text = String::from_utf8(bytes).map_err(|_| "The file is not UTF-8 text.".to_string())?;
     let meta = fs::metadata(&path).map_err(err)?;
-    Ok(FileText { text, mtime: mtime_ms(&meta) })
+    Ok(FileText { text, mtime: mtime_ms(&meta), hash })
+}
+
+#[tauri::command]
+pub fn stat_text(path: String) -> Result<FileStat, String> {
+    let bytes = fs::read(&path).map_err(err)?;
+    let meta = fs::metadata(&path).map_err(err)?;
+    Ok(FileStat { mtime: mtime_ms(&meta), hash: hash_bytes(&bytes) })
 }
 
 /// Writes a temporary file next to the target, flushes it to disk, then
 /// renames it over the target. A crash mid-save leaves the old file intact.
+/// The result is read back and compared, as Vireo's DocumentWriter does.
 #[tauri::command]
-pub fn write_text(path: String, text: String) -> Result<f64, String> {
+pub fn write_text(path: String, text: String) -> Result<FileStat, String> {
     let mut target = PathBuf::from(&path);
     // Renaming over a symlink would replace the link itself with a file.
     if fs::symlink_metadata(&target).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
@@ -69,7 +97,24 @@ pub fn write_text(path: String, text: String) -> Result<f64, String> {
         let _ = fs::remove_file(&tmp);
         return Err(err(e));
     }
-    Ok(mtime_ms(&fs::metadata(&target).map_err(err)?))
+    let back = fs::read(&target).map_err(err)?;
+    if back != text.as_bytes() {
+        return Err("The file on disk does not match the document after the save.".into());
+    }
+    Ok(FileStat { mtime: mtime_ms(&fs::metadata(&target).map_err(err)?), hash: hash_bytes(&back) })
+}
+
+#[derive(Serialize)]
+pub struct FileInfo {
+    title: Option<String>,
+    mtime: f64,
+}
+
+/// One file's sidebar data, so a save does not rescan the whole workspace.
+#[tauri::command]
+pub fn file_info(path: String) -> Result<FileInfo, String> {
+    let meta = fs::metadata(&path).map_err(err)?;
+    Ok(FileInfo { title: title_of(Path::new(&path)), mtime: mtime_ms(&meta) })
 }
 
 #[derive(Serialize)]
@@ -274,7 +319,8 @@ mod tests {
         let dir = temp_dir("write");
         let file = dir.join("a.md");
         fs::write(&file, "old").unwrap();
-        write_text(file.to_string_lossy().into(), "new text".into()).unwrap();
+        let stat = write_text(file.to_string_lossy().into(), "new text".into()).unwrap();
+        assert_eq!(stat.hash, hash_bytes(b"new text"));
         assert_eq!(fs::read_to_string(&file).unwrap(), "new text");
         let leftovers: Vec<_> = fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().ends_with(".tmp")).collect();
         assert!(leftovers.is_empty());

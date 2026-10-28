@@ -24,6 +24,14 @@ export interface MemoryHost {
   closeRequest(): Promise<boolean>;
 }
 
+function hash(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
+  return `${(h >>> 0).toString(16)}:${text.length}`;
+}
+
+const firstHeading = (text: string) => /^\s*# (.+)$/m.exec(text.split("\n").find((l) => l.trim()) ?? "")?.[1]?.trim() ?? null;
+
 const parent = (p: string) => p.slice(0, p.lastIndexOf("/")) || "/";
 const base = (p: string) => p.slice(p.lastIndexOf("/") + 1);
 
@@ -84,17 +92,24 @@ export async function memoryBackend(): Promise<Backend> {
     kind: "memory",
     async readText(path) {
       const f = files.get(path);
-      return f ? { text: f.text, mtime: f.mtime } : missing(path);
+      return f ? { text: f.text, mtime: f.mtime, hash: hash(f.text) } : missing(path);
+    },
+    async statText(path) {
+      const f = files.get(path);
+      return f ? { mtime: f.mtime, hash: hash(f.text) } : missing(path);
+    },
+    async fileInfo(path) {
+      const f = files.get(path);
+      return f ? { title: firstHeading(f.text), mtime: f.mtime } : missing(path);
     },
     async writeText(path, text) {
       if (!dirs.has(parent(path))) return missing(parent(path));
       put(path, text);
       changed([path]);
-      return files.get(path)!.mtime;
+      return { mtime: files.get(path)!.mtime, hash: hash(text) };
     },
     async scanWorkspace(root) {
       if (!dirs.has(root)) throw new Error("The folder does not exist.");
-      const title = (text: string) => /^\s*# (.+)$/m.exec(text.split("\n").find((l) => l.trim()) ?? "")?.[1]?.trim() ?? null;
       const walk = (dir: string): Node[] => {
         const nodes: Node[] = [];
         for (const d of dirs) {
@@ -103,7 +118,7 @@ export async function memoryBackend(): Promise<Backend> {
           const empty = ![...dirs].some((x) => parent(x) === d && x !== d) && ![...files.keys()].some((f) => parent(f) === d);
           if (children.length || empty) nodes.push({ name: base(d), path: d, dir: true, title: null, mtime: 0, children });
         }
-        for (const [f, v] of files) if (parent(f) === dir && MARKDOWN.test(f)) nodes.push({ name: base(f), path: f, dir: false, title: title(v.text), mtime: v.mtime, children: [] });
+        for (const [f, v] of files) if (parent(f) === dir && MARKDOWN.test(f)) nodes.push({ name: base(f), path: f, dir: false, title: firstHeading(v.text), mtime: v.mtime, children: [] });
         return nodes.sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
       };
       return walk(root);

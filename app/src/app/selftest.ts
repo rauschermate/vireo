@@ -39,12 +39,17 @@ export async function selftest(s: Store, dir: string) {
     return names === "Notes,Alpha.md" && alpha?.title === "Alpha title" ? true : `tree ${names}, title ${alpha?.title}`;
   });
 
-  await step("open and autosave", async () => {
+  await step("open and autosave, without a workspace rescan", async () => {
     const doc = await s.openPath(`${dir}/Alpha.md`);
+    // Events from creating the test files arrive late; let them settle so
+    // only the save is measured.
+    await wait(2000);
+    const rescans = s.stats.rescans;
     s.view!.dispatch({ changes: { from: s.view!.state.doc.length, insert: "Typed.\n" } });
-    await wait(1200);
+    await wait(1500);
     const { text } = await b.readText(`${dir}/Alpha.md`);
-    return text.endsWith("Typed.\n") && !doc!.dirty ? true : `disk: ${JSON.stringify(text)}`;
+    if (!text.endsWith("Typed.\n") || doc!.dirty) return `disk: ${JSON.stringify(text)}`;
+    return s.stats.rescans === rescans ? true : `${s.stats.rescans - rescans} rescans after one save, cause ${s.stats.rescanCause}`;
   });
 
   await step("watcher reloads an external change", async () => {

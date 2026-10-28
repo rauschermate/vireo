@@ -36,6 +36,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             fs::read_text,
             fs::write_text,
+            fs::stat_text,
+            fs::file_info,
             fs::scan_workspace,
             fs::create_file,
             fs::create_dir,

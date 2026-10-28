@@ -1,9 +1,14 @@
 // Everything the app needs from the host. The Tauri backend talks to Rust;
 // the memory backend runs the same app in a plain browser for tests.
 
-export interface FileText {
-  text: string;
+export interface FileStat {
   mtime: number;
+  // A content hash; compared only with other hashes from the same backend.
+  hash: string;
+}
+
+export interface FileText extends FileStat {
+  text: string;
 }
 
 export interface Node {
@@ -19,7 +24,10 @@ export interface Node {
 export interface Backend {
   readonly kind: "tauri" | "memory";
   readText(path: string): Promise<FileText>;
-  writeText(path: string, text: string): Promise<number>;
+  // Writes atomically and verifies the result on disk.
+  writeText(path: string, text: string): Promise<FileStat>;
+  statText(path: string): Promise<FileStat>;
+  fileInfo(path: string): Promise<{ title: string | null; mtime: number }>;
   scanWorkspace(root: string): Promise<Node[]>;
   createFile(path: string, text: string): Promise<void>;
   createDir(path: string): Promise<void>;
