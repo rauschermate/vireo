@@ -11,7 +11,7 @@ architecture (§14 documents as-built deviations).
 ## The Tauri rewrite (`app/`)
 
 `app/` is the cross-platform rewrite: Tauri v2 + CodeMirror 6 + React chrome,
-on the `spike/codemirror` branch. Its own `app/README.md` has the commands and
+on the `tauri-rewrite` branch. Its own `app/README.md` has the commands and
 the rules that are easy to break. The Swift app stays the shipping app until
 the rewrite replaces it.
 
