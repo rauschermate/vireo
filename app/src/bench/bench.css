@@ -1,0 +1,64 @@
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-doc);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+#toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 12px;
+  background: var(--toolbar-bg);
+  border-bottom: 1px solid var(--rule);
+  font-size: 12px;
+  flex: none;
+}
+
+#toolbar button,
+#toolbar select {
+  font: inherit;
+}
+
+#status {
+  margin-left: auto;
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#editor {
+  flex: 1;
+  min-height: 0;
+}
+
+#results {
+  display: none;
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  max-height: 60vh;
+  overflow: auto;
+  background: var(--toolbar-bg);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font: 11px/1.4 var(--font-mono);
+  white-space: pre;
+}
+
+#results.is-open {
+  display: block;
+}
+
